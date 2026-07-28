@@ -1,110 +1,144 @@
 const logger = require("firebase-functions/logger")
 const { db } = require("./core/firestore")
-const { getNextLessonDate } = require("./core/schedule")
+const { getZonedParts, zonedTimeToUtc, SCHEDULE_TIME_ZONE } = require("./core/schedule")
 const { ensureUpcomingLesson } = require("./core/lessons")
-const { sendMessage: sendTelegramMessage } = require("./adapters/telegram")
-const { sendMessage: sendVkMessage } = require("./adapters/vk")
+const { sendReminderToStudent } = require("./core/reminderUtils")
+const botMessages = require("./core/botMessages")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
 
-function isSameCalendarDay(a, b) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
+// Midnight (00:00) in Moscow for the given instant, as an actual UTC
+// instant — used to build Moscow calendar-day query windows.
+function moscowMidnight(date) {
+  const parts = getZonedParts(date, SCHEDULE_TIME_ZONE)
+  return zonedTimeToUtc(parts.year, parts.month, parts.day, 0, 0, SCHEDULE_TIME_ZONE)
 }
 
-function buildReminderText(time, assignmentText) {
-  const base = `Напоминаем: завтра в ${time} у тебя урок!`
-  return assignmentText ? `${base}\nЗадание: ${assignmentText}` : base
-}
-
-async function sendReminderForStudent(studentId, student) {
-  const lessonId = await ensureUpcomingLesson(studentId)
-
-  let assignmentText = ""
-  if (lessonId) {
-    const lessonSnapshot = await db
-      .collection(STUDENTS_COLLECTION)
-      .doc(studentId)
-      .collection(LESSONS_SUBCOLLECTION)
-      .doc(lessonId)
-      .get()
-
-    assignmentText = lessonSnapshot.exists
-      ? (lessonSnapshot.data().homework?.assignment?.text ?? "")
-      : ""
-  }
-
-  const text = buildReminderText(student.schedule.time, assignmentText)
-
-  if (student.platform === "telegram" && student.telegramChatId) {
-    await sendTelegramMessage(student.telegramChatId, text)
-    logger.info("checkAndSendReminders: reminder sent via Telegram", { studentId })
-    return
-  }
-
-  if (student.platform === "vk" && student.vkPeerId) {
-    await sendVkMessage(student.vkPeerId, text)
-    logger.info("checkAndSendReminders: reminder sent via VK", { studentId })
-    return
-  }
-
-  logger.warn("checkAndSendReminders: no known messaging channel for student", { studentId })
-}
-
-async function checkAndSendReminders() {
-  logger.info("checkAndSendReminders: starting")
-
-  const now = new Date()
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-
+// Guarantees every scheduled student has an "upcoming" lesson draft to find
+// before the date-range queries below run — a student whose last lesson was
+// completed (or who's never had one) otherwise has no lesson doc to match.
+async function ensureUpcomingDraftsForAllStudents() {
   const snapshot = await db.collection(STUDENTS_COLLECTION).get()
 
-  logger.info("checkAndSendReminders: students found", { count: snapshot.size })
-
   for (const doc of snapshot.docs) {
-    const studentId = doc.id
     const student = doc.data()
-    const hasSchedule = Boolean(student.schedule)
-    const hasPlatform = Boolean(student.platform && (student.telegramChatId || student.vkPeerId))
-    const nextDate = getNextLessonDate(student.schedule)
-    const isTomorrow = Boolean(nextDate && isSameCalendarDay(nextDate, tomorrow))
-
-    logger.info("checkAndSendReminders: student checked", {
-      studentId,
-      hasSchedule,
-      hasPlatform,
-      nextLessonDate: nextDate ? nextDate.toISOString() : null,
-      isTomorrow,
-    })
-
-    if (!isTomorrow) {
-      if (!hasSchedule) {
-        logger.warn("checkAndSendReminders: skip, no schedule set", { studentId })
-      }
+    if (!student.schedule) {
       continue
     }
 
-    if (!hasPlatform) {
-      logger.warn("checkAndSendReminders: lesson is tomorrow but no messaging channel linked", {
-        studentId,
-      })
+    try {
+      await ensureUpcomingLesson(doc.id)
+    } catch (error) {
+      logger.error("reminders: failed to ensure upcoming lesson draft", { studentId: doc.id, error })
+    }
+  }
+}
+
+async function findUpcomingLessonsInWindow(windowStart, windowEnd) {
+  const snapshot = await db
+    .collectionGroup(LESSONS_SUBCOLLECTION)
+    .where("status", "==", "upcoming")
+    .where("date", ">=", windowStart)
+    .where("date", "<", windowEnd)
+    .get()
+
+  return snapshot.docs
+}
+
+// dailyReminderMidday: runs once a day at 12:00 Moscow time. Reminds every
+// student whose upcoming lesson falls on the Moscow calendar day "tomorrow".
+async function dailyReminderMidday() {
+  logger.info("dailyReminderMidday: starting")
+
+  await ensureUpcomingDraftsForAllStudents()
+
+  const now = new Date()
+  const tomorrowMidnight = moscowMidnight(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+  const dayAfterTomorrowMidnight = new Date(tomorrowMidnight.getTime() + 24 * 60 * 60 * 1000)
+
+  const lessonDocs = await findUpcomingLessonsInWindow(tomorrowMidnight, dayAfterTomorrowMidnight)
+
+  logger.info("dailyReminderMidday: lessons found", { count: lessonDocs.length })
+
+  for (const lessonDoc of lessonDocs) {
+    const lesson = lessonDoc.data()
+    const studentId = lessonDoc.ref.parent.parent.id
+
+    if (lesson.remindersSent?.middaySent) {
+      logger.info("dailyReminderMidday: already sent, skipping", { studentId, lessonId: lessonDoc.id })
+      continue
     }
 
-    logger.info("checkAndSendReminders: lesson is tomorrow, sending reminder", { studentId })
-
     try {
-      await sendReminderForStudent(studentId, student)
-      logger.info("checkAndSendReminders: reminder flow completed", { studentId })
+      const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+      if (!studentSnapshot.exists || !studentSnapshot.data().schedule) {
+        continue
+      }
+      const student = studentSnapshot.data()
+
+      const assignmentText = lesson.homework?.assignment?.text ?? ""
+      const message = botMessages.REMINDER_MIDDAY(student.schedule.time, assignmentText)
+
+      const sent = await sendReminderToStudent(studentId, message)
+
+      if (sent) {
+        await lessonDoc.ref.update({ "remindersSent.middaySent": true })
+        logger.info("dailyReminderMidday: reminder sent", { studentId, lessonId: lessonDoc.id })
+      }
     } catch (error) {
-      logger.error("checkAndSendReminders: failed to send reminder", { studentId, error })
+      logger.error("dailyReminderMidday: failed to send reminder", {
+        studentId,
+        lessonId: lessonDoc.id,
+        error,
+      })
     }
   }
 
-  logger.info("checkAndSendReminders: finished")
+  logger.info("dailyReminderMidday: finished")
 }
 
-module.exports = { checkAndSendReminders }
+// dailyReminderPreLesson: runs every hour on the hour. Reminds every student
+// whose upcoming lesson starts within the next 2 hours.
+async function dailyReminderPreLesson() {
+  logger.info("dailyReminderPreLesson: starting")
+
+  const now = new Date()
+  const windowEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000)
+
+  const lessonDocs = await findUpcomingLessonsInWindow(now, windowEnd)
+
+  logger.info("dailyReminderPreLesson: lessons found", { count: lessonDocs.length })
+
+  for (const lessonDoc of lessonDocs) {
+    const lesson = lessonDoc.data()
+    const studentId = lessonDoc.ref.parent.parent.id
+
+    if (lesson.remindersSent?.preLessonSent) {
+      logger.info("dailyReminderPreLesson: already sent, skipping", { studentId, lessonId: lessonDoc.id })
+      continue
+    }
+
+    try {
+      const assignmentText = lesson.homework?.assignment?.text ?? ""
+      const message = botMessages.REMINDER_PRE_LESSON(assignmentText)
+
+      const sent = await sendReminderToStudent(studentId, message)
+
+      if (sent) {
+        await lessonDoc.ref.update({ "remindersSent.preLessonSent": true })
+        logger.info("dailyReminderPreLesson: reminder sent", { studentId, lessonId: lessonDoc.id })
+      }
+    } catch (error) {
+      logger.error("dailyReminderPreLesson: failed to send reminder", {
+        studentId,
+        lessonId: lessonDoc.id,
+        error,
+      })
+    }
+  }
+
+  logger.info("dailyReminderPreLesson: finished")
+}
+
+module.exports = { dailyReminderMidday, dailyReminderPreLesson }

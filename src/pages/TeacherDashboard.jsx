@@ -6,9 +6,16 @@ import { RegistrationLinkDialog } from "@/components/teacher/registration-link-d
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { Spinner } from "@/components/ui/spinner"
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { subscribeToStudents } from "@/firebase/students"
 import { signOutTeacher } from "@/firebase/auth"
-import { subscribeToCompletedLessons, subscribeToUpcomingLessons } from "@/firebase/lessons"
+import {
+  subscribeToCompletedLessons,
+  subscribeToUpcomingLessons,
+  proposeReschedule,
+  confirmReschedule,
+  cancelReschedule,
+} from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
 import {
   getCalendarEmbedInfo,
@@ -47,18 +54,130 @@ function selectClusteredUpcomingLessons(lessons) {
   return selected
 }
 
+// datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
+// timezone, not UTC — offsetting by getTimezoneOffset() before calling
+// toISOString() (which is always UTC) gets that local wall-clock string.
+function toDatetimeLocal(date) {
+  const offset = date.getTimezoneOffset() * 60000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+// The dialog is remounted (via a `key` on its usage below) every time it
+// opens, so these lazy initial values — computed once per mount — pick up
+// the lesson's current date fresh each time, without needing an effect to
+// resync state that React already owns.
+function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+  const [initialDatePart, initialTimePart] = initialDate
+    ? toDatetimeLocal(initialDate).split("T")
+    : ["", ""]
+  const [date, setDate] = useState(initialDatePart)
+  const [time, setTime] = useState(initialTimePart)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setDate("")
+      setTime("")
+      setError("")
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!date || !time || submitting) return
+
+    setSubmitting(true)
+    setError("")
+    try {
+      const proposedDate = new Date(`${date}T${time}:00`)
+      await proposeReschedule(studentId, lessonId, proposedDate)
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to propose reschedule:", err)
+      setError(err?.message || "Не удалось отправить запрос на перенос")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogTitle>Предложить перенос</DialogTitle>
+        <DialogDescription>Выберите новую дату и время урока для ученика</DialogDescription>
+
+        <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              disabled={submitting}
+              className="h-11 flex-1 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+            />
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              disabled={submitting}
+              className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+            />
+          </div>
+
+          {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
+
+          <Button type="submit" size="lg" disabled={!date || !time || submitting} className="h-12">
+            {submitting ? "Отправляем..." : "Отправить запрос ученику"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function UpcomingLessonCard({ lesson, studentName }) {
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
+  const [rescheduleActionPending, setRescheduleActionPending] = useState(false)
 
   const hasAssignment =
     lesson.homework.assignment.text.trim() !== "" || lesson.homework.assignment.files.length > 0
   const hasSubmission = lesson.homework.submission.files.length > 0
 
+  async function handleConfirmReschedule() {
+    if (rescheduleActionPending) return
+    setRescheduleActionPending(true)
+    try {
+      await confirmReschedule(lesson.studentId, lesson.id)
+    } catch (err) {
+      console.error("Failed to confirm reschedule:", err)
+    } finally {
+      setRescheduleActionPending(false)
+    }
+  }
+
+  async function handleCancelReschedule() {
+    if (rescheduleActionPending) return
+    setRescheduleActionPending(true)
+    try {
+      await cancelReschedule(lesson.studentId, lesson.id)
+    } catch (err) {
+      console.error("Failed to cancel reschedule:", err)
+    } finally {
+      setRescheduleActionPending(false)
+    }
+  }
+
   return (
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <p className="truncate font-semibold text-card-foreground">{studentName}</p>
-        <p className="text-xs text-muted-foreground">{formatLessonDateTime(lesson.date)}</p>
+        <p className="text-xs text-muted-foreground">
+          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+          {lesson.rescheduled ? <span className="ml-1.5 font-semibold text-primary">Перенесён</span> : null}
+        </p>
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
           <span className={hasAssignment ? "font-semibold text-primary" : "text-muted-foreground"}>
             {hasAssignment ? "Задание добавлено ✓" : "Задание не добавлено"}
@@ -67,11 +186,47 @@ function UpcomingLessonCard({ lesson, studentName }) {
             {hasSubmission ? "ДЗ получено ✓" : "ДЗ не прислано"}
           </span>
         </div>
+
+        {lesson.rescheduleStatus === "pending_student" ? (
+          <span className="mt-2 inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+            Ожидает подтверждения ученика
+          </span>
+        ) : null}
+
+        {lesson.rescheduleStatus === "pending_teacher" ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+              Ученик предлагает перенос
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmReschedule}
+              disabled={rescheduleActionPending}
+            >
+              Подтвердить
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCancelReschedule}
+              disabled={rescheduleActionPending}
+            >
+              Отклонить
+            </Button>
+          </div>
+        ) : null}
       </div>
 
-      <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
-        Открыть
-      </Button>
+      <div className="flex shrink-0 gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => setRescheduleDialogOpen(true)}>
+          Перенести
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+          Открыть
+        </Button>
+      </div>
 
       <HomeworkLessonDialog
         studentId={lesson.studentId}
@@ -79,6 +234,15 @@ function UpcomingLessonCard({ lesson, studentName }) {
         lessonId={lesson.id}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+      />
+
+      <RescheduleDialog
+        key={rescheduleDialogOpen ? "open" : "closed"}
+        studentId={lesson.studentId}
+        lessonId={lesson.id}
+        initialDate={lesson.rescheduledDate ?? lesson.date}
+        open={rescheduleDialogOpen}
+        onOpenChange={setRescheduleDialogOpen}
       />
     </li>
   )
@@ -91,7 +255,9 @@ function PastLessonCard({ lesson, studentName }) {
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <p className="truncate font-semibold text-card-foreground">{studentName}</p>
-        <p className="text-xs text-muted-foreground">{formatLessonDateTime(lesson.date)}</p>
+        <p className="text-xs text-muted-foreground">
+          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+        </p>
         {lesson.topic ? <p className="mt-1.5 text-xs text-muted-foreground">{lesson.topic}</p> : null}
       </div>
 

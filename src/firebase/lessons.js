@@ -17,6 +17,9 @@ import { db, functions } from "./firebase"
 const ensureUpcomingLessonCallable = httpsCallable(functions, "ensureUpcomingLesson")
 const updateHomeworkAssignmentCallable = httpsCallable(functions, "updateHomeworkAssignment")
 const completeLessonCallable = httpsCallable(functions, "completeLesson")
+const proposeRescheduleCallable = httpsCallable(functions, "proposeReschedule")
+const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
+const cancelRescheduleCallable = httpsCallable(functions, "cancelReschedule")
 
 function mapLessonDoc(id, studentId, data) {
   const submissionFiles = Array.isArray(data.homework?.submission?.files)
@@ -46,6 +49,11 @@ function mapLessonDoc(id, studentId, data) {
         submittedAt: data.homework?.submission?.submittedAt?.toDate?.() ?? null,
       },
     },
+    rescheduled: Boolean(data.rescheduled),
+    rescheduledDate: data.rescheduledDate?.toDate?.() ?? null,
+    rescheduleStatus: data.rescheduleStatus ?? null,
+    rescheduleInitiator: data.rescheduleInitiator ?? null,
+    rescheduleProposedDate: data.rescheduleProposedDate?.toDate?.() ?? null,
   }
 }
 
@@ -60,6 +68,21 @@ export async function updateHomeworkAssignment(studentId, lessonId, { text, file
 
 export async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic }) {
   await completeLessonCallable({ studentId, lessonId, attendance, homeworkDone, rating, topic })
+}
+
+// initiator is always "teacher" here — this wrapper is only used from the
+// teacher UI. Students propose reschedules by texting the bot instead,
+// which calls core/lessons.js's proposeReschedule directly.
+export async function proposeReschedule(studentId, lessonId, proposedDate) {
+  await proposeRescheduleCallable({ studentId, lessonId, proposedDate: proposedDate.toISOString() })
+}
+
+export async function confirmReschedule(studentId, lessonId) {
+  await confirmRescheduleCallable({ studentId, lessonId })
+}
+
+export async function cancelReschedule(studentId, lessonId) {
+  await cancelRescheduleCallable({ studentId, lessonId })
 }
 
 // Direct client write (same pattern as updateStudentSchedule) rather than a

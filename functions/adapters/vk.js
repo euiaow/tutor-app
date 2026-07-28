@@ -10,7 +10,12 @@ const {
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
   recordHomeworkSubmission,
+  proposeReschedule,
+  confirmReschedule,
+  cancelReschedule,
 } = require("../core/lessons")
+const botMessages = require("../core/botMessages")
+const { parseRescheduleDateInput } = require("../core/schedule")
 
 const SESSIONS_COLLECTION = "vkSessions"
 
@@ -22,13 +27,27 @@ const VK_CONFIRMATION_CODE = defineSecret("VK_CONFIRMATION_CODE")
 
 const VK_API_VERSION = "5.199"
 
-const NO_SESSION_REPLY = "Обратись к репетитору за ссылкой"
-
 function isFourDigitPin(text) {
   return /^\d{4}$/.test(text.trim())
 }
 
-async function sendMessage(peerId, text) {
+function isRescheduleRequestText(text) {
+  const normalized = text.trim().toLowerCase()
+  return normalized.includes("перенести урок") || normalized.includes("хочу перенести")
+}
+
+function parseVkPayload(rawPayload) {
+  if (typeof rawPayload !== "string") {
+    return null
+  }
+  try {
+    return JSON.parse(rawPayload)
+  } catch {
+    return null
+  }
+}
+
+async function sendMessage(peerId, text, options = {}) {
   const token = VK_GROUP_TOKEN.value()
   const url = "https://api.vk.com/method/messages.send"
   const params = new URLSearchParams({
@@ -38,6 +57,10 @@ async function sendMessage(peerId, text) {
     message: text,
     random_id: String(Math.floor(Math.random() * 2 ** 31)),
   })
+
+  if (options.keyboard) {
+    params.set("keyboard", JSON.stringify(options.keyboard))
+  }
 
   try {
     const response = await fetch(url, {
@@ -74,9 +97,18 @@ async function handleNoSessionMessage(peerId, text, ref) {
 
   const tokenData = await getRegistrationTokenStatus(token)
 
-  if (!tokenData || tokenData.status !== "pending") {
-    logger.warn("VK token invalid or already used", { peerId, token })
-    await sendMessage(peerId, "Ссылка недействительна, обратись к репетитору за новой")
+  // No matching token at all: this is just a regular message from someone
+  // who hasn't started registration, not a broken/used link — greet them
+  // instead of telling them their (nonexistent) link is invalid.
+  if (!tokenData) {
+    logger.info("VK message text/ref is not a known token", { peerId })
+    await sendMessage(peerId, botMessages.WELCOME_NO_TOKEN())
+    return
+  }
+
+  if (tokenData.status !== "pending") {
+    logger.warn("VK token already used", { peerId, token })
+    await sendMessage(peerId, botMessages.INVALID_TOKEN())
     return
   }
 
@@ -86,7 +118,7 @@ async function handleNoSessionMessage(peerId, text, ref) {
     .set({ token, step: "awaiting_name" })
 
   logger.info("VK session started", { peerId, token, step: "awaiting_name" })
-  await sendMessage(peerId, "Привет! Как тебя зовут? (Имя и Фамилия)")
+  await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
 }
 
 async function handleAwaitingName(peerId, sessionRef, session, text) {
@@ -95,7 +127,7 @@ async function handleAwaitingName(peerId, sessionRef, session, text) {
   await sessionRef.set({ ...session, name, step: "awaiting_pin" })
 
   logger.info("VK name captured", { peerId, step: "awaiting_pin" })
-  await sendMessage(peerId, "Отлично! Придумай 4-значный код для входа в личный кабинет")
+  await sendMessage(peerId, botMessages.NAME_SAVED(name))
 }
 
 async function handleAwaitingPin(peerId, sessionRef, session, text) {
@@ -103,7 +135,7 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
 
   if (!isFourDigitPin(pin)) {
     logger.info("VK pin rejected: not 4 digits", { peerId })
-    await sendMessage(peerId, "Код должен состоять ровно из 4 цифр. Попробуй ещё раз")
+    await sendMessage(peerId, botMessages.INVALID_PIN())
     return
   }
 
@@ -119,16 +151,13 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
     logger.info("VK registration completed", { peerId, studentId })
     await sendMessage(
       peerId,
-      `Готово! Твоя ссылка на личный кабинет: https://${PLACEHOLDER_DOMAIN}/student/${studentId}`,
+      botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`),
     )
   } catch (error) {
     logger.error("VK registration failed", { peerId, token: session.token, error })
     await sessionRef.delete()
 
-    const message =
-      error instanceof HttpsError
-        ? error.message
-        : "Не удалось завершить регистрацию. Обратись к репетитору за новой ссылкой"
+    const message = error instanceof HttpsError ? error.message : botMessages.REGISTRATION_FAILED()
     await sendMessage(peerId, message)
   }
 }
@@ -181,12 +210,86 @@ async function downloadFileFromUrl(url) {
   return Buffer.from(await response.arrayBuffer())
 }
 
+async function handleRescheduleRequest(peerId, studentId) {
+  const lessonsSnapshot = await db
+    .collection("students")
+    .doc(studentId)
+    .collection("lessons")
+    .where("status", "==", "upcoming")
+    .limit(1)
+    .get()
+
+  if (lessonsSnapshot.empty) {
+    await sendMessage(peerId, botMessages.RESCHEDULE_NO_UPCOMING_LESSON())
+    return
+  }
+
+  const lessonId = lessonsSnapshot.docs[0].id
+
+  await db
+    .collection(SESSIONS_COLLECTION)
+    .doc(String(peerId))
+    .set({ step: "awaiting_reschedule_date", lessonId })
+
+  logger.info("VK reschedule request started", { peerId, studentId, lessonId })
+  await sendMessage(peerId, botMessages.RESCHEDULE_ASK_DATE())
+}
+
+async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
+  const proposedDate = parseRescheduleDateInput(text)
+
+  if (!proposedDate) {
+    await sendMessage(peerId, botMessages.RESCHEDULE_INVALID_DATE())
+    return
+  }
+
+  await sessionRef.delete()
+
+  const studentId = await findStudentIdByChatIdentity("vk", peerId)
+  if (!studentId) {
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    return
+  }
+
+  try {
+    await proposeReschedule(studentId, session.lessonId, proposedDate, "student")
+    logger.info("VK reschedule proposed by student", { peerId, studentId, lessonId: session.lessonId })
+    await sendMessage(peerId, botMessages.RESCHEDULE_REQUEST_SENT())
+  } catch (error) {
+    logger.error("VK reschedule proposal failed", { peerId, studentId, error })
+    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+  }
+}
+
+// VK's keyboard buttons are plain "text" actions: pressing one sends a
+// regular message whose text equals the button label, with `payload`
+// carrying the JSON command — there's no separate callback API like
+// Telegram's answerCallbackQuery.
+async function handleReschedulePayload(peerId, payload) {
+  const studentId = await findStudentIdByChatIdentity("vk", peerId)
+  if (!studentId) {
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    return
+  }
+
+  try {
+    if (payload.command === "confirm_reschedule") {
+      await confirmReschedule(studentId, payload.lessonId, "student")
+    } else {
+      await cancelReschedule(studentId, payload.lessonId)
+    }
+  } catch (error) {
+    logger.error("VK reschedule payload failed", { peerId, payload, error })
+    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+  }
+}
+
 async function handleHomeworkFile(peerId, attachment) {
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
 
   if (!studentId) {
     logger.warn("VK homework file received but no student is linked to this chat", { peerId })
-    await sendMessage(peerId, "Не нашли твой аккаунт. Обратись к репетитору за новой ссылкой")
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
     return
   }
 
@@ -195,13 +298,13 @@ async function handleHomeworkFile(peerId, attachment) {
   try {
     const buffer = await downloadFileFromUrl(attachment.url)
     const url = await uploadHomeworkFile(studentId, buffer, attachment.mimeType)
-    await recordHomeworkSubmission(studentId, url)
+    const lessonId = await recordHomeworkSubmission(studentId, url)
 
-    logger.info("VK homework file saved", { peerId, studentId })
-    await sendMessage(peerId, "Домашка получена! ✓")
+    logger.info("VK homework file saved", { peerId, studentId, lessonId })
+    await sendMessage(peerId, lessonId ? botMessages.HOMEWORK_RECEIVED() : botMessages.HOMEWORK_NO_LESSON())
   } catch (error) {
     logger.error("Failed to process VK homework file", { peerId, studentId, error })
-    await sendMessage(peerId, "Не удалось сохранить файл, попробуй ещё раз")
+    await sendMessage(peerId, botMessages.HOMEWORK_SAVE_FAILED())
   }
 }
 
@@ -213,6 +316,13 @@ async function handleMessageNew(object) {
 
   if (!peerId) {
     logger.info("VK message_new ignored: no peer id", { object })
+    return
+  }
+
+  const payload = parseVkPayload(message?.payload)
+  if (payload?.command === "confirm_reschedule" || payload?.command === "cancel_reschedule") {
+    logger.info("VK reschedule button pressed", { peerId, payload })
+    await handleReschedulePayload(peerId, payload)
     return
   }
 
@@ -234,6 +344,14 @@ async function handleMessageNew(object) {
   const sessionSnapshot = await sessionRef.get()
 
   if (!sessionSnapshot.exists) {
+    if (isRescheduleRequestText(text)) {
+      const studentId = await findStudentIdByChatIdentity("vk", peerId)
+      if (studentId) {
+        await handleRescheduleRequest(peerId, studentId)
+        return
+      }
+    }
+
     await handleNoSessionMessage(peerId, text, ref)
     return
   }
@@ -250,8 +368,13 @@ async function handleMessageNew(object) {
     return
   }
 
+  if (session.step === "awaiting_reschedule_date") {
+    await handleAwaitingRescheduleDate(peerId, sessionRef, session, text)
+    return
+  }
+
   logger.warn("VK session in unknown step", { peerId, step: session.step })
-  await sendMessage(peerId, NO_SESSION_REPLY)
+  await sendMessage(peerId, botMessages.UNKNOWN_MESSAGE())
 }
 
 async function handleEvent(body) {

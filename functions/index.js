@@ -23,8 +23,16 @@ const {
   updateLessonEvent,
   deleteLessonEvent,
 } = require("./core/googleCalendar")
-const { ensureUpcomingLesson, updateHomeworkAssignment, completeLesson } = require("./core/lessons")
-const { checkAndSendReminders } = require("./reminders")
+const {
+  ensureUpcomingLesson,
+  syncUpcomingLessonToSchedule,
+  updateHomeworkAssignment,
+  completeLesson,
+  proposeReschedule,
+  confirmReschedule,
+  cancelReschedule,
+} = require("./core/lessons")
+const { dailyReminderMidday, dailyReminderPreLesson } = require("./reminders")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -141,10 +149,95 @@ exports.completeLesson = onCall(async (request) => {
   }
 })
 
-exports.dailyLessonReminders = onSchedule(
+// 12:00 Moscow time (== 9:00 UTC) — reminds students whose lesson is
+// tomorrow. timeZone is set explicitly rather than hand-converting to a UTC
+// cron expression, so the fire time stays correct even if Moscow's offset
+// rules ever change.
+exports.proposeReschedule = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonId, proposedDate } = request.data ?? {}
+
+    try {
+      const date = new Date(proposedDate)
+      const rescheduleStatus = await proposeReschedule(studentId, lessonId, date, "teacher")
+      return { rescheduleStatus }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to propose reschedule", error)
+      throw new HttpsError("internal", "Не удалось предложить перенос урока")
+    }
+  },
+)
+
+exports.confirmReschedule = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonId } = request.data ?? {}
+
+    try {
+      await confirmReschedule(studentId, lessonId, "teacher")
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to confirm reschedule", error)
+      throw new HttpsError("internal", "Не удалось подтвердить перенос урока")
+    }
+  },
+)
+
+exports.cancelReschedule = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonId } = request.data ?? {}
+
+    try {
+      await cancelReschedule(studentId, lessonId)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to cancel reschedule", error)
+      throw new HttpsError("internal", "Не удалось отменить перенос урока")
+    }
+  },
+)
+
+exports.dailyReminderMidday = onSchedule(
   { schedule: "0 12 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async () => {
-    await checkAndSendReminders()
+    await dailyReminderMidday()
+  },
+)
+
+// Every hour on the hour — reminds students whose lesson starts within the
+// next 2 hours. Hourly cadence needs no explicit timeZone: the top of every
+// hour is the same instant regardless of which zone the cron string is read
+// in.
+exports.dailyReminderPreLesson = onSchedule(
+  { schedule: "0 * * * *", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async () => {
+    await dailyReminderPreLesson()
   },
 )
 
@@ -300,6 +393,40 @@ function isScheduleEqual(a, b) {
     (a.durationMinutes ?? 60) === (b.durationMinutes ?? 60)
   )
 }
+
+// Reacts to every students/{studentId} write (creation via registration,
+// or a schedule edit from the dashboard) rather than requiring each call
+// site that writes `schedule` to remember to also call ensureUpcomingLesson
+// itself — updateStudentSchedule is a plain client-side updateDoc today, not
+// a callable, so a Firestore trigger is the only place guaranteed to see
+// every schedule write regardless of where it came from.
+exports.syncUpcomingLessonOnScheduleChange = onDocumentWritten(
+  { document: "students/{studentId}" },
+  async (event) => {
+    const { studentId } = event.params
+    const beforeSnapshot = event.data.before
+    const afterSnapshot = event.data.after
+    const before = beforeSnapshot.exists ? beforeSnapshot.data() : null
+    const after = afterSnapshot.exists ? afterSnapshot.data() : null
+
+    if (!after) {
+      return
+    }
+
+    const beforeSchedule = before?.schedule ?? null
+    const afterSchedule = after.schedule ?? null
+
+    if (isScheduleEqual(beforeSchedule, afterSchedule)) {
+      return
+    }
+
+    try {
+      await syncUpcomingLessonToSchedule(studentId)
+    } catch (error) {
+      logger.error("syncUpcomingLessonOnScheduleChange: failed", { studentId, error })
+    }
+  },
+)
 
 exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
   { document: "students/{studentId}", secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },

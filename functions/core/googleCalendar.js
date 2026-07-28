@@ -1,23 +1,24 @@
 const { google } = require("googleapis")
 const logger = require("firebase-functions/logger")
 const { getAuthorizedClient } = require("./googleAuth")
-const { getNextLessonDate } = require("./schedule")
+const { getNextLessonDate, getZonedParts, SCHEDULE_TIME_ZONE } = require("./schedule")
 
 const CALENDAR_ID = "primary"
-const CALENDAR_TIME_ZONE = "Europe/Moscow"
+const CALENDAR_TIME_ZONE = SCHEDULE_TIME_ZONE
 
 function pad(number) {
   return String(number).padStart(2, "0")
 }
 
-// Cloud Functions run in UTC, so getNextLessonDate's Date object carries
-// schedule.time's hour/minute as its UTC-as-naive components. Formatting
-// with toISOString() would append "Z" (UTC) and Google would ignore the
-// timeZone field, shifting the lesson by Moscow's offset. A floating
-// (offset-less) dateTime paired with timeZone: "Europe/Moscow" tells
-// Google to interpret these numbers as Moscow wall-clock time instead.
+// getNextLessonDate returns a real UTC instant, but Google Calendar needs a
+// floating (offset-less) dateTime paired with timeZone: "Europe/Moscow" to
+// display Moscow wall-clock time regardless of what timezone the Cloud
+// Functions runtime itself happens to be in — so the instant is re-read
+// through Europe/Moscow rather than via getHours()/getMinutes(), which
+// would reflect the runtime's own local timezone instead.
 function toFloatingDateTime(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:00`
+  const parts = getZonedParts(date, CALENDAR_TIME_ZONE)
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00`
 }
 
 function buildEventResource(student) {
@@ -104,6 +105,60 @@ async function updateLessonEvent(eventId, student) {
   }
 }
 
+// Reschedules a single occurrence of the student's recurring lesson event
+// without touching the recurring series itself: looks up the specific
+// instance nearest the lesson's original date via the Calendar API's
+// instances() endpoint and patches just that instance's start/end. Patching
+// the master event directly (as updateLessonEvent does) would shift the
+// entire weekly series, not just this one lesson.
+async function rescheduleLessonEvent(eventId, originalDate, newDate, durationMinutes) {
+  if (!eventId || !originalDate || !newDate) {
+    return
+  }
+
+  const calendar = await getCalendarOrNull()
+  if (!calendar) {
+    return
+  }
+
+  try {
+    const instancesResponse = await calendar.events.instances({
+      calendarId: CALENDAR_ID,
+      eventId,
+      timeMin: new Date(originalDate.getTime() - 60 * 60 * 1000).toISOString(),
+      timeMax: new Date(originalDate.getTime() + 60 * 60 * 1000).toISOString(),
+    })
+
+    const instance = instancesResponse.data.items?.[0]
+    if (!instance) {
+      logger.warn("rescheduleLessonEvent: no matching instance found near original date", {
+        eventId,
+        originalDate: originalDate.toISOString(),
+      })
+      return
+    }
+
+    const newEnd = new Date(newDate.getTime() + (durationMinutes ?? 60) * 60 * 1000)
+
+    await calendar.events.patch({
+      calendarId: CALENDAR_ID,
+      eventId: instance.id,
+      requestBody: {
+        start: { dateTime: toFloatingDateTime(newDate), timeZone: CALENDAR_TIME_ZONE },
+        end: { dateTime: toFloatingDateTime(newEnd), timeZone: CALENDAR_TIME_ZONE },
+      },
+    })
+
+    logger.info("rescheduleLessonEvent: instance rescheduled", { eventId, instanceId: instance.id })
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      logger.warn("rescheduleLessonEvent: event not found, skipping", { eventId })
+      return
+    }
+    throw error
+  }
+}
+
 async function deleteLessonEvent(eventId) {
   const calendar = await getCalendarOrNull()
   if (!calendar) {
@@ -124,4 +179,4 @@ async function deleteLessonEvent(eventId) {
   }
 }
 
-module.exports = { createLessonEvent, updateLessonEvent, deleteLessonEvent }
+module.exports = { createLessonEvent, updateLessonEvent, deleteLessonEvent, rescheduleLessonEvent }

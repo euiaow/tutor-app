@@ -41,7 +41,12 @@ function formatDate(date) {
     return "—"
   }
 
-  return date.toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" })
+  return date.toLocaleDateString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  })
 }
 
 function Badge({ label, className }) {

@@ -1,14 +1,13 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { CalendarDays, Sparkles, Plus, NotebookText, Pencil } from "lucide-react"
+import { CalendarDays, Sparkles, NotebookText, Pencil } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
-import { addXpToStudent, updateStudentSchedule } from "@/firebase/students"
+import { updateStudentSchedule } from "@/firebase/students"
 import { DAY_OPTIONS, getNextLessonDate, formatNextLessonDate } from "@/lib/schedule"
 
 const XP_PER_LEVEL = 100
 
 export function StudentCard({ student }) {
-  const [isAddingXp, setIsAddingXp] = useState(false)
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
   const [isEditingSchedule, setIsEditingSchedule] = useState(false)
   const [isHomeworkDialogOpen, setIsHomeworkDialogOpen] = useState(false)
@@ -22,19 +21,6 @@ export function StudentCard({ student }) {
 
   const xpPercent = Math.min(100, Math.round((student.xp / XP_PER_LEVEL) * 100))
   const xpToNextLevel = XP_PER_LEVEL - student.xp
-
-  async function handleAddXp() {
-    if (isAddingXp) return
-
-    setIsAddingXp(true)
-    try {
-      await addXpToStudent(student.id, 10)
-    } catch (error) {
-      console.error("Failed to add XP:", error)
-    } finally {
-      setIsAddingXp(false)
-    }
-  }
 
   async function handleScheduleChange(field, value) {
     const nextSchedule = {
@@ -142,15 +128,6 @@ export function StudentCard({ student }) {
       )}
 
       <div className="flex gap-2 pt-1">
-        <button
-          type="button"
-          onClick={handleAddXp}
-          disabled={isAddingXp}
-          className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600/40 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Plus className="size-4" aria-hidden="true" />
-          {isAddingXp ? "..." : "10 XP"}
-        </button>
         <button
           type="button"
           onClick={() => setIsHomeworkDialogOpen(true)}

@@ -281,7 +281,7 @@ export function HomeworkLessonDialog({
       <DialogContent className="max-w-lg">
         <DialogTitle>{studentName}</DialogTitle>
         <DialogDescription>
-          {lesson?.date ? formatLessonDateTime(lesson.date) : "Следующий урок"}
+          {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
         </DialogDescription>
 
         {preparing ? (
@@ -533,7 +533,7 @@ export function HomeworkLessonDialog({
                         <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
                         <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatLessonDateTime(lesson.date)}
+                          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
                         </span>
                       </li>
                     ))}

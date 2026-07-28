@@ -55,7 +55,9 @@ function NextLessonPlate({ studentId, hasSchedule }) {
             id="next-lesson-title"
             className={`mt-2 font-extrabold text-balance ${showPlaceholder ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl"}`}
           >
-            {showPlaceholder ? "Преподаватель ещё не добавил расписание" : formatLessonDateTime(lesson.date)}
+            {showPlaceholder
+              ? "Преподаватель ещё не добавил расписание"
+              : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
           </h2>
         </div>
 

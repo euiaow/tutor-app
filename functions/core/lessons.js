@@ -5,6 +5,8 @@ const { HttpsError } = require("firebase-functions/v2/https")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 const { getNextLessonDate } = require("./schedule")
+const botMessages = require("./botMessages")
+const { rescheduleLessonEvent } = require("./googleCalendar")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -60,6 +62,11 @@ async function ensureUpcomingLesson(studentId) {
     date: Timestamp.fromDate(nextDate),
     topic: "",
     homework: emptyHomework(),
+    rescheduled: false,
+    rescheduledDate: null,
+    rescheduleStatus: null,
+    rescheduleInitiator: null,
+    rescheduleProposedDate: null,
     createdAt: FieldValue.serverTimestamp(),
   })
 
@@ -69,6 +76,57 @@ async function ensureUpcomingLesson(studentId) {
   })
 
   return draft.id
+}
+
+// Unlike ensureUpcomingLesson (a no-op once a draft exists), this recomputes
+// the draft's date whenever the recurring schedule itself changes — so
+// editing a student's day/time actually moves their upcoming lesson instead
+// of leaving it stuck on the date it was first created with. A lesson with
+// an active reschedule (pending or already confirmed) is left alone: a
+// one-off reschedule shouldn't be silently overwritten by a later schedule
+// edit that has nothing to do with it.
+async function syncUpcomingLessonToSchedule(studentId) {
+  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+
+  if (!studentSnapshot.exists) {
+    logger.warn("syncUpcomingLessonToSchedule: student not found", { studentId })
+    return null
+  }
+
+  const schedule = studentSnapshot.data().schedule
+  const nextDate = getNextLessonDate(schedule)
+
+  if (!nextDate) {
+    logger.info("syncUpcomingLessonToSchedule: no schedule set, nothing to sync", { studentId })
+    return null
+  }
+
+  const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").limit(1).get()
+
+  if (existingUpcoming.empty) {
+    return ensureUpcomingLesson(studentId)
+  }
+
+  const existingDoc = existingUpcoming.docs[0]
+  const existingLesson = existingDoc.data()
+
+  if (existingLesson.rescheduleStatus) {
+    logger.info("syncUpcomingLessonToSchedule: skip, lesson has an active reschedule", {
+      studentId,
+      lessonId: existingDoc.id,
+      rescheduleStatus: existingLesson.rescheduleStatus,
+    })
+    return existingDoc.id
+  }
+
+  await existingDoc.ref.update({ date: Timestamp.fromDate(nextDate) })
+
+  logger.info("syncUpcomingLessonToSchedule: updated draft date to match new schedule", {
+    studentId,
+    lessonId: existingDoc.id,
+  })
+
+  return existingDoc.id
 }
 
 async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
@@ -148,6 +206,188 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
   logger.info("completeLesson: ensured next upcoming lesson", { studentId, nextLessonId })
 }
 
+function assertRescheduleActor(value) {
+  if (value !== "teacher" && value !== "student") {
+    throw new HttpsError("invalid-argument", "Некорректная роль участника переноса")
+  }
+}
+
+// A one-off exception for a single lesson — the recurring `schedule` on the
+// student doc is left untouched. `initiator` records who proposed, so the
+// *other* side is the one who has to confirm (see confirmReschedule).
+async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+  if (!(proposedDate instanceof Date) || Number.isNaN(proposedDate.getTime())) {
+    throw new HttpsError("invalid-argument", "Некорректная дата переноса")
+  }
+  assertRescheduleActor(initiator)
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+  const lesson = snapshot.data()
+
+  const rescheduleStatus = initiator === "teacher" ? "pending_student" : "pending_teacher"
+
+  await lessonRef.update({
+    rescheduleProposedDate: Timestamp.fromDate(proposedDate),
+    rescheduleInitiator: initiator,
+    rescheduleStatus,
+  })
+
+  logger.info("proposeReschedule: proposal recorded", {
+    studentId,
+    lessonId,
+    initiator,
+    rescheduleStatus,
+  })
+
+  // Required lazily: reminderUtils/teacherNotifier pull in the bot adapters,
+  // which require this module for findStudentIdByChatIdentity etc. — a
+  // top-level require here would create a circular require. By call time
+  // the whole module graph has already finished loading, so this is safe.
+  const { sendReminderToStudent } = require("./reminderUtils")
+  const { sendMessageToTeacher } = require("./teacherNotifier")
+
+  const oldDate = lesson.date?.toDate?.() ?? null
+
+  if (initiator === "teacher") {
+    const keyboards = botMessages.RESCHEDULE_KEYBOARDS(lessonId)
+    await sendReminderToStudent(studentId, botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate), {
+      telegramReplyMarkup: keyboards.telegram,
+      vkKeyboard: keyboards.vk,
+    })
+  } else {
+    const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+    const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
+    await sendMessageToTeacher(botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate))
+  }
+
+  return rescheduleStatus
+}
+
+// confirmedBy is whoever is CONFIRMING, which must be the side that did NOT
+// initiate — you can't confirm your own proposal.
+async function confirmReschedule(studentId, lessonId, confirmedBy) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+  assertRescheduleActor(confirmedBy)
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+  const lesson = snapshot.data()
+
+  const expectedStatus = confirmedBy === "teacher" ? "pending_teacher" : "pending_student"
+  if (lesson.rescheduleStatus !== expectedStatus) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Нельзя подтвердить собственное предложение о переносе, либо перенос уже обработан",
+    )
+  }
+
+  const proposedDate = lesson.rescheduleProposedDate
+  if (!proposedDate) {
+    throw new HttpsError("failed-precondition", "Нет предложенной даты переноса")
+  }
+
+  const originalDate = lesson.date?.toDate?.() ?? null
+
+  // `date` itself moves to the confirmed time (not just rescheduledDate) so
+  // every other system that reads it — reminders' date-range queries, the
+  // "Ближайшие уроки" ordering, etc. — picks up the real lesson time.
+  // rescheduled/rescheduledDate stay set as the "this was moved" audit trail
+  // the UI badges off of.
+  await lessonRef.update({
+    date: proposedDate,
+    rescheduledDate: proposedDate,
+    rescheduleStatus: "confirmed",
+    rescheduled: true,
+  })
+
+  logger.info("confirmReschedule: reschedule confirmed", { studentId, lessonId, confirmedBy })
+
+  const { sendReminderToStudent } = require("./reminderUtils")
+  const { sendMessageToTeacher } = require("./teacherNotifier")
+
+  const newDate = proposedDate.toDate()
+  const message = botMessages.RESCHEDULE_CONFIRMED(newDate)
+
+  await sendReminderToStudent(studentId, message)
+  await sendMessageToTeacher(message)
+
+  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+  const student = studentSnapshot.exists ? studentSnapshot.data() : null
+
+  if (student?.googleEventId && originalDate) {
+    try {
+      await rescheduleLessonEvent(
+        student.googleEventId,
+        originalDate,
+        newDate,
+        student.schedule?.durationMinutes ?? 60,
+      )
+    } catch (error) {
+      logger.error("confirmReschedule: failed to update Google Calendar event", {
+        studentId,
+        lessonId,
+        error,
+      })
+    }
+  }
+}
+
+async function cancelReschedule(studentId, lessonId) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+  const initiator = snapshot.data().rescheduleInitiator
+
+  await lessonRef.update({
+    rescheduled: false,
+    rescheduledDate: null,
+    rescheduleStatus: null,
+    rescheduleInitiator: null,
+    rescheduleProposedDate: null,
+  })
+
+  logger.info("cancelReschedule: reschedule cancelled", { studentId, lessonId })
+
+  const { sendReminderToStudent } = require("./reminderUtils")
+  const { sendMessageToTeacher } = require("./teacherNotifier")
+
+  const message = botMessages.RESCHEDULE_REJECTED()
+
+  // Notify whoever originally proposed — the other side is the one acting.
+  if (initiator === "teacher") {
+    await sendMessageToTeacher(message)
+  } else if (initiator === "student") {
+    await sendReminderToStudent(studentId, message)
+  }
+}
+
 // Both bot adapters need this to route an incoming photo/document to the
 // right student — telegramChatId/vkPeerId are set once at registration
 // time (see core/registration.js) and never change afterwards.
@@ -213,8 +453,12 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
 
 module.exports = {
   ensureUpcomingLesson,
+  syncUpcomingLessonToSchedule,
   updateHomeworkAssignment,
   completeLesson,
+  proposeReschedule,
+  confirmReschedule,
+  cancelReschedule,
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
   recordHomeworkSubmission,
