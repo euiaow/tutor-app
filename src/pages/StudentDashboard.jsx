@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
-import { Paperclip, CheckCircle2 } from "lucide-react"
+import { Paperclip, CheckCircle2, Loader2 } from "lucide-react"
 import { LevelCard } from "@/components/level-card"
 import { MaterialsLibrary } from "@/components/materials-library"
 import { Achievements } from "@/components/achievements"
@@ -8,25 +8,275 @@ import { LessonHistory } from "@/components/lesson-history"
 import { LessonStats } from "@/components/lesson-stats"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { Spinner } from "@/components/ui/spinner"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { LoginScreen } from "@/components/auth/login-screen"
 import { subscribeToStudent } from "@/firebase/students"
-import { getLessons, subscribeToUpcomingLesson } from "@/firebase/lessons"
+import {
+  getLessons,
+  subscribeToUpcomingLesson,
+  subscribeToLesson,
+  proposeReschedule,
+  confirmReschedule,
+  cancelReschedule,
+  proposeCancellation,
+  confirmCancellation,
+  rejectCancellation,
+} from "@/firebase/lessons"
+
+// datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
+// timezone, not UTC — offsetting by getTimezoneOffset() before calling
+// toISOString() (which is always UTC) gets that local wall-clock string.
+// Mirrors TeacherDashboard's identical helper.
+function toDatetimeLocal(date) {
+  const offset = date.getTimezoneOffset() * 60000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+  const [initialDatePart, initialTimePart] = initialDate
+    ? toDatetimeLocal(initialDate).split("T")
+    : ["", ""]
+  const [date, setDate] = useState(initialDatePart)
+  const [time, setTime] = useState(initialTimePart)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setDate("")
+      setTime("")
+      setError("")
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!date || !time || submitting) return
+
+    setSubmitting(true)
+    setError("")
+    try {
+      const proposedDate = new Date(`${date}T${time}:00`)
+      await proposeReschedule(studentId, lessonId, proposedDate, "student")
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to propose reschedule:", err)
+      setError(err?.message || "Не удалось отправить запрос на перенос")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogTitle>Предложить перенос</DialogTitle>
+        <DialogDescription>Выберите новую дату и время урока</DialogDescription>
+
+        <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              disabled={submitting}
+              className="h-11 flex-1 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+            />
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              disabled={submitting}
+              className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+            />
+          </div>
+
+          {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
+
+          <Button type="submit" size="lg" disabled={!date || !time || submitting} className="h-12">
+            {submitting ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Отправляем...
+              </>
+            ) : (
+              "Предложить перенос"
+            )}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setError("")
+    }
+  }
+
+  async function handleConfirm() {
+    if (submitting) return
+
+    setSubmitting(true)
+    setError("")
+    try {
+      await proposeCancellation(studentId, lessonId, "student")
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to propose cancellation:", err)
+      setError(err?.message || "Не удалось отправить запрос на отмену")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogTitle>Отменить урок</DialogTitle>
+        <DialogDescription>
+          Вы уверены, что хотите запросить отмену урока{lessonDate ? ` ${formatLessonDateTime(lessonDate)}` : ""}?
+        </DialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <div className="mt-6 flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            onClick={() => handleOpenChange(false)}
+            disabled={submitting}
+          >
+            Назад
+          </Button>
+          <Button
+            type="button"
+            className="flex-1 bg-red-600 text-white hover:bg-red-700"
+            onClick={handleConfirm}
+            disabled={submitting}
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Да, отменить"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 // Reuses the gradient "plate" visual style that used to belong to
 // NextLessonCard (src/components/next-lesson-card.jsx, now unused) so the
 // homework-aware upcoming lesson stays visually the same top-of-page card.
 function NextLessonPlate({ studentId, hasSchedule }) {
   const [lesson, setLesson] = useState(null)
+  const [cancelledLesson, setCancelledLesson] = useState(null)
+  const [actionPending, setActionPending] = useState(false)
+  const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const lastLessonIdRef = useRef(null)
 
   useEffect(() => {
-    const unsubscribe = subscribeToUpcomingLesson(studentId, setLesson, (error) => {
-      console.error("Failed to load upcoming lesson:", error)
-    })
+    const unsubscribe = subscribeToUpcomingLesson(
+      studentId,
+      (nextLesson) => {
+        setLesson(nextLesson)
+        if (nextLesson) {
+          lastLessonIdRef.current = nextLesson.id
+          setCancelledLesson(null)
+        }
+      },
+      (error) => {
+        console.error("Failed to load upcoming lesson:", error)
+      },
+    )
 
     return unsubscribe
   }, [studentId])
 
-  const showPlaceholder = !hasSchedule || !lesson
+  // subscribeToUpcomingLesson only matches status === "upcoming", so the
+  // moment confirmCancellation flips that lesson's status to "cancelled" it
+  // drops out of that query entirely (onData(null)) — same as it always did
+  // when a lesson gets completed. To actually show "Урок отменён" for that
+  // brief window before the next draft lesson appears, the last known lesson
+  // id is watched directly until either it resolves as cancelled or a new
+  // upcoming lesson shows up above.
+  useEffect(() => {
+    if (lesson || !lastLessonIdRef.current) {
+      return
+    }
+
+    const lessonId = lastLessonIdRef.current
+    const unsubscribe = subscribeToLesson(
+      studentId,
+      lessonId,
+      (doc) => {
+        setCancelledLesson(doc?.status === "cancelled" ? doc : null)
+      },
+      (error) => {
+        console.error("Failed to check cancelled lesson:", error)
+      },
+    )
+
+    return unsubscribe
+  }, [lesson, studentId])
+
+  async function handleConfirmCancellation() {
+    if (actionPending || !lesson) return
+    setActionPending(true)
+    try {
+      await confirmCancellation(studentId, lesson.id, "student")
+    } catch (err) {
+      console.error("Failed to confirm cancellation:", err)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleRejectCancellation() {
+    if (actionPending || !lesson) return
+    setActionPending(true)
+    try {
+      await rejectCancellation(studentId, lesson.id)
+    } catch (err) {
+      console.error("Failed to reject cancellation:", err)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleConfirmReschedule() {
+    if (actionPending || !lesson) return
+    setActionPending(true)
+    try {
+      await confirmReschedule(studentId, lesson.id, "student")
+    } catch (err) {
+      console.error("Failed to confirm reschedule:", err)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  async function handleRejectReschedule() {
+    if (actionPending || !lesson) return
+    setActionPending(true)
+    try {
+      await cancelReschedule(studentId, lesson.id)
+    } catch (err) {
+      console.error("Failed to reject reschedule:", err)
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson)
   const assignment = lesson?.homework.assignment
   const hasAssignment = Boolean(assignment) && (assignment.text.trim() !== "" || assignment.files.length > 0)
   const submissionFiles = lesson?.homework.submission.files ?? []
@@ -53,15 +303,94 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           </p>
           <h2
             id="next-lesson-title"
-            className={`mt-2 font-extrabold text-balance ${showPlaceholder ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl"}`}
+            className={`mt-2 font-extrabold text-balance ${
+              showPlaceholder || cancelledLesson ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl"
+            } ${cancelledLesson ? "text-red-200" : ""}`}
           >
-            {showPlaceholder
-              ? "Преподаватель ещё не добавил расписание"
-              : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+            {cancelledLesson
+              ? "Урок отменён"
+              : showPlaceholder
+                ? "Преподаватель ещё не добавил расписание"
+                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
           </h2>
         </div>
 
-        {!showPlaceholder ? (
+        {lesson?.rescheduleStatus === "pending_student" ? (
+          <div className="rounded-2xl bg-primary-foreground/15 p-4 backdrop-blur-sm">
+            <p className="text-sm font-semibold">
+              📅 Репетитор предлагает перенос на{" "}
+              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="flex-1 bg-yellow-500 text-yellow-950 hover:bg-yellow-400"
+                onClick={handleConfirmReschedule}
+                disabled={actionPending}
+              >
+                ✅ Подтвердить
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1 border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10"
+                onClick={handleRejectReschedule}
+                disabled={actionPending}
+              >
+                ❌ Отклонить
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {lesson?.rescheduleStatus === "pending_teacher" ? (
+          <div className="rounded-2xl bg-yellow-500/20 p-4">
+            <p className="text-sm font-semibold">🕐 Запрос на перенос отправлен</p>
+          </div>
+        ) : null}
+
+        {lesson?.rescheduleStatus === "confirmed" ? (
+          <div className="rounded-2xl bg-green-500/20 p-4">
+            <p className="text-sm font-semibold">✅ Перенос подтверждён</p>
+          </div>
+        ) : null}
+
+        {lesson?.cancellationStatus === "pending_student" ? (
+          <div className="rounded-2xl bg-red-500/20 p-4">
+            <p className="text-sm font-semibold">Репетитор предлагает отменить этот урок.</p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="flex-1 bg-red-600 text-white hover:bg-red-700"
+                onClick={handleConfirmCancellation}
+                disabled={actionPending}
+              >
+                Подтвердить отмену
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="flex-1 border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10"
+                onClick={handleRejectCancellation}
+                disabled={actionPending}
+              >
+                Отклонить
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {lesson?.cancellationStatus === "pending_teacher" ? (
+          <div className="rounded-2xl bg-red-500/20 p-4">
+            <p className="text-sm font-semibold">🔴 Запрос на отмену отправлен</p>
+          </div>
+        ) : null}
+
+        {lesson ? (
           <>
             <div className="rounded-2xl bg-primary-foreground/15 p-4 backdrop-blur-sm">
               <span className="text-xs font-semibold uppercase tracking-wide text-primary-foreground/70">
@@ -116,9 +445,57 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 </p>
               )}
             </div>
+
+            {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
+              <div className="flex flex-wrap gap-2">
+                {lesson.rescheduleStatus !== "pending_teacher" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1 bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+                    onClick={() => setRescheduleDialogOpen(true)}
+                  >
+                    Перенести урок
+                  </Button>
+                ) : null}
+                {lesson.cancellationStatus !== "pending_teacher" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1 bg-red-100 text-red-700 hover:bg-red-200"
+                    onClick={() => setCancelDialogOpen(true)}
+                  >
+                    Отменить урок
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
           </>
         ) : null}
       </div>
+
+      {lesson ? (
+        <>
+          <ProposeRescheduleDialog
+            key={rescheduleDialogOpen ? "open" : "closed"}
+            studentId={studentId}
+            lessonId={lesson.id}
+            initialDate={lesson.rescheduledDate ?? lesson.date}
+            open={rescheduleDialogOpen}
+            onOpenChange={setRescheduleDialogOpen}
+          />
+
+          <ProposeCancelDialog
+            key={cancelDialogOpen ? "open-cancel" : "closed-cancel"}
+            studentId={studentId}
+            lessonId={lesson.id}
+            lessonDate={lesson.rescheduledDate ?? lesson.date}
+            open={cancelDialogOpen}
+            onOpenChange={setCancelDialogOpen}
+          />
+        </>
+      ) : null}
     </section>
   )
 }

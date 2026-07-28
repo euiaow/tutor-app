@@ -119,7 +119,11 @@ function RESCHEDULE_CALLBACK_FAILED() {
 
 // Same two actions, expressed in each platform's own button format —
 // Telegram's inline keyboard callback_data vs VK's keyboard button payload.
-function RESCHEDULE_KEYBOARDS(lessonId) {
+// VK "callback" buttons (as opposed to plain "text" buttons) deliver the
+// press as a message_event webhook event rather than a regular message, so
+// the payload has to carry everything handleCallbackEvent needs to act
+// without a prior session/chat lookup — studentId included, not just lessonId.
+function RESCHEDULE_KEYBOARDS(lessonId, studentId) {
   return {
     telegram: {
       inline_keyboard: [
@@ -130,22 +134,22 @@ function RESCHEDULE_KEYBOARDS(lessonId) {
       ],
     },
     vk: {
-      one_time: true,
+      inline: true,
       buttons: [
         [
           {
             action: {
-              type: "text",
+              type: "callback",
               label: "✅ Подтвердить",
-              payload: JSON.stringify({ command: "confirm_reschedule", lessonId }),
+              payload: JSON.stringify({ action: "confirm_reschedule", studentId, lessonId }),
             },
             color: "positive",
           },
           {
             action: {
-              type: "text",
+              type: "callback",
               label: "❌ Отклонить",
-              payload: JSON.stringify({ command: "cancel_reschedule", lessonId }),
+              payload: JSON.stringify({ action: "cancel_reschedule", studentId, lessonId }),
             },
             color: "negative",
           },
@@ -155,18 +159,119 @@ function RESCHEDULE_KEYBOARDS(lessonId) {
   }
 }
 
-function REMINDER_MIDDAY(time, assignmentText) {
+function CANCELLATION_PROPOSED_TO_STUDENT(lessonDate) {
+  return `Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate)}.
+Ответь:
+✅ Подтвердить отмену
+❌ Отклонить`
+}
+
+function CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate) {
+  return `Ученик ${studentName} просит отменить урок ${formatMoscowDateTime(lessonDate)}.
+Подтверди или отклони в панели учителя.`
+}
+
+function CANCELLATION_CONFIRMED(lessonDate) {
+  return `Урок ${formatMoscowDateTime(lessonDate)} отменён.`
+}
+
+function CANCELLATION_REJECTED() {
+  return "Отмена урока отклонена. Урок остаётся в силе."
+}
+
+function CANCELLATION_CALLBACK_FAILED() {
+  return "Не удалось обработать запрос, попробуй ещё раз"
+}
+
+// Same shape as RESCHEDULE_KEYBOARDS — see its comment for why VK needs
+// studentId embedded in the payload and "inline: true" rather than "one_time".
+function CANCELLATION_KEYBOARDS(lessonId, studentId) {
+  return {
+    telegram: {
+      inline_keyboard: [
+        [
+          { text: "✅ Подтвердить отмену", callback_data: `confirm_cancel_${lessonId}_${studentId}` },
+          { text: "❌ Отклонить", callback_data: `reject_cancel_${lessonId}_${studentId}` },
+        ],
+      ],
+    },
+    vk: {
+      inline: true,
+      buttons: [
+        [
+          {
+            action: {
+              type: "callback",
+              label: "✅ Подтвердить отмену",
+              payload: JSON.stringify({ action: "confirm_cancel", studentId, lessonId }),
+            },
+            color: "positive",
+          },
+          {
+            action: {
+              type: "callback",
+              label: "❌ Отклонить",
+              payload: JSON.stringify({ action: "reject_cancel", studentId, lessonId }),
+            },
+            color: "negative",
+          },
+        ],
+      ],
+    },
+  }
+}
+
+// lessonDate accepts either a Firestore Timestamp or a plain Date — reminders.js
+// passes whatever getEffectiveLessonDate() resolved (a Date), but this stays
+// tolerant of a raw Timestamp too. This runs server-side (Cloud Functions),
+// so the lesson time is formatted in Europe/Moscow explicitly rather than via
+// Intl.DateTimeFormat().resolvedOptions().timeZone, which reflects the
+// server's own timezone and not the student's.
+function toDate(lessonDate) {
+  return typeof lessonDate?.toDate === "function" ? lessonDate.toDate() : lessonDate
+}
+
+function REMINDER_MIDDAY(lessonDate, assignmentText) {
+  const lessonTime = toDate(lessonDate)
+  const lessonTimeFormatted = lessonTime.toLocaleTimeString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+
   const tail = assignmentText
     ? `Задание: ${assignmentText}\nЕсли готово — пришли фото домашки сюда в чат.`
     : "Проверь, есть ли домашнее задание — если есть, пришли фото сюда в чат."
-  return `Напоминаем: завтра в ${time} у тебя урок! 📚\n${tail}`
+  return `Напоминаем: завтра в ${lessonTimeFormatted} у тебя урок! 📚\n${tail}`
 }
 
-function REMINDER_PRE_LESSON(assignmentText) {
-  const tail = assignmentText
-    ? `Не забудь домашнее задание: ${assignmentText}\nПришли фото сюда если ещё не отправил(а).`
-    : "Удачи на уроке! Если есть домашка — пришли фото сюда."
-  return `Через 2 часа урок! 🕐\n${tail}`
+function buildPreLessonMessage(lessonDate, homeworkText) {
+  const now = new Date()
+  const lessonTime = toDate(lessonDate)
+  const diffMs = lessonTime - now
+  const diffMinutes = Math.round(diffMs / 60000)
+
+  let timeStr
+  if (diffMinutes >= 60) {
+    const hours = Math.floor(diffMinutes / 60)
+    const mins = diffMinutes % 60
+    timeStr = mins > 0 ? `через ${hours} ч ${mins} мин` : `через ${hours} ч`
+  } else {
+    timeStr = `через ${diffMinutes} мин`
+  }
+
+  const lessonTimeFormatted = lessonTime.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+
+  return (
+    `Урок ${timeStr} (в ${lessonTimeFormatted})! 🕐\n` +
+    (homeworkText
+      ? `Не забудь домашнее задание: ${homeworkText}\nПришли фото сюда если ещё не отправил(а).`
+      : `Удачи на уроке! Если есть домашка — пришли фото.`)
+  )
 }
 
 module.exports = {
@@ -183,7 +288,7 @@ module.exports = {
   HOMEWORK_SAVE_FAILED,
   REGISTRATION_FAILED,
   REMINDER_MIDDAY,
-  REMINDER_PRE_LESSON,
+  buildPreLessonMessage,
   RESCHEDULE_PROPOSED_TO_STUDENT,
   RESCHEDULE_PROPOSED_TO_TEACHER,
   RESCHEDULE_CONFIRMED,
@@ -194,4 +299,10 @@ module.exports = {
   RESCHEDULE_NO_UPCOMING_LESSON,
   RESCHEDULE_CALLBACK_FAILED,
   RESCHEDULE_KEYBOARDS,
+  CANCELLATION_PROPOSED_TO_STUDENT,
+  CANCELLATION_PROPOSED_TO_TEACHER,
+  CANCELLATION_CONFIRMED,
+  CANCELLATION_REJECTED,
+  CANCELLATION_CALLBACK_FAILED,
+  CANCELLATION_KEYBOARDS,
 }

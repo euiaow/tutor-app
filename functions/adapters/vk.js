@@ -13,6 +13,8 @@ const {
   proposeReschedule,
   confirmReschedule,
   cancelReschedule,
+  confirmCancellation,
+  rejectCancellation,
 } = require("../core/lessons")
 const botMessages = require("../core/botMessages")
 const { parseRescheduleDateInput } = require("../core/schedule")
@@ -59,7 +61,9 @@ async function sendMessage(peerId, text, options = {}) {
   })
 
   if (options.keyboard) {
-    params.set("keyboard", JSON.stringify(options.keyboard))
+    const keyboardJson = JSON.stringify(options.keyboard)
+    params.set("keyboard", keyboardJson)
+    logger.info("VK sendMessage keyboard payload", { peerId, keyboard: keyboardJson })
   }
 
   try {
@@ -70,6 +74,8 @@ async function sendMessage(peerId, text, options = {}) {
     })
 
     const payload = await response.json()
+
+    logger.info("VK sendMessage response", { peerId, status: response.status, payload })
 
     if (!response.ok || payload.error) {
       logger.error("VK sendMessage failed", {
@@ -261,10 +267,11 @@ async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
   }
 }
 
-// VK's keyboard buttons are plain "text" actions: pressing one sends a
-// regular message whose text equals the button label, with `payload`
-// carrying the JSON command — there's no separate callback API like
-// Telegram's answerCallbackQuery.
+// Older reschedule keyboards (sent before callback-type buttons were
+// introduced) used plain "text" buttons: pressing one sends a regular
+// message whose text equals the button label, with `payload` carrying the
+// JSON command. Kept so any already-sent proposal still using that keyboard
+// still resolves correctly.
 async function handleReschedulePayload(peerId, payload) {
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
   if (!studentId) {
@@ -282,6 +289,74 @@ async function handleReschedulePayload(peerId, payload) {
     logger.error("VK reschedule payload failed", { peerId, payload, error })
     await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED())
   }
+}
+
+// Acknowledges a message_event callback. VK requires this call after every
+// message_event or it will keep re-delivering the same button press.
+async function sendMessageEventAnswer(object) {
+  const token = VK_GROUP_TOKEN.value()
+  const params = new URLSearchParams({
+    access_token: token,
+    v: VK_API_VERSION,
+    event_id: object.event_id,
+    user_id: String(object.user_id),
+    peer_id: String(object.peer_id),
+  })
+
+  try {
+    const response = await fetch("https://api.vk.com/method/messages.sendMessageEventAnswer", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    })
+
+    const payload = await response.json()
+    if (!response.ok || payload.error) {
+      logger.error("VK sendMessageEventAnswer failed", { object, status: response.status, error: payload.error })
+    }
+  } catch (error) {
+    logger.error("VK sendMessageEventAnswer request threw", { object, error })
+  }
+}
+
+// Handles a press on a "callback"-type keyboard button (message_event),
+// as opposed to the legacy "text"-type buttons handled by
+// handleReschedulePayload via message_new. The payload carries studentId
+// directly (see botMessages.RESCHEDULE_KEYBOARDS) so this doesn't need a
+// chat-identity lookup the way handleReschedulePayload does.
+async function handleCallbackEvent(object) {
+  const peerId = object?.peer_id
+  const rawPayload = object?.payload
+  const payload = typeof rawPayload === "string" ? parseVkPayload(rawPayload) : rawPayload
+
+  if (peerId && payload) {
+    logger.info("VK callback event received", { peerId, payload })
+
+    try {
+      if (payload.action === "confirm_reschedule") {
+        await confirmReschedule(payload.studentId, payload.lessonId, "student")
+      } else if (payload.action === "cancel_reschedule") {
+        await cancelReschedule(payload.studentId, payload.lessonId)
+      } else if (payload.action === "confirm_cancel") {
+        await confirmCancellation(payload.studentId, payload.lessonId, "student")
+      } else if (payload.action === "reject_cancel") {
+        await rejectCancellation(payload.studentId, payload.lessonId)
+      } else {
+        logger.info("VK callback event ignored: unknown action", { peerId, payload })
+      }
+    } catch (error) {
+      logger.error("VK callback event handling failed", { peerId, payload, error })
+      const failureMessage =
+        payload.action === "confirm_cancel" || payload.action === "reject_cancel"
+          ? botMessages.CANCELLATION_CALLBACK_FAILED()
+          : botMessages.RESCHEDULE_CALLBACK_FAILED()
+      await sendMessage(peerId, failureMessage)
+    }
+  } else {
+    logger.info("VK message_event ignored: missing peer id or payload", { object })
+  }
+
+  await sendMessageEventAnswer(object)
 }
 
 async function handleHomeworkFile(peerId, attachment) {
@@ -380,6 +455,12 @@ async function handleMessageNew(object) {
 async function handleEvent(body) {
   const type = body?.type
 
+  logger.info("VK raw event", {
+    type: body?.type,
+    hasObject: !!body?.object,
+    objectKeys: Object.keys(body?.object || {}),
+  })
+
   logger.info("VK event received", { type })
 
   if (type === "confirmation") {
@@ -395,6 +476,15 @@ async function handleEvent(body) {
     }
     // VK requires the literal lowercase string "ok" for every non-confirmation
     // event, or it will keep retrying the same event.
+    return "ok"
+  }
+
+  if (type === "message_event") {
+    try {
+      await handleCallbackEvent(body.object)
+    } catch (error) {
+      logger.error("Unhandled error while processing VK message_event event", error)
+    }
     return "ok"
   }
 

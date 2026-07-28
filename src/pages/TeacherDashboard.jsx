@@ -15,6 +15,9 @@ import {
   proposeReschedule,
   confirmReschedule,
   cancelReschedule,
+  proposeCancellation,
+  confirmCancellation,
+  rejectCancellation,
 } from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
 import {
@@ -137,10 +140,87 @@ function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange
   )
 }
 
+function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setError("")
+    }
+  }
+
+  async function handleConfirm() {
+    if (submitting) return
+
+    setSubmitting(true)
+    setError("")
+    try {
+      await proposeCancellation(studentId, lessonId)
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to propose cancellation:", err)
+      setError(err?.message || "Не удалось отправить запрос на отмену")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogTitle>Отменить урок</DialogTitle>
+        <DialogDescription>
+          Вы уверены, что хотите предложить отменить урок{lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""}?
+        </DialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <div className="mt-6 flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            onClick={() => handleOpenChange(false)}
+            disabled={submitting}
+          >
+            Назад
+          </Button>
+          <Button
+            type="button"
+            className="flex-1 bg-red-600 text-white hover:bg-red-700"
+            onClick={handleConfirm}
+            disabled={submitting}
+          >
+            {submitting ? "Отправляем..." : "Да, отменить"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function formatRescheduleDate(date) {
+  if (!date) return ""
+  return date.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 function UpcomingLessonCard({ lesson, studentName }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [rescheduleActionPending, setRescheduleActionPending] = useState(false)
+  const [cancellationActionPending, setCancellationActionPending] = useState(false)
+
+  const isCancelled = lesson.status === "cancelled"
 
   const hasAssignment =
     lesson.homework.assignment.text.trim() !== "" || lesson.homework.assignment.files.length > 0
@@ -170,10 +250,45 @@ function UpcomingLessonCard({ lesson, studentName }) {
     }
   }
 
+  async function handleConfirmCancellation() {
+    if (cancellationActionPending) return
+    setCancellationActionPending(true)
+    try {
+      await confirmCancellation(lesson.studentId, lesson.id, "teacher")
+    } catch (err) {
+      console.error("Failed to confirm cancellation:", err)
+    } finally {
+      setCancellationActionPending(false)
+    }
+  }
+
+  async function handleRejectCancellation() {
+    if (cancellationActionPending) return
+    setCancellationActionPending(true)
+    try {
+      await rejectCancellation(lesson.studentId, lesson.id)
+    } catch (err) {
+      console.error("Failed to reject cancellation:", err)
+    } finally {
+      setCancellationActionPending(false)
+    }
+  }
+
   return (
-    <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+    <li
+      className={`flex flex-col gap-3 rounded-xl border p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
+        isCancelled ? "border-red-200 bg-red-50" : "border-border bg-card"
+      }`}
+    >
       <div className="min-w-0">
-        <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+          {isCancelled ? (
+            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
+              ❌ Урок отменён
+            </span>
+          ) : null}
+        </div>
         <p className="text-xs text-muted-foreground">
           {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
           {lesson.rescheduled ? <span className="ml-1.5 font-semibold text-primary">Перенесён</span> : null}
@@ -188,16 +303,28 @@ function UpcomingLessonCard({ lesson, studentName }) {
         </div>
 
         {lesson.rescheduleStatus === "pending_student" ? (
-          <span className="mt-2 inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-            Ожидает подтверждения ученика
-          </span>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-800">
+              🕐 Ожидает подтверждения ученика
+            </span>
+            {lesson.rescheduleProposedDate ? (
+              <span className="text-xs text-muted-foreground">
+                → {formatRescheduleDate(lesson.rescheduleProposedDate)}
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         {lesson.rescheduleStatus === "pending_teacher" ? (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
-              Ученик предлагает перенос
+            <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-800">
+              🕐 Ученик предлагает перенос
             </span>
+            {lesson.rescheduleProposedDate ? (
+              <span className="text-xs text-muted-foreground">
+                → {formatRescheduleDate(lesson.rescheduleProposedDate)}
+              </span>
+            ) : null}
             <Button
               type="button"
               size="sm"
@@ -217,12 +344,64 @@ function UpcomingLessonCard({ lesson, studentName }) {
             </Button>
           </div>
         ) : null}
+
+        {lesson.rescheduleStatus === "confirmed" ? (
+          <span className="mt-2 inline-flex w-fit items-center rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
+            ✅ Перенос подтверждён
+          </span>
+        ) : null}
+
+        {lesson.cancellationStatus === "pending_student" ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
+              🔴 Ожидает подтверждения отмены учеником
+            </span>
+          </div>
+        ) : null}
+
+        {lesson.cancellationStatus === "pending_teacher" ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
+              🔴 Ученик просит отменить урок
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={handleConfirmCancellation}
+              disabled={cancellationActionPending}
+            >
+              Подтвердить отмену
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleRejectCancellation}
+              disabled={cancellationActionPending}
+            >
+              Отклонить
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => setRescheduleDialogOpen(true)}>
-          Перенести
-        </Button>
+        {!isCancelled ? (
+          <>
+            <Button type="button" variant="outline" size="sm" onClick={() => setRescheduleDialogOpen(true)}>
+              Перенести
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-red-100 text-red-700 hover:bg-red-200"
+              onClick={() => setCancelDialogOpen(true)}
+            >
+              Отменить урок
+            </Button>
+          </>
+        ) : null}
         <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
           Открыть
         </Button>
@@ -243,6 +422,15 @@ function UpcomingLessonCard({ lesson, studentName }) {
         initialDate={lesson.rescheduledDate ?? lesson.date}
         open={rescheduleDialogOpen}
         onOpenChange={setRescheduleDialogOpen}
+      />
+
+      <CancelLessonDialog
+        key={cancelDialogOpen ? "open" : "closed"}
+        studentId={lesson.studentId}
+        lessonId={lesson.id}
+        lessonDate={lesson.rescheduledDate ?? lesson.date}
+        open={cancelDialogOpen}
+        onOpenChange={setCancelDialogOpen}
       />
     </li>
   )

@@ -20,6 +20,9 @@ const completeLessonCallable = httpsCallable(functions, "completeLesson")
 const proposeRescheduleCallable = httpsCallable(functions, "proposeReschedule")
 const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
 const cancelRescheduleCallable = httpsCallable(functions, "cancelReschedule")
+const proposeCancellationCallable = httpsCallable(functions, "proposeCancellation")
+const confirmCancellationCallable = httpsCallable(functions, "confirmCancellation")
+const rejectCancellationCallable = httpsCallable(functions, "rejectCancellation")
 
 function mapLessonDoc(id, studentId, data) {
   const submissionFiles = Array.isArray(data.homework?.submission?.files)
@@ -54,6 +57,8 @@ function mapLessonDoc(id, studentId, data) {
     rescheduleStatus: data.rescheduleStatus ?? null,
     rescheduleInitiator: data.rescheduleInitiator ?? null,
     rescheduleProposedDate: data.rescheduleProposedDate?.toDate?.() ?? null,
+    cancellationStatus: data.cancellationStatus ?? null,
+    cancellationInitiator: data.cancellationInitiator ?? null,
   }
 }
 
@@ -70,19 +75,41 @@ export async function completeLesson(studentId, lessonId, { attendance, homework
   await completeLessonCallable({ studentId, lessonId, attendance, homeworkDone, rating, topic })
 }
 
-// initiator is always "teacher" here — this wrapper is only used from the
-// teacher UI. Students propose reschedules by texting the bot instead,
-// which calls core/lessons.js's proposeReschedule directly.
-export async function proposeReschedule(studentId, lessonId, proposedDate) {
-  await proposeRescheduleCallable({ studentId, lessonId, proposedDate: proposedDate.toISOString() })
+// initiator is "teacher" from TeacherDashboard (default, unpassed) or
+// "student" from StudentDashboard's own "Перенести урок" button — see
+// index.js's proposeReschedule for why only the "teacher" path requires a
+// signed-in session.
+export async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
+  await proposeRescheduleCallable({ studentId, lessonId, proposedDate: proposedDate.toISOString(), initiator })
 }
 
-export async function confirmReschedule(studentId, lessonId) {
-  await confirmRescheduleCallable({ studentId, lessonId })
+// confirmedBy is "teacher" (default, TeacherDashboard) or "student"
+// (StudentDashboard confirming a teacher-initiated reschedule).
+export async function confirmReschedule(studentId, lessonId, confirmedBy) {
+  await confirmRescheduleCallable({ studentId, lessonId, confirmedBy })
 }
 
 export async function cancelReschedule(studentId, lessonId) {
   await cancelRescheduleCallable({ studentId, lessonId })
+}
+
+// initiator is "teacher" (default, TeacherDashboard) or "student"
+// (StudentDashboard's own "Отменить урок" button) — same reasoning as
+// proposeReschedule above.
+export async function proposeCancellation(studentId, lessonId, initiator) {
+  await proposeCancellationCallable({ studentId, lessonId, initiator })
+}
+
+// confirmedBy is "teacher" from TeacherDashboard (confirming a
+// student-initiated cancellation) or "student" from StudentDashboard
+// (confirming a teacher-initiated one) — see index.js's confirmCancellation
+// for why only the "teacher" path requires a signed-in session.
+export async function confirmCancellation(studentId, lessonId, confirmedBy) {
+  await confirmCancellationCallable({ studentId, lessonId, confirmedBy })
+}
+
+export async function rejectCancellation(studentId, lessonId) {
+  await rejectCancellationCallable({ studentId, lessonId })
 }
 
 // Direct client write (same pattern as updateStudentSchedule) rather than a

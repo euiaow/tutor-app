@@ -31,8 +31,12 @@ const {
   proposeReschedule,
   confirmReschedule,
   cancelReschedule,
+  proposeCancellation,
+  confirmCancellation,
+  rejectCancellation,
 } = require("./core/lessons")
 const { dailyReminderMidday, dailyReminderPreLesson } = require("./reminders")
+const { deleteStudent } = require("./core/students")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -84,6 +88,29 @@ exports.cancelRegistrationToken = onCall(async (request) => {
     throw new HttpsError("internal", "Не удалось удалить ссылку регистрации")
   }
 })
+
+exports.deleteStudent = onCall(
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId } = request.data ?? {}
+
+    try {
+      await deleteStudent(studentId)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to delete student", error)
+      throw new HttpsError("internal", "Не удалось удалить ученика")
+    }
+  },
+)
 
 exports.updateHomeworkAssignment = onCall(async (request) => {
   if (!request.auth) {
@@ -153,18 +180,25 @@ exports.completeLesson = onCall(async (request) => {
 // tomorrow. timeZone is set explicitly rather than hand-converting to a UTC
 // cron expression, so the fire time stays correct even if Moscow's offset
 // rules ever change.
+// Reachable from both dashboards, same reasoning as confirmCancellation
+// below: the teacher proposing from TeacherDashboard (Firebase Auth
+// session) and, as of the student-portal reschedule/cancel buttons, the
+// student proposing from StudentDashboard (no Firebase Auth session to
+// check). initiator defaults to "teacher" so existing teacher-side callers
+// that don't pass it keep working unchanged.
 exports.proposeReschedule = onCall(
   { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async (request) => {
-    if (!request.auth) {
+    const { studentId, lessonId, proposedDate, initiator } = request.data ?? {}
+    const role = initiator === "student" ? "student" : "teacher"
+
+    if (role === "teacher" && !request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    const { studentId, lessonId, proposedDate } = request.data ?? {}
-
     try {
       const date = new Date(proposedDate)
-      const rescheduleStatus = await proposeReschedule(studentId, lessonId, date, "teacher")
+      const rescheduleStatus = await proposeReschedule(studentId, lessonId, date, role)
       return { rescheduleStatus }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -177,17 +211,20 @@ exports.proposeReschedule = onCall(
   },
 )
 
+// confirmedBy defaults to "teacher" for the same backward-compatibility
+// reason as proposeReschedule's initiator default.
 exports.confirmReschedule = onCall(
   { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
   async (request) => {
-    if (!request.auth) {
+    const { studentId, lessonId, confirmedBy } = request.data ?? {}
+    const role = confirmedBy === "student" ? "student" : "teacher"
+
+    if (role === "teacher" && !request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    const { studentId, lessonId } = request.data ?? {}
-
     try {
-      await confirmReschedule(studentId, lessonId, "teacher")
+      await confirmReschedule(studentId, lessonId, role)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -200,13 +237,12 @@ exports.confirmReschedule = onCall(
   },
 )
 
+// No role param (mirrors rejectCancellation) — rejecting/cancelling a
+// reschedule proposal isn't gated by request.auth at all, since either side
+// (teacher web or student web) may decline the other's proposal.
 exports.cancelReschedule = onCall(
   { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async (request) => {
-    if (!request.auth) {
-      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
-    }
-
     const { studentId, lessonId } = request.data ?? {}
 
     try {
@@ -219,6 +255,82 @@ exports.cancelReschedule = onCall(
 
       logger.error("Failed to cancel reschedule", error)
       throw new HttpsError("internal", "Не удалось отменить перенос урока")
+    }
+  },
+)
+
+// Same both-dashboards reasoning as proposeReschedule.
+exports.proposeCancellation = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    const { studentId, lessonId, initiator } = request.data ?? {}
+    const role = initiator === "student" ? "student" : "teacher"
+
+    if (role === "teacher" && !request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    try {
+      const cancellationStatus = await proposeCancellation(studentId, lessonId, role)
+      return { cancellationStatus }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to propose cancellation", error)
+      throw new HttpsError("internal", "Не удалось предложить отмену урока")
+    }
+  },
+)
+
+// Unlike confirmReschedule/cancelReschedule (teacher-web-only, always gated
+// by request.auth), this is reachable from both dashboards: the teacher
+// confirming a student-initiated cancellation (cancellationStatus ===
+// "pending_teacher") and the student confirming a teacher-initiated one
+// (cancellationStatus === "pending_student") from the student portal, which
+// has no Firebase Auth session to check. Only the teacher path is gated.
+exports.confirmCancellation = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    const { studentId, lessonId, confirmedBy } = request.data ?? {}
+
+    if (confirmedBy === "teacher" && !request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    try {
+      await confirmCancellation(studentId, lessonId, confirmedBy)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to confirm cancellation", error)
+      throw new HttpsError("internal", "Не удалось подтвердить отмену урока")
+    }
+  },
+)
+
+// Same both-dashboards reasoning as confirmCancellation — reject carries no
+// role param (mirrors cancelReschedule), so it isn't gated by request.auth
+// at all; either side may decline a cancellation proposal.
+exports.rejectCancellation = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    const { studentId, lessonId } = request.data ?? {}
+
+    try {
+      await rejectCancellation(studentId, lessonId)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to reject cancellation", error)
+      throw new HttpsError("internal", "Не удалось отклонить отмену урока")
     }
   },
 )

@@ -13,6 +13,8 @@ const {
   proposeReschedule,
   confirmReschedule,
   cancelReschedule,
+  confirmCancellation,
+  rejectCancellation,
 } = require("../core/lessons")
 const botMessages = require("../core/botMessages")
 const { parseRescheduleDateInput } = require("../core/schedule")
@@ -264,8 +266,15 @@ async function handleCallbackQuery(callbackQuery) {
 
   const confirmMatch = /^confirm_reschedule_(.+)$/.exec(data)
   const cancelMatch = /^cancel_reschedule_(.+)$/.exec(data)
+  // Cancellation callback_data also carries studentId (see
+  // botMessages.CANCELLATION_KEYBOARDS), but studentId is still resolved via
+  // chat identity below for the same reason reschedule's callback_data never
+  // bothered encoding it — the chat this button was pressed in already
+  // belongs to exactly one student.
+  const confirmCancelMatch = /^confirm_cancel_([^_]+)_([^_]+)$/.exec(data)
+  const rejectCancelMatch = /^reject_cancel_([^_]+)_([^_]+)$/.exec(data)
 
-  if (!confirmMatch && !cancelMatch) {
+  if (!confirmMatch && !cancelMatch && !confirmCancelMatch && !rejectCancelMatch) {
     await answerCallbackQuery(callbackQueryId)
     return
   }
@@ -280,13 +289,23 @@ async function handleCallbackQuery(callbackQuery) {
     if (confirmMatch) {
       await confirmReschedule(studentId, confirmMatch[1], "student")
       await answerCallbackQuery(callbackQueryId, "Перенос подтверждён")
-    } else {
+    } else if (cancelMatch) {
       await cancelReschedule(studentId, cancelMatch[1])
       await answerCallbackQuery(callbackQueryId, "Перенос отклонён")
+    } else if (confirmCancelMatch) {
+      await confirmCancellation(studentId, confirmCancelMatch[1], "student")
+      await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена")
+    } else {
+      await rejectCancellation(studentId, rejectCancelMatch[1])
+      await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена")
     }
   } catch (error) {
-    logger.error("Telegram reschedule callback failed", { chatId, data, error })
-    await answerCallbackQuery(callbackQueryId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+    logger.error("Telegram reschedule/cancellation callback failed", { chatId, data, error })
+    const failureMessage =
+      confirmCancelMatch || rejectCancelMatch
+        ? botMessages.CANCELLATION_CALLBACK_FAILED()
+        : botMessages.RESCHEDULE_CALLBACK_FAILED()
+    await answerCallbackQuery(callbackQueryId, failureMessage)
   }
 }
 

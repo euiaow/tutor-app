@@ -6,9 +6,12 @@ import {
   runTransaction,
   updateDoc,
 } from "firebase/firestore"
-import { db } from "./firebase"
+import { httpsCallable } from "firebase/functions"
+import { db, functions } from "./firebase"
 
 const STUDENTS_COLLECTION = "students"
+
+const deleteStudentCallable = httpsCallable(functions, "deleteStudent")
 
 export function mapStudentDoc(id, data) {
   return {
@@ -80,6 +83,13 @@ export async function addXpToStudent(studentId, amount = 10) {
 export async function updateStudentSchedule(studentId, schedule) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
   await updateDoc(ref, { schedule })
+}
+
+// Backend does the real work (Google Calendar event, lessons subcollection
+// + their Storage files, registration tokens, bot sessions) before deleting
+// the student doc itself — see functions/core/students.js.
+export async function deleteStudent(studentId) {
+  await deleteStudentCallable({ studentId })
 }
 
 export async function verifyStudentAccessCode(studentId, code) {
