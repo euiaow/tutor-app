@@ -56,30 +56,55 @@ async function sendReminderForStudent(studentId, student) {
 }
 
 async function checkAndSendReminders() {
+  logger.info("checkAndSendReminders: starting")
+
   const now = new Date()
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
 
   const snapshot = await db.collection(STUDENTS_COLLECTION).get()
 
-  logger.info("checkAndSendReminders: scanning students", { count: snapshot.size })
+  logger.info("checkAndSendReminders: students found", { count: snapshot.size })
 
   for (const doc of snapshot.docs) {
     const studentId = doc.id
     const student = doc.data()
+    const hasSchedule = Boolean(student.schedule)
+    const hasPlatform = Boolean(student.platform && (student.telegramChatId || student.vkPeerId))
     const nextDate = getNextLessonDate(student.schedule)
+    const isTomorrow = Boolean(nextDate && isSameCalendarDay(nextDate, tomorrow))
 
-    if (!nextDate || !isSameCalendarDay(nextDate, tomorrow)) {
+    logger.info("checkAndSendReminders: student checked", {
+      studentId,
+      hasSchedule,
+      hasPlatform,
+      nextLessonDate: nextDate ? nextDate.toISOString() : null,
+      isTomorrow,
+    })
+
+    if (!isTomorrow) {
+      if (!hasSchedule) {
+        logger.warn("checkAndSendReminders: skip, no schedule set", { studentId })
+      }
       continue
     }
 
-    logger.info("checkAndSendReminders: lesson is tomorrow", { studentId })
+    if (!hasPlatform) {
+      logger.warn("checkAndSendReminders: lesson is tomorrow but no messaging channel linked", {
+        studentId,
+      })
+    }
+
+    logger.info("checkAndSendReminders: lesson is tomorrow, sending reminder", { studentId })
 
     try {
       await sendReminderForStudent(studentId, student)
+      logger.info("checkAndSendReminders: reminder flow completed", { studentId })
     } catch (error) {
       logger.error("checkAndSendReminders: failed to send reminder", { studentId, error })
     }
   }
+
+  logger.info("checkAndSendReminders: finished")
 }
 
 module.exports = { checkAndSendReminders }

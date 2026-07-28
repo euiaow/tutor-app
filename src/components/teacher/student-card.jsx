@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { CalendarDays, Sparkles, Plus, Pencil, NotebookText } from "lucide-react"
-import { AddLessonDialog } from "@/components/teacher/add-lesson-dialog"
+import { CalendarDays, Sparkles, Plus, NotebookText, Pencil } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { addXpToStudent, updateStudentSchedule } from "@/firebase/students"
 import { DAY_OPTIONS, getNextLessonDate, formatNextLessonDate } from "@/lib/schedule"
@@ -152,7 +151,6 @@ export function StudentCard({ student }) {
           <Plus className="size-4" aria-hidden="true" />
           {isAddingXp ? "..." : "10 XP"}
         </button>
-        <AddLessonDialog studentId={student.id} />
         <button
           type="button"
           onClick={() => setIsHomeworkDialogOpen(true)}

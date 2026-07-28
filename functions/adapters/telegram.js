@@ -132,14 +132,21 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
   }
 }
 
-function extractIncomingFileId(message) {
+function extractIncomingFile(message) {
   const photos = message?.photo
   if (Array.isArray(photos) && photos.length > 0) {
     // Telegram sends multiple resolutions of the same photo; the last one
-    // is the largest.
-    return photos[photos.length - 1].file_id
+    // is the largest. PhotoSize objects never carry mime_type — Telegram
+    // always re-encodes photos as JPEG, so that's a safe default.
+    return { fileId: photos[photos.length - 1].file_id, mimeType: "image/jpeg" }
   }
-  return message?.document?.file_id ?? null
+
+  const document = message?.document
+  if (document?.file_id) {
+    return { fileId: document.file_id, mimeType: document.mime_type || "application/octet-stream" }
+  }
+
+  return null
 }
 
 async function downloadTelegramFile(fileId) {
@@ -161,13 +168,10 @@ async function downloadTelegramFile(fileId) {
     throw new Error("Telegram file download failed")
   }
 
-  const buffer = Buffer.from(await fileResponse.arrayBuffer())
-  const contentType = fileResponse.headers.get("content-type") || "application/octet-stream"
-
-  return { buffer, contentType }
+  return Buffer.from(await fileResponse.arrayBuffer())
 }
 
-async function handleHomeworkFile(chatId, fileId) {
+async function handleHomeworkFile(chatId, incomingFile) {
   const studentId = await findStudentIdByChatIdentity("telegram", chatId)
 
   if (!studentId) {
@@ -178,11 +182,11 @@ async function handleHomeworkFile(chatId, fileId) {
     return
   }
 
-  logger.info("Telegram homework file received", { chatId, studentId })
+  logger.info("Telegram homework file received", { chatId, studentId, mimeType: incomingFile.mimeType })
 
   try {
-    const { buffer, contentType } = await downloadTelegramFile(fileId)
-    const url = await uploadHomeworkFile(studentId, buffer, contentType)
+    const buffer = await downloadTelegramFile(incomingFile.fileId)
+    const url = await uploadHomeworkFile(studentId, buffer, incomingFile.mimeType)
     await recordHomeworkSubmission(studentId, url)
 
     logger.info("Telegram homework file saved", { chatId, studentId })
@@ -204,10 +208,10 @@ async function handleUpdate(update) {
   }
 
   if (typeof text !== "string") {
-    const fileId = extractIncomingFileId(message)
+    const incomingFile = extractIncomingFile(message)
 
-    if (fileId) {
-      await handleHomeworkFile(chatId, fileId)
+    if (incomingFile) {
+      await handleHomeworkFile(chatId, incomingFile)
       return
     }
 

@@ -8,13 +8,44 @@ import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialo
 import { Spinner } from "@/components/ui/spinner"
 import { subscribeToStudents } from "@/firebase/students"
 import { signOutTeacher } from "@/firebase/auth"
-import { subscribeToUpcomingLessons } from "@/firebase/lessons"
+import { subscribeToCompletedLessons, subscribeToUpcomingLessons } from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
 import {
   getCalendarEmbedInfo,
   getGoogleCalendarStatus,
   startGoogleOAuth,
 } from "@/firebase/google-calendar"
+
+const MAX_CLUSTERED_LESSONS = 3
+const MAX_LESSON_GAP_DAYS = 6
+
+// If a student's lessons are weekly, showing 3 of them a week apart isn't
+// useful — only the first one is actually "coming up soon". Take lessons
+// sorted by date, always keep the first, and keep adding the next one only
+// while the gap from the last kept lesson stays within MAX_LESSON_GAP_DAYS;
+// stop at the first gap that's too big, capped at MAX_CLUSTERED_LESSONS.
+function selectClusteredUpcomingLessons(lessons) {
+  const sorted = [...lessons].sort((a, b) => a.date - b.date)
+  const selected = []
+
+  for (const lesson of sorted) {
+    if (selected.length >= MAX_CLUSTERED_LESSONS) break
+
+    if (selected.length === 0) {
+      selected.push(lesson)
+      continue
+    }
+
+    const previous = selected[selected.length - 1]
+    const gapDays = (lesson.date - previous.date) / (1000 * 60 * 60 * 24)
+
+    if (gapDays > MAX_LESSON_GAP_DAYS) break
+
+    selected.push(lesson)
+  }
+
+  return selected
+}
 
 function UpcomingLessonCard({ lesson, studentName }) {
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -45,6 +76,33 @@ function UpcomingLessonCard({ lesson, studentName }) {
       <HomeworkLessonDialog
         studentId={lesson.studentId}
         studentName={studentName}
+        lessonId={lesson.id}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+      />
+    </li>
+  )
+}
+
+function PastLessonCard({ lesson, studentName }) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+
+  return (
+    <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+        <p className="text-xs text-muted-foreground">{formatLessonDateTime(lesson.date)}</p>
+        {lesson.topic ? <p className="mt-1.5 text-xs text-muted-foreground">{lesson.topic}</p> : null}
+      </div>
+
+      <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+        Открыть
+      </Button>
+
+      <HomeworkLessonDialog
+        studentId={lesson.studentId}
+        studentName={studentName}
+        lessonId={lesson.id}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
@@ -62,6 +120,8 @@ export function TeacherDashboard() {
   const [embedError, setEmbedError] = useState(null)
   const embedLoading = googleCalendarConnected === true && !embedUrl && !embedError
   const [upcomingLessons, setUpcomingLessons] = useState([])
+  const [completedLessons, setCompletedLessons] = useState([])
+  const [completedVisibleCount, setCompletedVisibleCount] = useState(3)
 
   async function handleSignOut() {
     try {
@@ -101,8 +161,20 @@ export function TeacherDashboard() {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = subscribeToUpcomingLessons(setUpcomingLessons, (firestoreError) => {
-      console.error("Failed to load upcoming lessons:", firestoreError)
+    const unsubscribe = subscribeToUpcomingLessons(
+      setUpcomingLessons,
+      (firestoreError) => {
+        console.error("Failed to load upcoming lessons:", firestoreError)
+      },
+      10,
+    )
+
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCompletedLessons(setCompletedLessons, (firestoreError) => {
+      console.error("Failed to load completed lessons:", firestoreError)
     })
 
     return unsubscribe
@@ -137,6 +209,8 @@ export function TeacherDashboard() {
       cancelled = true
     }
   }, [googleCalendarConnected])
+
+  const clusteredUpcomingLessons = selectClusteredUpcomingLessons(upcomingLessons)
 
   return (
     <div className="min-h-screen bg-background">
@@ -208,11 +282,11 @@ export function TeacherDashboard() {
           )}
         </section>
 
-        {upcomingLessons.length > 0 ? (
+        {clusteredUpcomingLessons.length > 0 ? (
           <section className="flex flex-col gap-4">
             <h2 className="text-xl font-extrabold tracking-tight text-foreground">Ближайшие уроки</h2>
             <ul className="flex flex-col gap-3">
-              {upcomingLessons.map((lesson) => (
+              {clusteredUpcomingLessons.map((lesson) => (
                 <UpcomingLessonCard
                   key={lesson.id}
                   lesson={lesson}
@@ -220,6 +294,32 @@ export function TeacherDashboard() {
                 />
               ))}
             </ul>
+          </section>
+        ) : null}
+
+        {completedLessons.length > 0 ? (
+          <section className="flex flex-col gap-4">
+            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Прошедшие уроки</h2>
+            <ul className="flex flex-col gap-3">
+              {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
+                <PastLessonCard
+                  key={lesson.id}
+                  lesson={lesson}
+                  studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                />
+              ))}
+            </ul>
+            {completedLessons.length > completedVisibleCount ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="self-start"
+                onClick={() => setCompletedVisibleCount((prev) => prev + 5)}
+              >
+                Показать ещё
+              </Button>
+            ) : null}
           </section>
         ) : null}
 

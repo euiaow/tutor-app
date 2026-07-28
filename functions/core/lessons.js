@@ -96,6 +96,58 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
   logger.info("updateHomeworkAssignment: assignment saved", { studentId, lessonId })
 }
 
+// Called when the teacher marks a lesson done in the unified
+// HomeworkLessonDialog. Assignment files get copied into lesson.materials
+// (deduped by url) so they show up in the student's materials library,
+// which only reads lesson.materials/completed lessons — the assignment
+// itself lives under homework and isn't otherwise surfaced there.
+async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic } = {}) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+
+  const data = snapshot.data()
+  const assignmentFiles = Array.isArray(data.homework?.assignment?.files)
+    ? data.homework.assignment.files
+    : []
+  const existingMaterials = Array.isArray(data.materials) ? data.materials : []
+
+  const materialsByUrl = new Map()
+  for (const material of [...existingMaterials, ...assignmentFiles]) {
+    if (material?.url) {
+      materialsByUrl.set(material.url, material)
+    }
+  }
+
+  await lessonRef.update({
+    status: "completed",
+    attendance: attendance ?? null,
+    homeworkDone: Boolean(homeworkDone),
+    rating: rating ?? null,
+    topic: typeof topic === "string" ? topic.trim() : "",
+    materials: Array.from(materialsByUrl.values()),
+  })
+
+  logger.info("completeLesson: lesson marked completed", { studentId, lessonId })
+
+  // Generate the next lesson's draft right away rather than waiting for
+  // the next reminders.js run — ensureUpcomingLesson's own query already
+  // filters by status === "upcoming", so it won't find the lesson we just
+  // flipped to "completed" above and will correctly create a new draft.
+  const nextLessonId = await ensureUpcomingLesson(studentId)
+  logger.info("completeLesson: ensured next upcoming lesson", { studentId, nextLessonId })
+}
+
 // Both bot adapters need this to route an incoming photo/document to the
 // right student — telegramChatId/vkPeerId are set once at registration
 // time (see core/registration.js) and never change afterwards.
@@ -123,6 +175,7 @@ async function uploadHomeworkFile(studentId, buffer, contentType) {
   await file.save(buffer, {
     metadata: {
       contentType,
+      cacheControl: "public, max-age=3600",
       metadata: { firebaseStorageDownloadTokens: downloadToken },
     },
   })
@@ -161,6 +214,7 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
 module.exports = {
   ensureUpcomingLesson,
   updateHomeworkAssignment,
+  completeLesson,
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
   recordHomeworkSubmission,

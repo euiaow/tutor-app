@@ -1,5 +1,5 @@
 import {
-  addDoc,
+  arrayUnion,
   collection,
   collectionGroup,
   doc,
@@ -8,8 +8,7 @@ import {
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp,
-  Timestamp,
+  updateDoc,
   where,
 } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
@@ -17,6 +16,7 @@ import { db, functions } from "./firebase"
 
 const ensureUpcomingLessonCallable = httpsCallable(functions, "ensureUpcomingLesson")
 const updateHomeworkAssignmentCallable = httpsCallable(functions, "updateHomeworkAssignment")
+const completeLessonCallable = httpsCallable(functions, "completeLesson")
 
 function mapLessonDoc(id, studentId, data) {
   const submissionFiles = Array.isArray(data.homework?.submission?.files)
@@ -29,6 +29,10 @@ function mapLessonDoc(id, studentId, data) {
     status: data.status ?? null,
     date: data.date?.toDate?.() ?? null,
     topic: data.topic ?? "",
+    attendance: data.attendance ?? null,
+    homeworkDone: Boolean(data.homeworkDone),
+    rating: data.rating ?? null,
+    materials: Array.isArray(data.materials) ? data.materials : [],
     homework: {
       assignment: {
         text: data.homework?.assignment?.text ?? "",
@@ -52,6 +56,19 @@ export async function ensureUpcomingLesson(studentId) {
 
 export async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
   await updateHomeworkAssignmentCallable({ studentId, lessonId, text, files })
+}
+
+export async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic }) {
+  await completeLessonCallable({ studentId, lessonId, attendance, homeworkDone, rating, topic })
+}
+
+// Direct client write (same pattern as updateStudentSchedule) rather than a
+// callable — attaching an extra material to an already-completed lesson
+// doesn't need server-side validation beyond what Firestore already grants
+// the teacher's client.
+export async function addLessonMaterial(studentId, lessonId, material) {
+  const ref = doc(db, "students", studentId, "lessons", lessonId)
+  await updateDoc(ref, { materials: arrayUnion(material) })
 }
 
 export function subscribeToLesson(studentId, lessonId, onData, onError) {
@@ -91,8 +108,10 @@ export function subscribeToUpcomingLesson(studentId, onData, onError) {
 // Powers the teacher dashboard's "Ближайшие уроки" block — needs a
 // collectionGroup query (and its composite index, see
 // firestore.indexes.json) since it spans every student's lessons
-// subcollection at once.
-export function subscribeToUpcomingLessons(onData, onError, maxResults = 3) {
+// subcollection at once. maxResults is fetched up front and the dashboard
+// paginates the "Показать ещё" button client-side over this array, rather
+// than re-querying Firestore on every click.
+export function subscribeToUpcomingLessons(onData, onError, maxResults = 25) {
   const upcomingQuery = query(
     collectionGroup(db, "lessons"),
     where("status", "==", "upcoming"),
@@ -113,21 +132,28 @@ export function subscribeToUpcomingLessons(onData, onError, maxResults = 3) {
   )
 }
 
-export async function addLesson(
-  studentId,
-  { date, topic, attendance, homeworkDone, rating, materials = [] },
-) {
-  const ref = collection(db, "students", studentId, "lessons")
+// Powers the teacher dashboard's "Прошедшие уроки" block — same
+// collectionGroup approach as subscribeToUpcomingLessons, ordered newest
+// first instead (needs its own composite index, see firestore.indexes.json).
+export function subscribeToCompletedLessons(onData, onError, maxResults = 25) {
+  const completedQuery = query(
+    collectionGroup(db, "lessons"),
+    where("status", "==", "completed"),
+    orderBy("date", "desc"),
+    limit(maxResults),
+  )
 
-  await addDoc(ref, {
-    date: Timestamp.fromDate(date),
-    topic,
-    attendance,
-    homeworkDone,
-    rating,
-    materials,
-    createdAt: serverTimestamp(),
-  })
+  return onSnapshot(
+    completedQuery,
+    (snapshot) => {
+      const lessons = snapshot.docs.map((document) => {
+        const studentId = document.ref.parent.parent.id
+        return mapLessonDoc(document.id, studentId, document.data())
+      })
+      onData(lessons)
+    },
+    onError,
+  )
 }
 
 export async function getLessons(studentId) {
@@ -139,12 +165,20 @@ export async function getLessons(studentId) {
     const data = document.data()
     return {
       id: document.id,
+      status: data.status ?? null,
       date: data.date?.toDate?.() ?? null,
       topic: data.topic ?? "",
       attendance: data.attendance ?? null,
       homeworkDone: Boolean(data.homeworkDone),
       rating: data.rating ?? null,
       materials: Array.isArray(data.materials) ? data.materials : [],
+      homework: {
+        assignment: {
+          files: Array.isArray(data.homework?.assignment?.files)
+            ? data.homework.assignment.files
+            : [],
+        },
+      },
     }
   })
 }

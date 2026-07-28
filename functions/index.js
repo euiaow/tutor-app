@@ -23,7 +23,7 @@ const {
   updateLessonEvent,
   deleteLessonEvent,
 } = require("./core/googleCalendar")
-const { ensureUpcomingLesson, updateHomeworkAssignment } = require("./core/lessons")
+const { ensureUpcomingLesson, updateHomeworkAssignment, completeLesson } = require("./core/lessons")
 const { checkAndSendReminders } = require("./reminders")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
@@ -118,6 +118,26 @@ exports.ensureUpcomingLesson = onCall(async (request) => {
 
     logger.error("Failed to ensure upcoming lesson", error)
     throw new HttpsError("internal", "Не удалось подготовить урок")
+  }
+})
+
+exports.completeLesson = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, lessonId, attendance, homeworkDone, rating, topic } = request.data ?? {}
+
+  try {
+    await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic })
+    return { success: true }
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to complete lesson", error)
+    throw new HttpsError("internal", "Не удалось сохранить итоги урока")
   }
 })
 

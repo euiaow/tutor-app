@@ -1,6 +1,10 @@
+import { useState } from "react"
 import { CalendarDays, CheckCircle2, XCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { MaterialLink } from "@/components/material-link"
+
+const VISIBLE_COUNT = 5
 
 const ATTENDANCE_BADGES = {
   on_time: {
@@ -96,6 +100,8 @@ function LessonCard({ lesson }) {
 }
 
 export function LessonHistory({ lessons, loading, error }) {
+  const [visibleCount, setVisibleCount] = useState(VISIBLE_COUNT)
+
   return (
     <section aria-labelledby="lesson-history-title" className="flex flex-col gap-3">
       <h2 id="lesson-history-title" className="text-lg font-extrabold text-foreground">
@@ -113,11 +119,24 @@ export function LessonHistory({ lessons, loading, error }) {
           <p className="text-muted-foreground">Уроки пока не добавлены</p>
         </div>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {lessons.map((lesson) => (
-            <LessonCard key={lesson.id} lesson={lesson} />
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-3">
+            {lessons.slice(0, visibleCount).map((lesson) => (
+              <LessonCard key={lesson.id} lesson={lesson} />
+            ))}
+          </ul>
+          {lessons.length > visibleCount ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() => setVisibleCount((prev) => prev + 5)}
+            >
+              Показать ещё
+            </Button>
+          ) : null}
+        </>
       )}
     </section>
   )

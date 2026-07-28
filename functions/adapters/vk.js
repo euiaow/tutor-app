@@ -133,7 +133,24 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
   }
 }
 
-function extractIncomingAttachmentUrl(message) {
+// VK attachments don't carry a mime_type field the way Telegram documents
+// do — photos are always JPEG, and doc attachments only expose a file
+// extension, so that's mapped to a best-guess mime type instead.
+const EXTENSION_MIME_TYPES = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+function guessMimeTypeFromExtension(ext) {
+  return EXTENSION_MIME_TYPES[ext?.toLowerCase()] || "application/octet-stream"
+}
+
+function extractIncomingAttachment(message) {
   const attachments = message?.attachments
   if (!Array.isArray(attachments)) {
     return null
@@ -143,11 +160,15 @@ function extractIncomingAttachmentUrl(message) {
   const sizes = photoAttachment?.photo?.sizes
   if (Array.isArray(sizes) && sizes.length > 0) {
     // VK lists photo sizes smallest to largest; the last one is the largest.
-    return sizes[sizes.length - 1].url
+    return { url: sizes[sizes.length - 1].url, mimeType: "image/jpeg" }
   }
 
   const docAttachment = attachments.find((attachment) => attachment.type === "doc")
-  return docAttachment?.doc?.url ?? null
+  if (docAttachment?.doc?.url) {
+    return { url: docAttachment.doc.url, mimeType: guessMimeTypeFromExtension(docAttachment.doc.ext) }
+  }
+
+  return null
 }
 
 async function downloadFileFromUrl(url) {
@@ -157,13 +178,10 @@ async function downloadFileFromUrl(url) {
     throw new Error("VK file download failed")
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer())
-  const contentType = response.headers.get("content-type") || "application/octet-stream"
-
-  return { buffer, contentType }
+  return Buffer.from(await response.arrayBuffer())
 }
 
-async function handleHomeworkFile(peerId, fileUrl) {
+async function handleHomeworkFile(peerId, attachment) {
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
 
   if (!studentId) {
@@ -172,11 +190,11 @@ async function handleHomeworkFile(peerId, fileUrl) {
     return
   }
 
-  logger.info("VK homework file received", { peerId, studentId })
+  logger.info("VK homework file received", { peerId, studentId, mimeType: attachment.mimeType })
 
   try {
-    const { buffer, contentType } = await downloadFileFromUrl(fileUrl)
-    const url = await uploadHomeworkFile(studentId, buffer, contentType)
+    const buffer = await downloadFileFromUrl(attachment.url)
+    const url = await uploadHomeworkFile(studentId, buffer, attachment.mimeType)
     await recordHomeworkSubmission(studentId, url)
 
     logger.info("VK homework file saved", { peerId, studentId })
@@ -199,10 +217,10 @@ async function handleMessageNew(object) {
   }
 
   if (typeof text !== "string" || text.trim() === "") {
-    const fileUrl = extractIncomingAttachmentUrl(message)
+    const attachment = extractIncomingAttachment(message)
 
-    if (fileUrl) {
-      await handleHomeworkFile(peerId, fileUrl)
+    if (attachment) {
+      await handleHomeworkFile(peerId, attachment)
       return
     }
 
