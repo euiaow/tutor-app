@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react"
-import { Clock, Trash2 } from "lucide-react"
+import { Check, Copy, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
-import { CopyableLink } from "@/components/teacher/copyable-link"
 import {
   cancelRegistrationToken,
   subscribeToPendingRegistrationTokens,
 } from "@/firebase/registration"
-import { buildRegistrationLinks } from "@/lib/registration-links"
+import { buildRegistrationLinks, VK_GROUP } from "@/lib/registration-links"
 
 function formatDate(timestamp) {
   if (!timestamp?.toDate) {
@@ -25,7 +24,21 @@ function formatDate(timestamp) {
 
 function PendingRegistrationItem({ item }) {
   const [cancelling, setCancelling] = useState(false)
+  const [copiedChannel, setCopiedChannel] = useState(null)
   const links = buildRegistrationLinks(item.token)
+
+  const telegramMessage = `Привет! Вот твоя ссылка для регистрации на платформе: ${links.telegram}\nПерейди по ней и следуй инструкциям бота 🎓`
+  const vkMessage = `Привет! Вот твоя ссылка для регистрации на платформе: https://vk.me/${VK_GROUP}\nПерейди по ней, напиши боту и первым сообщением отправь вот этот код: ${item.token}`
+
+  async function handleCopy(channel, message) {
+    try {
+      await navigator.clipboard.writeText(message)
+      setCopiedChannel(channel)
+      setTimeout(() => setCopiedChannel((cur) => (cur === channel ? null : cur)), 1800)
+    } catch (error) {
+      console.error("Failed to copy link:", error)
+    }
+  }
 
   async function handleCancel() {
     const confirmed = window.confirm(
@@ -44,30 +57,56 @@ function PendingRegistrationItem({ item }) {
   }
 
   return (
-    <li className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0 flex-1">
-        <p className="font-semibold text-card-foreground">{item.studentName}</p>
-        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Clock className="size-3.5" aria-hidden="true" />
-          {formatDate(item.createdAt)}
-        </p>
-        <div className="mt-3 flex flex-col gap-2 sm:max-w-sm">
-          <CopyableLink label="Telegram" url={links.telegram} />
-          <CopyableLink label="VK" url={links.vk} />
-        </div>
+    <li className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="truncate font-semibold text-card-foreground">{item.studentName}</p>
+        <p className="text-xs text-muted-foreground">Ссылка создана {formatDate(item.createdAt)}</p>
       </div>
 
-      <Button
-        type="button"
-        variant="destructive"
-        size="sm"
-        onClick={handleCancel}
-        disabled={cancelling}
-        className="shrink-0"
-      >
-        <Trash2 aria-hidden="true" />
-        {cancelling ? "Удаляем..." : "Удалить"}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => handleCopy("vk", vkMessage)}>
+          {copiedChannel === "vk" ? (
+            <>
+              <Check aria-hidden="true" />
+              Скопировано
+            </>
+          ) : (
+            <>
+              <Copy aria-hidden="true" />
+              Ссылка ВК
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => handleCopy("tg", telegramMessage)}
+        >
+          {copiedChannel === "tg" ? (
+            <>
+              <Check aria-hidden="true" />
+              Скопировано
+            </>
+          ) : (
+            <>
+              <Copy aria-hidden="true" />
+              Ссылка ТГ
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleCancel}
+          disabled={cancelling}
+          aria-label={`Удалить приглашение для ${item.studentName}`}
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+        >
+          <Trash2 aria-hidden="true" />
+        </Button>
+      </div>
     </li>
   )
 }

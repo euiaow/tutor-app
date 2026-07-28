@@ -149,7 +149,7 @@ export function AddLessonDialog({ studentId }) {
 
   return (
     <>
-      <Button type="button" variant="outline" size="lg" className="w-full" onClick={() => setOpen(true)}>
+      <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setOpen(true)}>
         <NotebookPen aria-hidden="true" />
         Добавить урок
       </Button>

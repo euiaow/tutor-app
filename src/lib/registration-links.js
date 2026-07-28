@@ -1,5 +1,5 @@
-const TELEGRAM_BOT_USERNAME = "Anst_reg_bot"
-const VK_GROUP = "club240507222"
+export const TELEGRAM_BOT_USERNAME = "Anst_reg_bot"
+export const VK_GROUP = "club240507222"
 
 export function buildRegistrationLinks(token) {
   return {

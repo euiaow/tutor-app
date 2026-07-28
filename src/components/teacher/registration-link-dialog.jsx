@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Link2, Loader2, AlertCircle } from "lucide-react"
+import { Plus, Loader2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -56,8 +56,8 @@ export function RegistrationLinkDialog() {
   return (
     <>
       <Button size="lg" onClick={() => setOpen(true)}>
-        <Link2 aria-hidden="true" />
-        Добавить ученика по ссылке
+        <Plus aria-hidden="true" />
+        Добавить ученика
       </Button>
 
       <Dialog open={open} onOpenChange={handleOpenChange}>

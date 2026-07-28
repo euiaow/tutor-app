@@ -50,3 +50,17 @@ export function formatNextLessonDate(date) {
 
   return `${capitalizedWeekday}, ${time}`
 }
+
+// Full calendar date + time (e.g. "28 июля, 16:00") — used for concrete
+// lesson.date values, as opposed to formatNextLessonDate's weekday-only
+// format for the recurring weekly schedule.
+export function formatLessonDateTime(date) {
+  if (!date) {
+    return ""
+  }
+
+  const datePart = date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
+  const timePart = date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
+
+  return `${datePart}, ${timePart}`
+}

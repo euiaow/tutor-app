@@ -93,7 +93,7 @@ async function getRegistrationTokenStatus(token) {
   return snapshot.data()
 }
 
-async function completeRegistration(token, fullName, accessCode) {
+async function completeRegistration(token, fullName, accessCode, identity = null) {
   if (!token || typeof token !== "string") {
     throw new HttpsError("invalid-argument", "Не указан токен регистрации")
   }
@@ -103,6 +103,13 @@ async function completeRegistration(token, fullName, accessCode) {
   if (!accessCode || typeof accessCode !== "string" || !accessCode.trim()) {
     throw new HttpsError("invalid-argument", "Укажите код доступа")
   }
+
+  // identity ties the student doc back to the chat the bot registered them
+  // from, so reminders.js and the homework-photo handlers can later find
+  // the student by chatId/peerId without asking them to re-authenticate.
+  const platform = identity?.platform ?? null
+  const telegramChatId = platform === "telegram" ? String(identity.id) : null
+  const vkPeerId = platform === "vk" ? String(identity.id) : null
 
   const tokenRef = db.collection(REGISTRATION_TOKENS_COLLECTION).doc(token)
   const tokenSnapshot = await tokenRef.get()
@@ -140,6 +147,9 @@ async function completeRegistration(token, fullName, accessCode) {
       level: 1,
       schedule: null,
       topic: "",
+      platform,
+      telegramChatId,
+      vkPeerId,
     })
 
     transaction.update(tokenRef, {

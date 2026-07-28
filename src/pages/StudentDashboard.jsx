@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
+import { Paperclip, CheckCircle2 } from "lucide-react"
 import { NextLessonCard } from "@/components/next-lesson-card"
 import { LevelCard } from "@/components/level-card"
 import { MaterialsLibrary } from "@/components/materials-library"
@@ -7,11 +8,96 @@ import { SubmitHomeworkButton } from "@/components/submit-homework-button"
 import { Achievements } from "@/components/achievements"
 import { LessonHistory } from "@/components/lesson-history"
 import { LessonStats } from "@/components/lesson-stats"
-import { getNextLessonDate, formatNextLessonDate } from "@/lib/schedule"
+import { getNextLessonDate, formatNextLessonDate, formatLessonDateTime } from "@/lib/schedule"
 import { Spinner } from "@/components/ui/spinner"
 import { LoginScreen } from "@/components/auth/login-screen"
 import { subscribeToStudent } from "@/firebase/students"
-import { getLessons } from "@/firebase/lessons"
+import { getLessons, subscribeToUpcomingLesson } from "@/firebase/lessons"
+
+function UpcomingLessonHomework({ studentId }) {
+  const [lesson, setLesson] = useState(null)
+
+  useEffect(() => {
+    const unsubscribe = subscribeToUpcomingLesson(studentId, setLesson, (error) => {
+      console.error("Failed to load upcoming lesson:", error)
+    })
+
+    return unsubscribe
+  }, [studentId])
+
+  if (!lesson) {
+    return null
+  }
+
+  const assignment = lesson.homework.assignment
+  const hasAssignment = assignment.text.trim() !== "" || assignment.files.length > 0
+  const submissionFiles = lesson.homework.submission.files
+
+  return (
+    <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <div>
+        <p className="text-sm font-medium text-muted-foreground">Следующий урок</p>
+        <p className="text-lg font-bold text-card-foreground">{formatLessonDateTime(lesson.date)}</p>
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+          Задание
+        </span>
+        {hasAssignment ? (
+          <>
+            {assignment.text ? (
+              <p className="text-sm text-foreground">{assignment.text}</p>
+            ) : null}
+            {assignment.files.length > 0 ? (
+              <ul className="flex flex-col gap-1.5">
+                {assignment.files.map((file, index) => (
+                  <li key={`${file.url}-${index}`}>
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
+                    >
+                      <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{file.title}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Задание пока не добавлено</p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+          Моя домашка
+        </span>
+        {submissionFiles.length === 0 ? (
+          <>
+            <p className="text-sm text-foreground">Вы ещё не отправили домашнее задание</p>
+            <p className="text-xs text-muted-foreground">
+              Отправьте фото через бота в Telegram или VK
+            </p>
+          </>
+        ) : (
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+            <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            Домашнее задание получено ✓
+            {submissionFiles[submissionFiles.length - 1]?.submittedAt ? (
+              <span className="font-normal text-muted-foreground">
+                ({formatLessonDateTime(submissionFiles[submissionFiles.length - 1].submittedAt)})
+              </span>
+            ) : null}
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
 
 const LOCKED_MATERIALS = [
   { id: "locked-1", title: "??????", isLocked: true, type: "secret" },
@@ -143,6 +229,8 @@ function StudentDashboardContent({ studentId }) {
       <Achievements />
 
       <LessonStats lessons={lessons} />
+
+      <UpcomingLessonHomework studentId={studentId} />
 
       <LessonHistory lessons={lessons} loading={lessonsLoading} error={lessonsError} />
     </div>

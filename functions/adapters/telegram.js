@@ -6,6 +6,11 @@ const {
   completeRegistration,
   getRegistrationTokenStatus,
 } = require("../core/registration")
+const {
+  findStudentIdByChatIdentity,
+  uploadHomeworkFile,
+  recordHomeworkSubmission,
+} = require("../core/lessons")
 
 const SESSIONS_COLLECTION = "telegramSessions"
 
@@ -104,7 +109,10 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
   logger.info("Telegram pin accepted, completing registration", { chatId, token: session.token })
 
   try {
-    const studentId = await completeRegistration(session.token, session.name, pin)
+    const studentId = await completeRegistration(session.token, session.name, pin, {
+      platform: "telegram",
+      id: chatId,
+    })
     await sessionRef.delete()
 
     logger.info("Telegram registration completed", { chatId, studentId })
@@ -124,13 +132,86 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
   }
 }
 
+function extractIncomingFileId(message) {
+  const photos = message?.photo
+  if (Array.isArray(photos) && photos.length > 0) {
+    // Telegram sends multiple resolutions of the same photo; the last one
+    // is the largest.
+    return photos[photos.length - 1].file_id
+  }
+  return message?.document?.file_id ?? null
+}
+
+async function downloadTelegramFile(fileId) {
+  const token = TELEGRAM_BOT_TOKEN.value()
+
+  const fileInfoResponse = await fetch(
+    `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`,
+  )
+  const fileInfo = await fileInfoResponse.json()
+
+  if (!fileInfo.ok) {
+    throw new Error("Telegram getFile failed")
+  }
+
+  const filePath = fileInfo.result.file_path
+  const fileResponse = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`)
+
+  if (!fileResponse.ok) {
+    throw new Error("Telegram file download failed")
+  }
+
+  const buffer = Buffer.from(await fileResponse.arrayBuffer())
+  const contentType = fileResponse.headers.get("content-type") || "application/octet-stream"
+
+  return { buffer, contentType }
+}
+
+async function handleHomeworkFile(chatId, fileId) {
+  const studentId = await findStudentIdByChatIdentity("telegram", chatId)
+
+  if (!studentId) {
+    logger.warn("Telegram homework file received but no student is linked to this chat", {
+      chatId,
+    })
+    await sendMessage(chatId, "Не нашли твой аккаунт. Обратись к репетитору за новой ссылкой")
+    return
+  }
+
+  logger.info("Telegram homework file received", { chatId, studentId })
+
+  try {
+    const { buffer, contentType } = await downloadTelegramFile(fileId)
+    const url = await uploadHomeworkFile(studentId, buffer, contentType)
+    await recordHomeworkSubmission(studentId, url)
+
+    logger.info("Telegram homework file saved", { chatId, studentId })
+    await sendMessage(chatId, "Домашка получена! ✓")
+  } catch (error) {
+    logger.error("Failed to process Telegram homework file", { chatId, studentId, error })
+    await sendMessage(chatId, "Не удалось сохранить файл, попробуй ещё раз")
+  }
+}
+
 async function handleUpdate(update) {
   const message = update?.message
   const chatId = message?.chat?.id
   const text = message?.text
 
-  if (!chatId || typeof text !== "string") {
-    logger.info("Telegram update ignored: no chat id or text", { update })
+  if (!chatId) {
+    logger.info("Telegram update ignored: no chat id", { update })
+    return
+  }
+
+  if (typeof text !== "string") {
+    const fileId = extractIncomingFileId(message)
+
+    if (fileId) {
+      await handleHomeworkFile(chatId, fileId)
+      return
+    }
+
+    logger.info("Telegram update ignored: no text or file", { chatId })
     return
   }
 

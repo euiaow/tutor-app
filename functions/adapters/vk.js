@@ -6,6 +6,11 @@ const {
   completeRegistration,
   getRegistrationTokenStatus,
 } = require("../core/registration")
+const {
+  findStudentIdByChatIdentity,
+  uploadHomeworkFile,
+  recordHomeworkSubmission,
+} = require("../core/lessons")
 
 const SESSIONS_COLLECTION = "vkSessions"
 
@@ -105,7 +110,10 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
   logger.info("VK pin accepted, completing registration", { peerId, token: session.token })
 
   try {
-    const studentId = await completeRegistration(session.token, session.name, pin)
+    const studentId = await completeRegistration(session.token, session.name, pin, {
+      platform: "vk",
+      id: peerId,
+    })
     await sessionRef.delete()
 
     logger.info("VK registration completed", { peerId, studentId })
@@ -125,14 +133,80 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
   }
 }
 
+function extractIncomingAttachmentUrl(message) {
+  const attachments = message?.attachments
+  if (!Array.isArray(attachments)) {
+    return null
+  }
+
+  const photoAttachment = attachments.find((attachment) => attachment.type === "photo")
+  const sizes = photoAttachment?.photo?.sizes
+  if (Array.isArray(sizes) && sizes.length > 0) {
+    // VK lists photo sizes smallest to largest; the last one is the largest.
+    return sizes[sizes.length - 1].url
+  }
+
+  const docAttachment = attachments.find((attachment) => attachment.type === "doc")
+  return docAttachment?.doc?.url ?? null
+}
+
+async function downloadFileFromUrl(url) {
+  const response = await fetch(url)
+
+  if (!response.ok) {
+    throw new Error("VK file download failed")
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  const contentType = response.headers.get("content-type") || "application/octet-stream"
+
+  return { buffer, contentType }
+}
+
+async function handleHomeworkFile(peerId, fileUrl) {
+  const studentId = await findStudentIdByChatIdentity("vk", peerId)
+
+  if (!studentId) {
+    logger.warn("VK homework file received but no student is linked to this chat", { peerId })
+    await sendMessage(peerId, "Не нашли твой аккаунт. Обратись к репетитору за новой ссылкой")
+    return
+  }
+
+  logger.info("VK homework file received", { peerId, studentId })
+
+  try {
+    const { buffer, contentType } = await downloadFileFromUrl(fileUrl)
+    const url = await uploadHomeworkFile(studentId, buffer, contentType)
+    await recordHomeworkSubmission(studentId, url)
+
+    logger.info("VK homework file saved", { peerId, studentId })
+    await sendMessage(peerId, "Домашка получена! ✓")
+  } catch (error) {
+    logger.error("Failed to process VK homework file", { peerId, studentId, error })
+    await sendMessage(peerId, "Не удалось сохранить файл, попробуй ещё раз")
+  }
+}
+
 async function handleMessageNew(object) {
   const message = object?.message
   const peerId = message?.peer_id
   const text = message?.text
   const ref = message?.ref
 
-  if (!peerId || typeof text !== "string") {
-    logger.info("VK message_new ignored: no peer id or text", { object })
+  if (!peerId) {
+    logger.info("VK message_new ignored: no peer id", { object })
+    return
+  }
+
+  if (typeof text !== "string" || text.trim() === "") {
+    const fileUrl = extractIncomingAttachmentUrl(message)
+
+    if (fileUrl) {
+      await handleHomeworkFile(peerId, fileUrl)
+      return
+    }
+
+    logger.info("VK message_new ignored: no text or file", { peerId })
     return
   }
 
