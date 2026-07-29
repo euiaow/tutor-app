@@ -24,12 +24,27 @@ functions/                 Firebase Cloud Functions (Node, CommonJS)
     googleAuth.js             OAuth client/token storage for the calendar
     botMessages.js            builds outbound bot message text (RU)
     registration.js           registration token issue/redeem
-    reminderUtils.js          shared helpers for reminders.js
-    teacherNotifier.js        pushes notifications to the teacher's bot(s)
+    reminderUtils.js          sendReminderToStudent (resolves student's bot)
+    teacherNotifier.js        sendMessageToTeacher (resolves teacher's bot)
+    notifier.js                createNotification — single funnel: logs to
+                              notifications/ + dispatches via reminderUtils/
+                              teacherNotifier (see Key technical decisions)
   adapters/
     telegram.js               Telegram webhook handling, sends
-    vk.js                     VK Callback API webhook handling, sends
+    vk.js                     VK Callback API webhook handling, sends;
+                              vkProcessedMessages/ idempotency guard on
+                              message_new (see Key technical decisions)
   reminders.js                dailyReminderMidday / dailyReminderPreLesson bodies
+
+src/
+  components/
+    notifications-list.jsx    shared NotificationsList/NotificationIcon,
+                              used by both dashboards
+    ui/sheet.jsx               slide-in panel (Base UI Dialog anchored right),
+                              powers the teacher's notification bell
+  firebase/notifications.js    subscribeToTeacherNotifications/
+                              subscribeToStudentNotifications, mark(All)Read
+  lib/notifications.js         formatRelativeTime ("5 минут назад" etc.)
 ```
 
 ## Key technical decisions
@@ -63,6 +78,131 @@ functions/                 Firebase Cloud Functions (Node, CommonJS)
 - **Redirect URI for Google OAuth is derived from `GCLOUD_PROJECT`**, not
   hardcoded, because the callable that builds the consent URL and the
   HTTP function that exchanges the code must send byte-identical URIs.
+- **`createNotification({target, studentId, type, text, lessonId})` is the
+  only path to notify a user** (`functions/core/notifier.js`). It writes a
+  `notifications/` doc (source of truth for the bell/block UI) *and*
+  best-effort dispatches the same text via `sendReminderToStudent`
+  (target: "student") or `sendMessageToTeacher` (target: "teacher") —
+  bot-send failures are caught and logged as warnings, never thrown, so a
+  student with no linked platform still gets the in-app record. Every call
+  site that used to call `sendReminderToStudent`/`sendMessageToTeacher`
+  directly (reschedule/cancellation propose/confirm/reject, homework
+  submission, `updateHomeworkAssignment`, `addLessonMaterial`, both daily
+  reminders) now goes through this instead. Returns `{id, delivered}` —
+  `delivered` lets reminders.js keep its old "only mark as sent if the bot
+  actually got it" retry semantics even though the Firestore log always
+  gets written regardless. Optional `telegramReplyMarkup`/`vkKeyboard`
+  pass through to `sendReminderToStudent` for the reschedule/cancellation
+  proposals that attach an interactive keyboard — those two fields are
+  dispatch-only, never persisted on the notification doc. Requires the
+  same lazy-require trick `core/lessons.js` already used
+  (`require("./reminderUtils")` *inside* the function body, not at module
+  top) to avoid a circular require, since reminderUtils/teacherNotifier
+  pull in the bot adapters, which require `core/lessons.js`, which now
+  requires `core/notifier.js` at the top.
+- **Webhook idempotency via a reservation doc, not response speed.** VK
+  retries a `message_new` event if `vkWebhook` doesn't answer "ok" fast
+  enough (observed: normal processing already takes 3–12s downloading a
+  photo + uploading to Storage, worse on a cold Cloud Run start) — this
+  produced 2–3 duplicate homework submissions per photo in practice.
+  Fixed with `functions/adapters/vk.js`'s `reserveMessageProcessing`:
+  before handling a message, `db.collection("vkProcessedMessages")
+  .doc(peerId_conversationMessageId).create(...)` — `.create()` throws
+  `ALREADY_EXISTS` if a doc is already there, so this is atomic even
+  against two near-simultaneous deliveries. A retried event just no-ops.
+  Telegram's webhook has the same "process fully, then respond" shape
+  (`telegramWebhook` in `index.js`) and is structurally exposed to the
+  same failure mode, but has no equivalent guard yet — hasn't been
+  observed to duplicate in practice, but if it ever does, mirror this
+  pattern rather than trying to make the handler faster.
+
+- **Extra (unscheduled) lessons are structurally invisible to the multi-slot
+  machinery, by design.** `createExtraLesson` writes `isExtraLesson: true,
+  slotIndex: null` and never calls `ensureUpcomingLesson`; every slot-based
+  function (`bucketUpcomingBySlot`, the schedule-change triggers) either
+  requires a real `slotIndex` or only ever touches docs it created itself,
+  so an extra lesson simply never enters those code paths. Its own
+  `googleEventId` lives directly on the lesson doc — the student's
+  `googleEventIds` map is keyed by slot index and has no slot to key an
+  extra lesson under.
+- **`mapStudentDoc` (`src/firebase/students.js`) now exposes
+  `platform`/`telegramChatId`/`vkPeerId`/`contactUrl`** — previously the
+  client-side student object silently dropped these Firestore fields even
+  though they exist on the doc (only used server-side for bot routing
+  before). Added when building `getContactUrl` (`src/lib/contact.js`),
+  since without them there was nothing to derive a contact link from
+  client-side. Any future feature reading a student's bot-linkage should
+  read it off the mapped object rather than re-querying Firestore directly.
+- **No shadcn `DropdownMenu` existed before `ContactButton`** — built the
+  smallest usable wrapper (`src/components/ui/dropdown-menu.jsx`) directly
+  on `@base-ui/react`'s `Menu` primitive, the same library `dialog.jsx` and
+  `sheet.jsx` already build on, rather than hand-rolling click-outside
+  logic or adding a new dependency. Reuse this wrapper for any future
+  dropdown instead of building another one-off.
+- **`updateHomeworkAssignment`'s notification logic treats "text cleared to
+  empty" as a no-op**, not an `assignment_updated` event — not covered by
+  the original spec (which only defined added/changed/file-added/no-change
+  cases), decided this way to avoid sending a notification with an empty
+  "new text" tail, which would read as broken rather than intentional.
+
+- **Balance/payment tracking (`functions/core/finance.js`) follows the same
+  "backend function called from inside another domain function" shape as
+  notifications** — `deductLessonFromBalance` is not a callable, it's
+  invoked directly from `completeLesson` (`core/lessons.js`) the same way
+  `createNotification` is invoked from many call sites, never exposed to
+  the client directly. Both balance-mutating operations
+  (`addPayment`/`deductLessonFromBalance`) run inside a Firestore
+  transaction that writes a `balanceLedger/{entryId}` doc *and* updates
+  `students/{id}.paidLessonsBalance` atomically — the ledger is an
+  append-only audit log, the student doc's `paidLessonsBalance` is the
+  fast-read cache of "ledger sum so far", intentionally duplicated data
+  kept in sync by always writing both in the same transaction.
+- **`subject` on `students/{id}` was silently unused as a string field
+  before the balance-tracker feature** — repurposed in place to
+  `subject: string[]` rather than adding a second field, since nothing
+  read the old value. See [[activeContext]] for the full reasoning; flag
+  this if any pre-existing student doc still has a string `subject` and
+  something unexpected reads it as a string rather than treating it as
+  data predating the array shape.
+
+- **`getNearestUpcomingLesson` vs `ensureUpcomingLesson` — read vs
+  find-or-create, never conflate the two.** `ensureUpcomingLesson` only
+  ever considers `scheduleSlots` (bucketed by `slotIndex`) and will create
+  a draft if one's missing; it is structurally blind to `isExtraLesson`
+  docs (`slotIndex: null`). `getNearestUpcomingLesson` is the read-only
+  counterpart — queries every `status == "upcoming"` doc regardless of
+  slot, sorts by effective date in code (Firestore can't `orderBy` a
+  computed `rescheduledDate ?? date`). Any code that means "what's this
+  student's next lesson, for real" (opening the homework dialog, attaching
+  a bot-submitted file) must use `getNearestUpcomingLesson`, falling back
+  to `ensureUpcomingLesson` only when nothing exists yet. Confirmed via
+  `firebase functions:log` real invocation traces (not just code reading)
+  that this was the actual root cause of two reported bugs before fixing —
+  see [[activeContext]] session 4.
+- **`firebase functions:log` output is dominated by Cloud Audit Logs
+  (deploy/admin events) unless filtered.** `grep -v "AuditLog"` on the
+  output is necessary to see actual runtime invocation logs (the
+  `"Callable request verification passed"` / your own `logger.info` lines)
+  — otherwise a deploy from five minutes ago looks identical to "no logs
+  at all" for a quick skim. Learned this diagnosing session 4's item 4.
+- **A Telegram bot only ever has a numeric chat/user id for a student, not
+  a public `@username`.** `t.me/<numeric id>` is not a valid Telegram deep
+  link — Telegram's own servers 302-redirect it to telegram.org (verified
+  live). `getContactUrl` (`src/lib/contact.js`) only builds a t.me link
+  when `telegramChatId` doesn't look like a bare number; otherwise it's
+  `null` and the UI shows "не настроена". There is currently no way to
+  get a *working* auto-derived Telegram link for a bot-registered student
+  — the manual `contactUrl` override is the only path, and that's by
+  design, not a stopgap pending a future fix.
+- **Google Calendar's `colorId` is a fixed 1–11 palette (Blueberry,
+  Grape, Graphite, etc.), not arbitrary hex** — `core/googleCalendar.js`'s
+  `colorIdForStudent` maps `student.subject[0]` to the closest-themed id
+  rather than trying to compute a matching hex, since the API doesn't
+  accept one. Keep this map's intent (not exact color) in sync with
+  `src/components/student-tags.jsx`'s `TAG_STYLES` if either changes —
+  they're two independent constants (frontend ESM vs. backend CommonJS,
+  no shared module) that are supposed to agree conceptually, not
+  literally import from each other.
 
 ## Component relationships
 
@@ -75,6 +215,25 @@ functions/                 Firebase Cloud Functions (Node, CommonJS)
 - `src/lib/schedule.js` duplicates slot-normalization logic client-side so
   the dashboard can render/validate schedules without a round trip;
   `functions/core/schedule.js` is the server-side source of truth.
+- `homework-lesson-dialog.jsx`'s "completing" mode and the read-only
+  "completed" summary both show attendance/homeworkDone/rating — restored
+  after an earlier pass had accidentally dropped them; `completeLesson`
+  (both `core/lessons.js` and the `index.js`/`src/firebase/lessons.js`
+  callable signature) takes `{attendance, homeworkDone, rating}` again.
+  `topic` stays deliberately separate — editable anytime via
+  `updateLessonTopic` (plain client `updateDoc`) while a lesson is
+  upcoming, not part of `completeLesson`'s payload.
+- Teacher's notification bell (`TeacherNotificationsBell` in
+  `TeacherDashboard.jsx`) and the student's notification block
+  (`StudentNotifications` in `StudentDashboard.jsx`) both subscribe
+  directly to `notifications/` via `src/firebase/notifications.js` and
+  share `components/notifications-list.jsx` for rendering — no dashboard
+  builds its own notification-row markup.
+- `addLessonMaterial` moved from a direct client `updateDoc` to a callable
+  (`functions/core/lessons.js` + `index.js` + `src/firebase/lessons.js`)
+  *solely* so attaching a material can trigger a `material_added`
+  notification server-side — the material write itself still needs no
+  extra validation.
 
 ## Critical implementation paths
 

@@ -14,8 +14,11 @@ import { httpsCallable } from "firebase/functions"
 import { db, functions } from "./firebase"
 
 const ensureUpcomingLessonCallable = httpsCallable(functions, "ensureUpcomingLesson")
+const getNearestUpcomingLessonCallable = httpsCallable(functions, "getNearestUpcomingLesson")
 const updateHomeworkAssignmentCallable = httpsCallable(functions, "updateHomeworkAssignment")
 const addLessonMaterialCallable = httpsCallable(functions, "addLessonMaterial")
+const createExtraLessonCallable = httpsCallable(functions, "createExtraLesson")
+const submitHomeworkFileCallable = httpsCallable(functions, "submitHomeworkFile")
 const completeLessonCallable = httpsCallable(functions, "completeLesson")
 const proposeRescheduleCallable = httpsCallable(functions, "proposeReschedule")
 const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
@@ -64,6 +67,14 @@ function mapLessonDoc(id, studentId, data) {
 
 export async function ensureUpcomingLesson(studentId) {
   const result = await ensureUpcomingLessonCallable({ studentId })
+  return result.data.lessonId
+}
+
+// Read-only "what's this student's next lesson" — unlike
+// ensureUpcomingLesson, sees isExtraLesson docs too and never creates a
+// draft. Returns null if there's no upcoming lesson of any kind yet.
+export async function getNearestUpcomingLesson(studentId) {
+  const result = await getNearestUpcomingLessonCallable({ studentId })
   return result.data.lessonId
 }
 
@@ -117,6 +128,15 @@ export async function rejectCancellation(studentId, lessonId) {
 // notification to the student — see core/lessons.js.
 export async function addLessonMaterial(studentId, lessonId, material) {
   await addLessonMaterialCallable({ studentId, lessonId, material })
+}
+
+export async function createExtraLesson(studentId, date) {
+  const result = await createExtraLessonCallable({ studentId, date: date.toISOString() })
+  return result.data.lessonId
+}
+
+export async function submitHomeworkFile(studentId, fileUrl) {
+  await submitHomeworkFileCallable({ studentId, fileUrl })
 }
 
 // Direct client write (same pattern as addLessonMaterial) — the teacher
@@ -230,29 +250,42 @@ export async function getAllCompletedLessons() {
   })
 }
 
+function mapPlainLessonDoc(document) {
+  const data = document.data()
+  return {
+    id: document.id,
+    status: data.status ?? null,
+    date: data.date?.toDate?.() ?? null,
+    topic: data.topic ?? "",
+    attendance: data.attendance ?? null,
+    homeworkDone: Boolean(data.homeworkDone),
+    rating: data.rating ?? null,
+    materials: Array.isArray(data.materials) ? data.materials : [],
+    homework: {
+      assignment: {
+        files: Array.isArray(data.homework?.assignment?.files) ? data.homework.assignment.files : [],
+      },
+    },
+  }
+}
+
 export async function getLessons(studentId) {
   const ref = collection(db, "students", studentId, "lessons")
   const lessonsQuery = query(ref, orderBy("date", "desc"))
   const snapshot = await getDocs(lessonsQuery)
 
-  return snapshot.docs.map((document) => {
-    const data = document.data()
-    return {
-      id: document.id,
-      status: data.status ?? null,
-      date: data.date?.toDate?.() ?? null,
-      topic: data.topic ?? "",
-      attendance: data.attendance ?? null,
-      homeworkDone: Boolean(data.homeworkDone),
-      rating: data.rating ?? null,
-      materials: Array.isArray(data.materials) ? data.materials : [],
-      homework: {
-        assignment: {
-          files: Array.isArray(data.homework?.assignment?.files)
-            ? data.homework.assignment.files
-            : [],
-        },
-      },
-    }
-  })
+  return snapshot.docs.map(mapPlainLessonDoc)
+}
+
+export function subscribeToLessons(studentId, onData, onError) {
+  const ref = collection(db, "students", studentId, "lessons")
+  const lessonsQuery = query(ref, orderBy("date", "desc"))
+
+  return onSnapshot(
+    lessonsQuery,
+    (snapshot) => {
+      onData(snapshot.docs.map(mapPlainLessonDoc))
+    },
+    onError,
+  )
 }

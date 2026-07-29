@@ -6,8 +6,9 @@ const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
 const botMessages = require("./botMessages")
-const { rescheduleLessonEvent, deleteLessonEvent } = require("./googleCalendar")
+const { rescheduleLessonEvent, deleteLessonEvent, createExtraLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
+const { deductLessonFromBalance } = require("./finance")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -102,6 +103,41 @@ async function ensureUpcomingLesson(studentId) {
   return idsBySlot.get(soonestSlotIndex) ?? null
 }
 
+// The actual source of truth for "this student's next lesson" — unlike
+// ensureUpcomingLesson (which only ever looks at schedule slots and is
+// blind to extra/unscheduled lessons since they have slotIndex: null),
+// this queries every "upcoming" doc regardless of slotIndex/isExtraLesson
+// and picks the one with the soonest *effective* date (rescheduledDate if
+// set, otherwise date). Firestore can't orderBy a computed field, so this
+// fetches every upcoming doc (there are at most a handful per student) and
+// sorts in code rather than trying to express the rescheduledDate-or-date
+// fallback in the query itself. Read-only — never creates a draft, unlike
+// ensureUpcomingLesson; callers that need "find or create" should keep
+// using ensureUpcomingLesson for that and this for "what's next".
+async function getNearestUpcomingLesson(studentId) {
+  const snapshot = await lessonsRef(studentId).where("status", "==", "upcoming").get()
+
+  if (snapshot.empty) {
+    return null
+  }
+
+  let nearestDoc = null
+  let nearestDate = null
+
+  for (const doc of snapshot.docs) {
+    const data = doc.data()
+    const effectiveDate = data.rescheduledDate?.toDate?.() ?? data.date?.toDate?.() ?? null
+    if (!effectiveDate) continue
+
+    if (!nearestDate || effectiveDate < nearestDate) {
+      nearestDate = effectiveDate
+      nearestDoc = doc
+    }
+  }
+
+  return nearestDoc ? { id: nearestDoc.id, ...nearestDoc.data() } : null
+}
+
 // Unlike ensureUpcomingLesson (a no-op once a draft exists for every slot),
 // this recomputes each slot's draft date whenever the recurring schedule
 // itself changes — so editing a student's day/time actually moves their
@@ -186,26 +222,58 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
   }
 
   const assignmentText = typeof text === "string" ? text : ""
+  const newFiles = Array.isArray(files) ? files : []
+
+  const lesson = snapshot.data()
+  const prevText = lesson.homework?.assignment?.text ?? ""
+  const prevFiles = lesson.homework?.assignment?.files ?? []
 
   await lessonRef.update({
     "homework.assignment": {
       text: assignmentText,
-      files: Array.isArray(files) ? files : [],
+      files: newFiles,
     },
   })
 
   logger.info("updateHomeworkAssignment: assignment saved", { studentId, lessonId })
 
-  const lesson = snapshot.data()
   const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
 
-  await createNotification({
-    target: "student",
-    studentId,
-    type: "assignment_added",
-    text: botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText),
-    lessonId,
-  })
+  const textAdded = !prevText && assignmentText
+  const textChanged = prevText && assignmentText && assignmentText !== prevText
+  const prevUrls = new Set(prevFiles.map((file) => file.url))
+  const addedFiles = newFiles.filter((file) => !prevUrls.has(file.url))
+
+  if (textAdded) {
+    await createNotification({
+      target: "student",
+      studentId,
+      type: "assignment_added",
+      text: botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText),
+      lessonId,
+    })
+  } else if (textChanged) {
+    await createNotification({
+      target: "student",
+      studentId,
+      type: "assignment_updated",
+      text: botMessages.ASSIGNMENT_UPDATED(lessonDate, assignmentText),
+      lessonId,
+    })
+  }
+
+  if (addedFiles.length > 0) {
+    await createNotification({
+      target: "student",
+      studentId,
+      type: "material_added",
+      text: botMessages.ASSIGNMENT_FILES_ADDED(
+        lessonDate,
+        addedFiles.map((file) => file.title)
+      ),
+      lessonId,
+    })
+  }
 }
 
 // Direct client write elsewhere in the app (addLessonMaterial in
@@ -244,6 +312,56 @@ async function addLessonMaterial(studentId, lessonId, material) {
     text: botMessages.MATERIAL_ADDED(lessonDate, material.title),
     lessonId,
   })
+}
+
+// Creates a one-off lesson not tied to any weekly schedule slot
+// (slotIndex: null) — ensureUpcomingLesson/the schedule triggers never touch
+// it since it isn't bucketed by slot. Its own googleEventId lives on the
+// lesson doc itself, unlike slot-based lessons whose event id lives on the
+// student's googleEventIds map.
+async function createExtraLesson(studentId, date) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new HttpsError("invalid-argument", "Некорректная дата урока")
+  }
+
+  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
+  const studentSnapshot = await studentRef.get()
+
+  if (!studentSnapshot.exists) {
+    throw new HttpsError("not-found", "Ученик не найден")
+  }
+
+  const student = studentSnapshot.data()
+
+  const lessonRef = await lessonsRef(studentId).add({
+    status: "upcoming",
+    date: Timestamp.fromDate(date),
+    isExtraLesson: true,
+    slotIndex: null,
+    homework: emptyHomework(),
+    remindersSent: { preLessonSent: false },
+    createdAt: FieldValue.serverTimestamp(),
+  })
+
+  logger.info("createExtraLesson: lesson created", { studentId, lessonId: lessonRef.id })
+
+  const googleEventId = await createExtraLessonEvent(student, date, 60)
+  if (googleEventId) {
+    await lessonRef.update({ googleEventId })
+  }
+
+  await createNotification({
+    target: "student",
+    studentId,
+    type: "extra_lesson_assigned",
+    text: botMessages.EXTRA_LESSON_ASSIGNED(date),
+    lessonId: lessonRef.id,
+  })
+
+  return { lessonId: lessonRef.id }
 }
 
 // Called when the teacher marks a lesson done in the unified
@@ -288,6 +406,8 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
   })
 
   logger.info("completeLesson: lesson marked completed", { studentId, lessonId })
+
+  await deductLessonFromBalance(studentId, lessonId)
 
   // Generate the next lesson's draft right away rather than waiting for
   // the next reminders.js run — ensureUpcomingLesson's own query already
@@ -676,7 +796,13 @@ async function uploadHomeworkFile(studentId, buffer, contentType) {
 // arrayUnion() element, so each file entry gets a concrete Timestamp
 // instead — only the top-level submission.submittedAt uses the sentinel.
 async function recordHomeworkSubmission(studentId, fileUrl) {
-  const lessonId = await ensureUpcomingLesson(studentId)
+  // getNearestUpcomingLesson first so a submission attaches to an extra
+  // (isExtraLesson) lesson when one is nearer than the next scheduled slot
+  // — ensureUpcomingLesson is blind to those (see its own comment). Falls
+  // back to ensureUpcomingLesson (find-or-create) only when there's no
+  // upcoming lesson doc of any kind yet, same as before this fix.
+  const nearest = await getNearestUpcomingLesson(studentId)
+  const lessonId = nearest ? nearest.id : await ensureUpcomingLesson(studentId)
 
   if (!lessonId) {
     logger.warn("recordHomeworkSubmission: no upcoming lesson to attach submission to", {
@@ -725,9 +851,11 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
 
 module.exports = {
   ensureUpcomingLesson,
+  getNearestUpcomingLesson,
   syncUpcomingLessonToSchedule,
   updateHomeworkAssignment,
   addLessonMaterial,
+  createExtraLesson,
   completeLesson,
   proposeReschedule,
   confirmReschedule,

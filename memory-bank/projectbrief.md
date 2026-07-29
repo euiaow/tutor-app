@@ -21,6 +21,14 @@ integrations and Google Calendar sync.
   platform the student registered through.
 - **Google Calendar sync**: lesson schedule slots are mirrored to a Google
   Calendar as events; reschedule/cancel/delete keep the calendar in sync.
+- **Paid-lessons balance tracking**: teacher logs payments as a lesson
+  count per student; completing a lesson auto-decrements it; low balance
+  notifies the teacher and (optionally) the student.
+- **Unified notifications**: every event a user should know about (homework
+  submitted/assigned, material added, reschedule/cancellation
+  proposed/confirmed/rejected, lesson reminders) is logged as a
+  `notifications/` doc and best-effort mirrored to the recipient's bot —
+  the teacher sees them via a bell/panel, the student via a dashboard block.
 
 ## Scope boundaries
 

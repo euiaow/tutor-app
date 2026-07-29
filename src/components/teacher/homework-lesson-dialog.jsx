@@ -12,6 +12,7 @@ import {
   addLessonMaterial,
   completeLesson,
   ensureUpcomingLesson,
+  getNearestUpcomingLesson,
   subscribeToLesson,
   updateHomeworkAssignment,
   updateLessonTopic,
@@ -146,7 +147,8 @@ export function HomeworkLessonDialog({
       }
     }
 
-    ensureUpcomingLesson(studentId)
+    getNearestUpcomingLesson(studentId)
+      .then((existingId) => (existingId ? existingId : ensureUpcomingLesson(studentId)))
       .then((id) => {
         if (cancelled) return
 

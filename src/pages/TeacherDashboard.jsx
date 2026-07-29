@@ -5,6 +5,10 @@ import { StudentCard } from "@/components/teacher/student-card"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
+import { ExtraLessonDialog } from "@/components/teacher/extra-lesson-dialog"
+import { ContactButton } from "@/components/teacher/contact-button"
+import { StudentTags } from "@/components/student-tags"
+import { FinanceSection } from "@/components/teacher/finance-section"
 import { Spinner } from "@/components/ui/spinner"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
@@ -221,7 +225,7 @@ function formatRescheduleDate(date) {
   })
 }
 
-function UpcomingLessonCard({ lesson, studentName }) {
+function UpcomingLessonCard({ lesson, studentName, student }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
@@ -291,6 +295,12 @@ function UpcomingLessonCard({ lesson, studentName }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+          <StudentTags student={student} compact />
+          {lesson.isExtraLesson ? (
+            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+              доп.
+            </span>
+          ) : null}
           {isCancelled ? (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
               ❌ Урок отменён
@@ -413,6 +423,7 @@ function UpcomingLessonCard({ lesson, studentName }) {
         <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
           Открыть
         </Button>
+        {student ? <ContactButton student={student} /> : null}
       </div>
 
       <HomeworkLessonDialog
@@ -444,13 +455,16 @@ function UpcomingLessonCard({ lesson, studentName }) {
   )
 }
 
-function PastLessonCard({ lesson, studentName }) {
+function PastLessonCard({ lesson, studentName, student }) {
   const [dialogOpen, setDialogOpen] = useState(false)
 
   return (
     <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
-        <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+          <StudentTags student={student} compact />
+        </div>
         <p className="text-xs text-muted-foreground">
           {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
         </p>
@@ -526,6 +540,7 @@ function AllPastLessonsDialog({ open, onOpenChange, students }) {
                 key={lesson.id}
                 lesson={lesson}
                 studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                student={students.find((s) => s.id === lesson.studentId)}
               />
             ))}
           </ul>
@@ -750,7 +765,10 @@ export function TeacherDashboard() {
         ) : null}
 
         <section className="flex flex-col gap-4">
-          <h2 className="text-xl font-extrabold tracking-tight text-foreground">Расписание</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Расписание</h2>
+            <ExtraLessonDialog students={students} />
+          </div>
           {googleCalendarConnected === true ? (
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
               {embedLoading ? (
@@ -787,6 +805,7 @@ export function TeacherDashboard() {
                   key={lesson.id}
                   lesson={lesson}
                   studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                  student={students.find((s) => s.id === lesson.studentId)}
                 />
               ))}
             </ul>
@@ -854,6 +873,8 @@ export function TeacherDashboard() {
             )}
           </div>
         </section>
+
+        {students.length > 0 ? <FinanceSection students={students} /> : null}
 
         <PendingRegistrations />
       </main>

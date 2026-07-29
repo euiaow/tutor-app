@@ -53,6 +53,19 @@ function MATERIAL_ADDED(lessonDate, materialTitle) {
   return `📎 К уроку ${formatMoscowDateTime(lessonDate)} добавлен новый материал: ${materialTitle}`
 }
 
+function EXTRA_LESSON_ASSIGNED(lessonDate) {
+  return `📌 Репетитор назначил(а) дополнительный урок: ${formatMoscowDateTime(lessonDate)}`
+}
+
+function ASSIGNMENT_UPDATED(lessonDate, assignmentText) {
+  return `✏️ Репетитор изменил задание к уроку ${formatMoscowDateTime(lessonDate)}: ${assignmentText}`
+}
+
+function ASSIGNMENT_FILES_ADDED(lessonDate, fileTitles) {
+  const word = fileTitles.length > 1 ? "файлы" : "файл"
+  return `📎 Репетитор прикрепил ${word} к уроку ${formatMoscowDateTime(lessonDate)}: ${fileTitles.join(", ")}`
+}
+
 function HOMEWORK_NO_LESSON() {
   return "Сейчас нет активного задания. Если хочешь что-то передать репетитору — напиши ему напрямую."
 }
@@ -315,6 +328,9 @@ module.exports = {
   HOMEWORK_RECEIVED,
   HOMEWORK_SUBMITTED_TO_TEACHER,
   ASSIGNMENT_ADDED,
+  EXTRA_LESSON_ASSIGNED,
+  ASSIGNMENT_UPDATED,
+  ASSIGNMENT_FILES_ADDED,
   MATERIAL_ADDED,
   HOMEWORK_NO_LESSON,
   UNKNOWN_MESSAGE,

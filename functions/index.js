@@ -25,9 +25,11 @@ const {
 const { normalizeScheduleSlots } = require("./core/schedule")
 const {
   ensureUpcomingLesson,
+  getNearestUpcomingLesson,
   syncUpcomingLessonToSchedule,
   updateHomeworkAssignment,
   addLessonMaterial,
+  createExtraLesson,
   completeLesson,
   proposeReschedule,
   confirmReschedule,
@@ -35,9 +37,11 @@ const {
   proposeCancellation,
   confirmCancellation,
   rejectCancellation,
+  recordHomeworkSubmission,
 } = require("./core/lessons")
 const { dailyReminderMidday, dailyReminderPreLesson } = require("./reminders")
 const { deleteStudent } = require("./core/students")
+const { addPayment } = require("./core/finance")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -159,6 +163,82 @@ exports.addLessonMaterial = onCall(
   },
 )
 
+exports.createExtraLesson = onCall(
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, date } = request.data ?? {}
+
+    try {
+      const result = await createExtraLesson(studentId, new Date(date))
+      return { success: true, ...result }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to create extra lesson", error)
+      throw new HttpsError("internal", "Не удалось создать внеплановый урок")
+    }
+  },
+)
+
+// Student-facing (no request.auth, trusts studentId from the request body —
+// see CLAUDE.md architecture note) alternative to submitting homework via a
+// bot: the client uploads the file to Storage itself, then calls this to
+// record it in the same homework.submission.files the bots write to.
+exports.submitHomeworkFile = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    const { studentId, fileUrl } = request.data ?? {}
+
+    if (!studentId || typeof studentId !== "string") {
+      throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+    }
+    if (!fileUrl || typeof fileUrl !== "string") {
+      throw new HttpsError("invalid-argument", "Не указан файл")
+    }
+
+    try {
+      const lessonId = await recordHomeworkSubmission(studentId, fileUrl)
+      return { success: true, lessonId }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to record homework submission", error)
+      throw new HttpsError("internal", "Не удалось сохранить домашнее задание")
+    }
+  },
+)
+
+exports.addPayment = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonsCount, note } = request.data ?? {}
+
+    try {
+      const newBalance = await addPayment(studentId, lessonsCount, note)
+      return { success: true, newBalance }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to add payment", error)
+      throw new HttpsError("internal", "Не удалось добавить оплату")
+    }
+  },
+)
+
 exports.ensureUpcomingLesson = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -180,6 +260,34 @@ exports.ensureUpcomingLesson = onCall(async (request) => {
 
     logger.error("Failed to ensure upcoming lesson", error)
     throw new HttpsError("internal", "Не удалось подготовить урок")
+  }
+})
+
+exports.getNearestUpcomingLesson = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId } = request.data ?? {}
+
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+
+  try {
+    // Only the id crosses the wire — the client re-subscribes to the full
+    // lesson doc via subscribeToLesson, which already knows how to decode
+    // Firestore Timestamps; returning the raw lesson object here would mean
+    // hand-rolling that decoding a second time for no benefit.
+    const lesson = await getNearestUpcomingLesson(studentId)
+    return { lessonId: lesson?.id ?? null }
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to get nearest upcoming lesson", error)
+    throw new HttpsError("internal", "Не удалось найти ближайший урок")
   }
 })
 

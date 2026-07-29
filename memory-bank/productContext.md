@@ -16,6 +16,8 @@ teacher a proper web dashboard.
   (now modeled explicitly as reschedule/cancellation status machines).
 - Keeping a Google Calendar in sync with an ever-changing weekly schedule
   by hand.
+- Tracking who's paid for how many lessons and remembering to chase
+  payments before a student's paid package quietly runs out.
 
 ## How it should work
 
@@ -33,6 +35,19 @@ teacher a proper web dashboard.
 - Reminders fire automatically on a schedule (no manual "send reminder"
   action) — daily at 9:00 Moscow time for next-day lessons, hourly for
   lessons starting within 2 hours.
+- Every notable event (homework submitted/assigned, material added,
+  reschedule/cancellation proposed/confirmed/rejected, reminders) goes
+  through one funnel (`createNotification`) that both logs it to Firestore
+  (`notifications/`) and sends the same text to the recipient's bot — the
+  in-app bell/block and the bot message are always the same event, never
+  two things that can drift apart.
+- Each student has a **paid-lessons balance** (a prepaid package size, not
+  a currency amount) that decrements by one automatically whenever the
+  teacher completes a lesson for them — scheduled or extra/unscheduled,
+  no distinction. The teacher logs a payment as "N lessons paid for"
+  (`addPayment`); when the balance drops to or below the student's
+  low-balance threshold, both the teacher (bell) and — if the student has
+  opted in — the student (bot) get nudged automatically.
 
 ## User experience goals
 

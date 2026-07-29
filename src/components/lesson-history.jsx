@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { MaterialLink } from "@/components/material-link"
-import { getLessons } from "@/firebase/lessons"
+import { subscribeToLessons } from "@/firebase/lessons"
 
 const VISIBLE_COUNT = 3
 
@@ -106,9 +106,9 @@ function LessonCard({ lesson }) {
   )
 }
 
-// Loads on demand (one-time getDocs via getLessons) the moment it's opened,
-// rather than reusing the page-load fetch — decoupled from whatever the
-// small preview list above already has in memory.
+// Subscribes on demand the moment it's opened, rather than reusing the
+// page-load fetch — decoupled from whatever the small preview list above
+// already has in memory.
 function LessonHistoryDialog({ studentId, open, onOpenChange }) {
   const [lessons, setLessons] = useState([])
   const [loading, setLoading] = useState(false)
@@ -117,28 +117,23 @@ function LessonHistoryDialog({ studentId, open, onOpenChange }) {
   useEffect(() => {
     if (!open) return
 
-    let cancelled = false
     setLoading(true)
     setError("")
 
-    getLessons(studentId)
-      .then((data) => {
-        if (cancelled) return
+    const unsub = subscribeToLessons(
+      studentId,
+      (data) => {
         setLessons(data.filter((lesson) => lesson.status !== "upcoming"))
-      })
-      .catch((fetchError) => {
-        console.error("Failed to load full lesson history:", fetchError)
-        if (cancelled) return
-        setError("Не удалось загрузить историю уроков")
-      })
-      .finally(() => {
-        if (cancelled) return
         setLoading(false)
-      })
+      },
+      (fetchError) => {
+        console.error("Failed to load full lesson history:", fetchError)
+        setError("Не удалось загрузить историю уроков")
+        setLoading(false)
+      },
+    )
 
-    return () => {
-      cancelled = true
-    }
+    return () => unsub()
   }, [open, studentId])
 
   return (

@@ -46,12 +46,47 @@
 - Reminders rely on Cloud Scheduler cron (`onSchedule`) with explicit
   `timeZone: "Europe/Moscow"` for the day-ahead reminder; the hourly one
   intentionally omits timeZone since top-of-hour is zone-invariant.
+- **`firebase deploy --only functions` routinely fails a subset of
+  functions with "Quota exceeded for total allowable CPU per project per
+  region"** (Cloud Run health-check failure, us-central1) when deploying
+  many functions at once — this is a project-level Cloud Run CPU quota,
+  not a code problem. Fix is just to retry the specific failed function(s)
+  by name (`firebase deploy --only functions:name1,functions:name2`);
+  it's usually transient but has taken 3+ retries with ~60s gaps in
+  practice. Don't try to "fix" this by changing function code/config.
 
 ## Dependencies worth knowing about
 
-- `functions/scripts/` — untracked at present (`?? functions/scripts/` in
-  git status); check contents before assuming it's throwaway.
+- `functions/scripts/migrateSchedule.js` is tracked in git (confirmed via
+  `git ls-files` — no longer untracked, unlike earlier session notes) but
+  still a manual one-off (`node functions/scripts/migrateSchedule.js`),
+  not wired into deploy. Whether it's ever been *run* against prod
+  Firestore is still unconfirmed — see [[activeContext]].
 - `.claude/commands/` and `.claude/claude-memory-bank.md` define this
   project's own Memory Bank workflow commands
   (`workflow:understand/plan/execute/update-memory`) — this memory bank
   was initialized to support those.
+- No `firestore.rules` or `storage.rules` file exists in this repo/git —
+  neither is declared in `firebase.json` either. Security rules are
+  managed entirely outside this checkout (Firebase Console, presumably).
+  Confirmed this session: a plain unauthenticated Firebase client SDK
+  script (no admin credentials) could read the whole `students` collection
+  successfully — rules currently allow this, consistent with the
+  students-have-no-auth architecture, but it means **there is no local
+  source of truth for security rules to review before changing
+  student-facing data access**.
+- `gcloud` CLI is **not installed** in this environment — for Cloud
+  Functions log/data diagnostics, use `firebase functions:log --only
+  <name> -n <count>` instead (filter out `AuditLog` noise, see
+  [[systemPatterns]]). For one-off Firestore reads without admin
+  credentials, a small script using the client `firebase/app` +
+  `firebase/firestore` SDK with the public config from `.env` works, but
+  **must be run from the project root** (or anywhere with `node_modules`
+  in scope) — Node ESM resolves bare imports relative to the script's own
+  location, not `cwd`, so a script placed outside the project (e.g. a
+  scratchpad dir) fails with `ERR_MODULE_NOT_FOUND` even after `cd`.
+  Also note `.env` values in this repo are wrapped in literal double
+  quotes (e.g. `VITE_FIREBASE_PROJECT_ID="princessschool-e678c"`) — a
+  naive parser that doesn't strip them will pass the quote characters
+  into the Firebase config and get a cryptic `INVALID_ARGUMENT` from
+  Firestore instead of a clear "bad project id" error.

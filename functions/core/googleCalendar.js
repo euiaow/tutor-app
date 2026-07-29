@@ -6,6 +6,25 @@ const { getNextLessonDateForSlot, normalizeScheduleSlots, getZonedParts, SCHEDUL
 const CALENDAR_ID = "primary"
 const CALENDAR_TIME_ZONE = SCHEDULE_TIME_ZONE
 
+// Google Calendar's event colorId palette is a fixed 1-11 set (not
+// arbitrary hex), so this maps subject codes to the closest match for the
+// same hues src/components/student-tags.jsx uses for its tags (blue for
+// russian, purple for literature) — the calendar color and the tag color
+// are meant to read as the same fact, not independently chosen. A student
+// with no subject set, or a subject this map doesn't know, falls back to
+// Graphite (neutral gray), matching the tag component's own "school"/
+// unset fallback.
+const SUBJECT_CALENDAR_COLOR_ID = {
+  russian: "9", // Blueberry
+  literature: "3", // Grape
+}
+const DEFAULT_CALENDAR_COLOR_ID = "8" // Graphite
+
+function colorIdForStudent(student) {
+  const firstSubject = student.subject?.[0]
+  return SUBJECT_CALENDAR_COLOR_ID[firstSubject] ?? DEFAULT_CALENDAR_COLOR_ID
+}
+
 function pad(number) {
   return String(number).padStart(2, "0")
 }
@@ -35,6 +54,7 @@ function buildEventResourceForSlot(student, slot) {
     start: { dateTime: toFloatingDateTime(start), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
     recurrence: ["RRULE:FREQ=WEEKLY"],
+    colorId: colorIdForStudent(student),
   }
 
   if (student.topic) {
@@ -91,6 +111,19 @@ async function updateEventFromResource(eventId, resource) {
     }
     throw error
   }
+}
+
+async function createExtraLessonEvent(student, date, durationMinutes = 60) {
+  const end = new Date(date.getTime() + durationMinutes * 60 * 1000)
+
+  const resource = {
+    summary: `${student.name} (доп. урок)`,
+    start: { dateTime: toFloatingDateTime(date), timeZone: CALENDAR_TIME_ZONE },
+    end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
+    colorId: colorIdForStudent(student),
+  }
+
+  return createEventFromResource(resource)
 }
 
 // Diffs a student's current scheduleSlots against their existing
@@ -236,4 +269,4 @@ async function deleteLessonEvent(eventId) {
   }
 }
 
-module.exports = { syncScheduleSlots, deleteLessonEvent, rescheduleLessonEvent }
+module.exports = { syncScheduleSlots, deleteLessonEvent, rescheduleLessonEvent, createExtraLessonEvent }

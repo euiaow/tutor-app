@@ -42,8 +42,8 @@ function NotificationRow({ notification, onClick }) {
       <button
         type="button"
         onClick={() => onClick(notification)}
-        className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted ${
-          notification.read ? "bg-gray-50 dark:bg-muted/30" : "bg-card"
+        className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted active:bg-accent ${
+          notification.read ? "bg-muted/40" : "bg-card"
         }`}
       >
         <NotificationIcon type={notification.type} />

@@ -20,10 +20,19 @@ export function mapStudentDoc(id, data) {
     name: data.name ?? "",
     level: data.level ?? 1,
     xp: data.xp ?? 0,
-    subject: data.subject ?? "Английский язык",
+    subject: Array.isArray(data.subject) ? data.subject : [],
+    examTarget: data.examTarget ?? "school",
+    hourlyRate: data.hourlyRate ?? 0,
+    paidLessonsBalance: data.paidLessonsBalance ?? 0,
+    lowBalanceThreshold: data.lowBalanceThreshold ?? 1,
+    autoRemindLowBalance: data.autoRemindLowBalance ?? true,
     scheduleSlots: normalizeScheduleSlots(data),
     topic: data.topic ?? "",
     reviewTopic: data.reviewTopic ?? "",
+    platform: data.platform ?? null,
+    telegramChatId: data.telegramChatId ?? null,
+    vkPeerId: data.vkPeerId ?? null,
+    contactUrl: data.contactUrl ?? null,
   }
 }
 
@@ -84,6 +93,16 @@ export async function addXpToStudent(studentId, amount = 10) {
 export async function updateStudentSchedule(studentId, scheduleSlots) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
   await updateDoc(ref, { scheduleSlots })
+}
+
+export async function updateStudentContactUrl(studentId, contactUrl) {
+  const ref = doc(db, STUDENTS_COLLECTION, studentId)
+  await updateDoc(ref, { contactUrl })
+}
+
+export async function updateStudentProfile(studentId, { subject, examTarget, hourlyRate, autoRemindLowBalance }) {
+  const ref = doc(db, STUDENTS_COLLECTION, studentId)
+  await updateDoc(ref, { subject, examTarget, hourlyRate, autoRemindLowBalance })
 }
 
 // Backend does the real work (Google Calendar event, lessons subcollection

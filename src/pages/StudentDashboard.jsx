@@ -19,7 +19,7 @@ import {
   markNotificationRead,
 } from "@/firebase/notifications"
 import {
-  getLessons,
+  subscribeToLessons,
   subscribeToUpcomingLesson,
   subscribeToLesson,
   proposeReschedule,
@@ -28,7 +28,9 @@ import {
   proposeCancellation,
   confirmCancellation,
   rejectCancellation,
+  submitHomeworkFile,
 } from "@/firebase/lessons"
+import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 
 // datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
 // timezone, not UTC — offsetting by getTimezoneOffset() before calling
@@ -187,7 +189,31 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   const [actionPending, setActionPending] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [uploadingHomework, setUploadingHomework] = useState(false)
+  const [uploadHomeworkError, setUploadHomeworkError] = useState("")
+  const homeworkFileInputRef = useRef(null)
   const lastLessonIdRef = useRef(null)
+
+  async function handleHomeworkFileChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingHomework(true)
+    setUploadHomeworkError("")
+
+    try {
+      const fileUrl = await uploadHomeworkSubmissionFile(file, studentId)
+      await submitHomeworkFile(studentId, fileUrl)
+    } catch (err) {
+      console.error("Failed to submit homework file:", err)
+      setUploadHomeworkError("Не удалось загрузить файл")
+    } finally {
+      setUploadingHomework(false)
+      if (homeworkFileInputRef.current) {
+        homeworkFileInputRef.current.value = ""
+      }
+    }
+  }
 
   useEffect(() => {
     const unsubscribe = subscribeToUpcomingLesson(
@@ -435,23 +461,70 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 Моя домашка
               </span>
               {submissionFiles.length === 0 ? (
-                <>
-                  <p className="mt-1.5 text-sm">Вы ещё не отправили домашнее задание</p>
-                  <p className="text-xs text-primary-foreground/70">
-                    Отправьте фото через бота в Telegram или VK
-                  </p>
-                </>
+                <p className="mt-1.5 text-sm">Вы ещё не отправили домашнее задание</p>
               ) : (
-                <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold">
-                  <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
-                  Домашнее задание получено ✓
-                  {lastSubmission?.submittedAt ? (
-                    <span className="font-normal text-primary-foreground/70">
-                      ({formatLessonDateTime(lastSubmission.submittedAt)})
-                    </span>
-                  ) : null}
-                </p>
+                <>
+                  <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold">
+                    <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                    Домашнее задание получено ✓
+                    {lastSubmission?.submittedAt ? (
+                      <span className="font-normal text-primary-foreground/70">
+                        ({formatLessonDateTime(lastSubmission.submittedAt)})
+                      </span>
+                    ) : null}
+                  </p>
+                  <ul className="mt-1.5 flex flex-col gap-1">
+                    {submissionFiles.map((file, index) => (
+                      <li key={`${file.url}-${index}`}>
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 text-sm underline underline-offset-2"
+                        >
+                          <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                          <span className="truncate">
+                            Файл {index + 1}
+                            {file.submittedAt ? ` (${formatLessonDateTime(file.submittedAt)})` : ""}
+                          </span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
+
+              <input
+                ref={homeworkFileInputRef}
+                type="file"
+                onChange={handleHomeworkFileChange}
+                disabled={uploadingHomework}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-3 border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10"
+                disabled={uploadingHomework}
+                onClick={() => homeworkFileInputRef.current?.click()}
+              >
+                {uploadingHomework ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Загрузка...
+                  </>
+                ) : (
+                  <>
+                    <Paperclip className="size-4" aria-hidden="true" />
+                    Прикрепить домашку
+                  </>
+                )}
+              </Button>
+              {uploadHomeworkError ? (
+                <p className="mt-1.5 text-xs font-semibold text-red-200">{uploadHomeworkError}</p>
+              ) : null}
+              <p className="mt-1.5 text-xs text-primary-foreground/70">Или отправить в бот в ТГ/ВК</p>
             </div>
 
             {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
@@ -630,24 +703,20 @@ function StudentDashboardContent({ studentId }) {
   }, [studentId])
 
   useEffect(() => {
-    let cancelled = false
-
-    getLessons(studentId)
-      .then((data) => {
-        if (cancelled) return
+    const unsub = subscribeToLessons(
+      studentId,
+      (data) => {
         setLessons(data)
         setLessonsLoading(false)
-      })
-      .catch((fetchError) => {
+      },
+      (fetchError) => {
         console.error("Failed to load lessons:", fetchError)
-        if (cancelled) return
         setLessonsError("Не удалось загрузить историю уроков")
         setLessonsLoading(false)
-      })
+      },
+    )
 
-    return () => {
-      cancelled = true
-    }
+    return () => unsub()
   }, [studentId])
 
   if (loading) {

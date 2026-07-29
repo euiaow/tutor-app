@@ -2,6 +2,9 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { NotebookText, Pencil, Plus, Trash2, Loader2 } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
+import { ContactButton } from "@/components/teacher/contact-button"
+import { StudentProfileSection } from "@/components/teacher/student-profile-section"
+import { StudentTags } from "@/components/student-tags"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { updateStudentSchedule, deleteStudent } from "@/firebase/students"
@@ -145,6 +148,7 @@ export function StudentCard({ student }) {
               {student.name}
             </Link>
           </h2>
+          <StudentTags student={student} />
         </div>
         <button
           type="button"
@@ -251,6 +255,8 @@ export function StudentCard({ student }) {
         </button>
       )}
 
+      <StudentProfileSection student={student} />
+
       <div className="flex gap-2 pt-1">
         <button
           type="button"
@@ -260,6 +266,9 @@ export function StudentCard({ student }) {
           <NotebookText className="size-4" aria-hidden="true" />
           Подготовить урок
         </button>
+        <div className="flex-1">
+          <ContactButton student={student} />
+        </div>
       </div>
 
       <HomeworkLessonDialog
