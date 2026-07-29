@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { db, functions } from "./firebase"
+import { normalizeScheduleSlots } from "@/lib/schedule"
 
 const STUDENTS_COLLECTION = "students"
 
@@ -20,7 +21,7 @@ export function mapStudentDoc(id, data) {
     level: data.level ?? 1,
     xp: data.xp ?? 0,
     subject: data.subject ?? "Английский язык",
-    schedule: data.schedule ?? null,
+    scheduleSlots: normalizeScheduleSlots(data),
     topic: data.topic ?? "",
     reviewTopic: data.reviewTopic ?? "",
   }
@@ -80,9 +81,9 @@ export async function addXpToStudent(studentId, amount = 10) {
   })
 }
 
-export async function updateStudentSchedule(studentId, schedule) {
+export async function updateStudentSchedule(studentId, scheduleSlots) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
-  await updateDoc(ref, { schedule })
+  await updateDoc(ref, { scheduleSlots })
 }
 
 // Backend does the real work (Google Calendar event, lessons subcollection

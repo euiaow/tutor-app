@@ -1,13 +1,19 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { CalendarDays, Sparkles, NotebookText, Pencil, Trash2, Loader2 } from "lucide-react"
+import { NotebookText, Pencil, Plus, Trash2, Loader2 } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { updateStudentSchedule, deleteStudent } from "@/firebase/students"
-import { DAY_OPTIONS, getNextLessonDate, formatNextLessonDate } from "@/lib/schedule"
+import { ensureUpcomingLesson } from "@/firebase/lessons"
+import { DAY_OPTIONS } from "@/lib/schedule"
 
-const XP_PER_LEVEL = 100
+const MAX_SCHEDULE_SLOTS = 7
+const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+
+function defaultSlot() {
+  return { dayOfWeek: 1, time: "16:00", durationMinutes: 60 }
+}
 
 function DeleteStudentDialog({ studentId, studentName, open, onOpenChange }) {
   const [deleting, setDeleting] = useState(false)
@@ -82,6 +88,7 @@ function DeleteStudentDialog({ studentId, studentName, open, onOpenChange }) {
 export function StudentCard({ student }) {
   const [isSavingSchedule, setIsSavingSchedule] = useState(false)
   const [isEditingSchedule, setIsEditingSchedule] = useState(false)
+  const [localSlots, setLocalSlots] = useState([])
   const [isHomeworkDialogOpen, setIsHomeworkDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
 
@@ -92,20 +99,29 @@ export function StudentCard({ student }) {
     .join("")
     .toUpperCase()
 
-  const xpPercent = Math.min(100, Math.round((student.xp / XP_PER_LEVEL) * 100))
-  const xpToNextLevel = XP_PER_LEVEL - student.xp
+  function handleEnterScheduleEdit() {
+    setLocalSlots(student.scheduleSlots)
+    setIsEditingSchedule(true)
+  }
 
-  async function handleScheduleChange(field, value) {
-    const nextSchedule = {
-      dayOfWeek: student.schedule?.dayOfWeek ?? 1,
-      time: student.schedule?.time ?? "16:00",
-      durationMinutes: student.schedule?.durationMinutes ?? 60,
-      [field]: value,
-    }
+  function updateSlot(index, field, value) {
+    setLocalSlots((slots) => slots.map((slot, i) => (i === index ? { ...slot, [field]: value } : slot)))
+  }
 
+  function addSlot() {
+    setLocalSlots((slots) => (slots.length >= MAX_SCHEDULE_SLOTS ? slots : [...slots, defaultSlot()]))
+  }
+
+  function removeSlot(index) {
+    setLocalSlots((slots) => slots.filter((_, i) => i !== index))
+  }
+
+  async function handleSaveSchedule() {
     setIsSavingSchedule(true)
     try {
-      await updateStudentSchedule(student.id, nextSchedule)
+      await updateStudentSchedule(student.id, localSlots)
+      await ensureUpcomingLesson(student.id)
+      setIsEditingSchedule(false)
     } catch (error) {
       console.error("Failed to update schedule:", error)
     } finally {
@@ -123,16 +139,12 @@ export function StudentCard({ student }) {
         >
           {initials}
         </Link>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-bold text-card-foreground">
             <Link to={`/student/${student.id}`} className="hover:text-primary">
               {student.name}
             </Link>
           </h2>
-          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
-            Уровень {student.level} · {student.xp} XP
-          </p>
         </div>
         <button
           type="button"
@@ -148,66 +160,93 @@ export function StudentCard({ student }) {
         </button>
       </header>
 
-      <div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-500"
-            style={{ width: `${xpPercent}%` }}
-          />
-        </div>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          {xpToNextLevel} XP до {student.level + 1} уровня
-        </p>
-      </div>
-
       {isEditingSchedule ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-muted-foreground">Расписание</span>
-            <button
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">Расписание</span>
+
+          {localSlots.map((slot, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <select
+                value={slot.dayOfWeek}
+                onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))}
+                disabled={isSavingSchedule}
+                className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+              >
+                {DAY_OPTIONS.map((day) => (
+                  <option key={day.value} value={day.value}>
+                    {day.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="time"
+                value={slot.time}
+                onChange={(e) => updateSlot(index, "time", e.target.value)}
+                disabled={isSavingSchedule}
+                className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => removeSlot(index)}
+                disabled={isSavingSchedule}
+                aria-label="Удалить слот"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+
+          <button
+            type="button"
+            onClick={addSlot}
+            disabled={isSavingSchedule || localSlots.length >= MAX_SCHEDULE_SLOTS}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            Добавить слот
+          </button>
+
+          <div className="flex gap-2 pt-1">
+            <Button
               type="button"
+              variant="outline"
+              className="flex-1"
               onClick={() => setIsEditingSchedule(false)}
-              className="text-xs font-semibold text-primary hover:underline"
-            >
-              Готово
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={student.schedule?.dayOfWeek ?? ""}
-              onChange={(e) => handleScheduleChange("dayOfWeek", Number(e.target.value))}
               disabled={isSavingSchedule}
-              className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
             >
-              <option value="" disabled>
-                День недели
-              </option>
-              {DAY_OPTIONS.map((day) => (
-                <option key={day.value} value={day.value}>
-                  {day.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="time"
-              value={student.schedule?.time ?? ""}
-              onChange={(e) => handleScheduleChange("time", e.target.value)}
-              disabled={isSavingSchedule}
-              className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
-            />
+              Отмена
+            </Button>
+            <Button type="button" className="flex-1" onClick={handleSaveSchedule} disabled={isSavingSchedule}>
+              {isSavingSchedule ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Сохраняем...
+                </>
+              ) : (
+                "Сохранить расписание"
+              )}
+            </Button>
           </div>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => setIsEditingSchedule(true)}
-          className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted/70"
+          onClick={handleEnterScheduleEdit}
+          className="flex items-start gap-2 rounded-xl border border-border p-3 text-left text-sm text-foreground"
         >
-          <CalendarDays className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="text-muted-foreground">Следующее занятие:</span>
-          <span className="font-semibold">
-            {formatNextLessonDate(getNextLessonDate(student.schedule))}
-          </span>
+          <div className="flex-1">
+            <p className="text-xs text-muted-foreground">Расписание</p>
+            {student.scheduleSlots?.length > 0 ? (
+              student.scheduleSlots.map((slot, index) => (
+                <div key={index} className="text-sm font-semibold">
+                  {DAYS[slot.dayOfWeek]} · {slot.time}
+                </div>
+              ))
+            ) : (
+              <span className="text-sm text-muted-foreground">Расписание не задано</span>
+            )}
+          </div>
           <Pencil className="ml-auto size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
       )}

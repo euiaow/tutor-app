@@ -152,15 +152,20 @@ async function deleteStudent(studentId) {
   const student = studentSnapshot.data()
   const bucket = getStorage().bucket()
 
-  let calendarEventDeleted = false
-  if (student.googleEventId) {
+  const eventIdsToDelete = [
+    ...Object.values(student.googleEventIds ?? {}),
+    ...(student.googleEventId ? [student.googleEventId] : []),
+  ]
+
+  let calendarEventsDeleted = 0
+  for (const eventId of eventIdsToDelete) {
     try {
-      await deleteLessonEvent(student.googleEventId)
-      calendarEventDeleted = true
+      await deleteLessonEvent(eventId)
+      calendarEventsDeleted += 1
     } catch (error) {
       logger.warn("deleteStudent: failed to delete Google Calendar event, continuing", {
         studentId,
-        googleEventId: student.googleEventId,
+        eventId,
         error: error.message,
       })
     }
@@ -186,7 +191,7 @@ async function deleteStudent(studentId) {
     throw new HttpsError("internal", "Не удалось удалить ученика")
   }
 
-  logger.info("deleteStudent completed", { studentId, lessonsDeleted, calendarEventDeleted })
+  logger.info("deleteStudent completed", { studentId, lessonsDeleted, calendarEventsDeleted })
 }
 
 module.exports = { deleteStudent }

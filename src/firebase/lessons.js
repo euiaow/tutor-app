@@ -1,5 +1,4 @@
 import {
-  arrayUnion,
   collection,
   collectionGroup,
   doc,
@@ -16,6 +15,7 @@ import { db, functions } from "./firebase"
 
 const ensureUpcomingLessonCallable = httpsCallable(functions, "ensureUpcomingLesson")
 const updateHomeworkAssignmentCallable = httpsCallable(functions, "updateHomeworkAssignment")
+const addLessonMaterialCallable = httpsCallable(functions, "addLessonMaterial")
 const completeLessonCallable = httpsCallable(functions, "completeLesson")
 const proposeRescheduleCallable = httpsCallable(functions, "proposeReschedule")
 const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
@@ -71,8 +71,8 @@ export async function updateHomeworkAssignment(studentId, lessonId, { text, file
   await updateHomeworkAssignmentCallable({ studentId, lessonId, text, files })
 }
 
-export async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic }) {
-  await completeLessonCallable({ studentId, lessonId, attendance, homeworkDone, rating, topic })
+export async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating }) {
+  await completeLessonCallable({ studentId, lessonId, attendance, homeworkDone, rating })
 }
 
 // initiator is "teacher" from TeacherDashboard (default, unpassed) or
@@ -112,13 +112,19 @@ export async function rejectCancellation(studentId, lessonId) {
   await rejectCancellationCallable({ studentId, lessonId })
 }
 
-// Direct client write (same pattern as updateStudentSchedule) rather than a
-// callable — attaching an extra material to an already-completed lesson
-// doesn't need server-side validation beyond what Firestore already grants
-// the teacher's client.
+// A callable (not a direct client write like updateLessonTopic below)
+// because attaching a material also needs to trigger a "material_added"
+// notification to the student — see core/lessons.js.
 export async function addLessonMaterial(studentId, lessonId, material) {
+  await addLessonMaterialCallable({ studentId, lessonId, material })
+}
+
+// Direct client write (same pattern as addLessonMaterial) — the teacher
+// edits a lesson's topic while it's still upcoming, no server-side
+// validation needed beyond what Firestore rules already grant.
+export async function updateLessonTopic(studentId, lessonId, topic) {
   const ref = doc(db, "students", studentId, "lessons", lessonId)
-  await updateDoc(ref, { materials: arrayUnion(material) })
+  await updateDoc(ref, { topic })
 }
 
 export function subscribeToLesson(studentId, lessonId, onData, onError) {
@@ -139,7 +145,7 @@ export function subscribeToLesson(studentId, lessonId, onData, onError) {
 
 export function subscribeToUpcomingLesson(studentId, onData, onError) {
   const ref = collection(db, "students", studentId, "lessons")
-  const upcomingQuery = query(ref, where("status", "==", "upcoming"), limit(1))
+  const upcomingQuery = query(ref, where("status", "==", "upcoming"), orderBy("date", "asc"), limit(1))
 
   return onSnapshot(
     upcomingQuery,
@@ -204,6 +210,24 @@ export function subscribeToCompletedLessons(onData, onError, maxResults = 25) {
     },
     onError,
   )
+}
+
+// One-time fetch of every completed lesson across every student — powers
+// the teacher dashboard's "Показать все прошедшие уроки" modal, which loads
+// on demand rather than subscribing, unlike subscribeToCompletedLessons.
+export async function getAllCompletedLessons() {
+  const completedQuery = query(
+    collectionGroup(db, "lessons"),
+    where("status", "==", "completed"),
+    orderBy("date", "desc"),
+  )
+
+  const snapshot = await getDocs(completedQuery)
+
+  return snapshot.docs.map((document) => {
+    const studentId = document.ref.parent.parent.id
+    return mapLessonDoc(document.id, studentId, document.data())
+  })
 }
 
 export async function getLessons(studentId) {

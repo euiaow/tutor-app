@@ -4,7 +4,17 @@
       "Bash(npm run *)",
       "Bash(npx firebase *)",
       "Bash(npm view *)",
-      "Bash(chromium-cli --help)"
+      "Bash(chromium-cli --help)",
+      "Bash(git --no-pager diff --stat)",
+      "Bash(node --check core/lessons.js)",
+      "Bash(node --check index.js)",
+      "Bash(firebase deploy *)",
+      "Bash(firebase functions:log --only vkWebhook -n 500)",
+      "Bash(gcloud logging *)",
+      "Bash(node --check adapters/vk.js)",
+      "Bash(node --check core/notifier.js)",
+      "Bash(node --check core/botMessages.js)",
+      "Bash(node --check adapters/telegram.js)"
     ]
   }
 }

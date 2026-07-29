@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { CalendarPlus, CheckCircle2, GraduationCap, LogOut } from "lucide-react"
+import { Bell, CalendarPlus, CheckCircle2, GraduationCap, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StudentCard } from "@/components/teacher/student-card"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
@@ -7,11 +7,19 @@ import { PendingRegistrations } from "@/components/teacher/pending-registrations
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { Spinner } from "@/components/ui/spinner"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { NotificationsList } from "@/components/notifications-list"
 import { subscribeToStudents } from "@/firebase/students"
+import {
+  subscribeToTeacherNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+} from "@/firebase/notifications"
 import { signOutTeacher } from "@/firebase/auth"
 import {
   subscribeToCompletedLessons,
   subscribeToUpcomingLessons,
+  getAllCompletedLessons,
   proposeReschedule,
   confirmReschedule,
   cancelReschedule,
@@ -464,6 +472,136 @@ function PastLessonCard({ lesson, studentName }) {
   )
 }
 
+// Loads on demand (one-time getDocs via getAllCompletedLessons) the moment
+// it's opened, rather than subscribing up front — the teacher dashboard's
+// own subscribeToCompletedLessons feed stays capped, this is only for the
+// "show everything" modal.
+function AllPastLessonsDialog({ open, onOpenChange, students }) {
+  const [lessons, setLessons] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    setLoading(true)
+    setError("")
+
+    getAllCompletedLessons()
+      .then((data) => {
+        if (cancelled) return
+        setLessons(data)
+      })
+      .catch((fetchError) => {
+        console.error("Failed to load all completed lessons:", fetchError)
+        if (cancelled) return
+        setError("Не удалось загрузить уроки")
+      })
+      .finally(() => {
+        if (cancelled) return
+        setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogTitle>Все прошедшие уроки</DialogTitle>
+
+        {loading ? (
+          <Spinner label="Загрузка..." />
+        ) : error ? (
+          <p className="mt-4 text-sm font-semibold text-destructive">{error}</p>
+        ) : lessons.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">Уроков пока нет</p>
+        ) : (
+          <ul className="mt-4 flex flex-col gap-3">
+            {lessons.map((lesson) => (
+              <PastLessonCard
+                key={lesson.id}
+                lesson={lesson}
+                studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+              />
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function TeacherNotificationsBell() {
+  const [notifications, setNotifications] = useState([])
+  const [open, setOpen] = useState(false)
+  const hasUnread = notifications.some((notification) => !notification.read)
+
+  useEffect(() => {
+    const unsubscribe = subscribeToTeacherNotifications(setNotifications, (firestoreError) => {
+      console.error("Failed to load notifications:", firestoreError)
+    })
+
+    return unsubscribe
+  }, [])
+
+  async function handleNotificationClick(notification) {
+    if (!notification.read) {
+      try {
+        await markNotificationRead(notification.id)
+      } catch (err) {
+        console.error("Failed to mark notification read:", err)
+      }
+    }
+  }
+
+  async function handleMarkAllRead() {
+    try {
+      await markAllNotificationsRead(notifications)
+    } catch (err) {
+      console.error("Failed to mark all notifications read:", err)
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-lg"
+        className="relative"
+        onClick={() => setOpen(true)}
+        aria-label="Уведомления"
+      >
+        <Bell aria-hidden="true" />
+        {hasUnread ? (
+          <span
+            aria-hidden="true"
+            className="absolute right-1.5 top-1.5 size-2.5 rounded-full bg-red-500 ring-2 ring-card"
+          />
+        ) : null}
+      </Button>
+
+      <SheetContent>
+        <SheetTitle>Уведомления</SheetTitle>
+
+        <div className="mt-6 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {notifications.some((notification) => !notification.read) ? (
+            <Button type="button" variant="outline" size="sm" className="self-start" onClick={handleMarkAllRead}>
+              Отметить все прочитанными
+            </Button>
+          ) : null}
+
+          <NotificationsList notifications={notifications} onNotificationClick={handleNotificationClick} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 export function TeacherDashboard() {
   const [students, setStudents] = useState([])
   const [loading, setLoading] = useState(true)
@@ -475,7 +613,8 @@ export function TeacherDashboard() {
   const embedLoading = googleCalendarConnected === true && !embedUrl && !embedError
   const [upcomingLessons, setUpcomingLessons] = useState([])
   const [completedLessons, setCompletedLessons] = useState([])
-  const [completedVisibleCount, setCompletedVisibleCount] = useState(3)
+  const [completedVisibleCount] = useState(2)
+  const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
 
   async function handleSignOut() {
     try {
@@ -576,10 +715,13 @@ export function TeacherDashboard() {
             </span>
             <span className="text-lg font-extrabold tracking-tight text-foreground">Учебный портал</span>
           </div>
-          <Button type="button" variant="outline" size="lg" onClick={handleSignOut}>
-            <LogOut aria-hidden="true" />
-            Выйти
-          </Button>
+          <div className="flex items-center gap-2">
+            <TeacherNotificationsBell />
+            <Button type="button" variant="outline" size="lg" onClick={handleSignOut}>
+              <LogOut aria-hidden="true" />
+              Выйти
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -669,13 +811,15 @@ export function TeacherDashboard() {
                 variant="outline"
                 size="sm"
                 className="self-start"
-                onClick={() => setCompletedVisibleCount((prev) => prev + 5)}
+                onClick={() => setIsAllPastLessonsOpen(true)}
               >
-                Показать ещё
+                Показать все прошедшие уроки
               </Button>
             ) : null}
           </section>
         ) : null}
+
+        <AllPastLessonsDialog open={isAllPastLessonsOpen} onOpenChange={setIsAllPastLessonsOpen} students={students} />
 
         <section className="flex flex-col gap-6">
           <div className="flex items-center justify-between gap-3">

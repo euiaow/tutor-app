@@ -145,7 +145,7 @@ async function completeRegistration(token, fullName, accessCode, identity = null
       accessCode: accessCode.trim(),
       xp: 0,
       level: 1,
-      schedule: null,
+      scheduleSlots: [],
       topic: "",
       platform,
       telegramChatId,

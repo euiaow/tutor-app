@@ -4,9 +4,10 @@ const { getStorage } = require("firebase-admin/storage")
 const { HttpsError } = require("firebase-functions/v2/https")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
-const { getNextLessonDate } = require("./schedule")
+const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
 const botMessages = require("./botMessages")
 const { rescheduleLessonEvent, deleteLessonEvent } = require("./googleCalendar")
+const { createNotification } = require("./notifier")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -22,44 +23,11 @@ function emptyHomework() {
   }
 }
 
-// Idempotent: if an upcoming lesson already exists for this student, its id
-// is returned as-is rather than creating a second draft. Called both from
-// the teacher UI ("Подготовить урок") and from reminders.js, so it must be
-// safe to call repeatedly for the same student.
-async function ensureUpcomingLesson(studentId) {
-  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
-  const studentSnapshot = await studentRef.get()
-
-  if (!studentSnapshot.exists) {
-    logger.warn("ensureUpcomingLesson: student not found", { studentId })
-    return null
-  }
-
-  const existingUpcoming = await lessonsRef(studentId)
-    .where("status", "==", "upcoming")
-    .limit(1)
-    .get()
-
-  if (!existingUpcoming.empty) {
-    const existingId = existingUpcoming.docs[0].id
-    logger.info("ensureUpcomingLesson: upcoming lesson already exists", {
-      studentId,
-      lessonId: existingId,
-    })
-    return existingId
-  }
-
-  const schedule = studentSnapshot.data().schedule
-  const nextDate = getNextLessonDate(schedule)
-
-  if (!nextDate) {
-    logger.warn("ensureUpcomingLesson: no schedule set, skipping draft creation", { studentId })
-    return null
-  }
-
-  const draft = await lessonsRef(studentId).add({
+function createUpcomingDraft(studentId, slotIndex, date) {
+  return lessonsRef(studentId).add({
     status: "upcoming",
-    date: Timestamp.fromDate(nextDate),
+    date: Timestamp.fromDate(date),
+    slotIndex,
     topic: "",
     homework: emptyHomework(),
     rescheduled: false,
@@ -71,44 +39,78 @@ async function ensureUpcomingLesson(studentId) {
     cancellationInitiator: null,
     createdAt: FieldValue.serverTimestamp(),
   })
-
-  logger.info("ensureUpcomingLesson: created upcoming lesson draft", {
-    studentId,
-    lessonId: draft.id,
-  })
-
-  return draft.id
 }
 
-// Single source of truth for "what date is this student's next lesson
-// actually at", accounting for reschedules. Used by reminders.js so a
-// rescheduled lesson doesn't get reminded (or skipped) using its original
-// date. Falls back to the recurring schedule only when there's no upcoming
-// lesson doc yet (e.g. before ensureUpcomingLesson has run for a student).
-async function getEffectiveLessonDate(studentId) {
-  const upcoming = await lessonsRef(studentId).where("status", "==", "upcoming").limit(1).get()
-
-  if (!upcoming.empty) {
-    const lesson = upcoming.docs[0].data()
-    const effective = lesson.rescheduledDate ?? lesson.date
-    return effective?.toDate?.() ?? null
+// Buckets every existing "upcoming" lesson doc by which schedule slot it
+// belongs to (legacy docs predating multi-slot support have no slotIndex
+// field and are treated as slot 0). Only the first doc found per slot is
+// kept — there should never be more than one, but this stays defensive.
+function bucketUpcomingBySlot(snapshot) {
+  const bySlot = new Map()
+  for (const doc of snapshot.docs) {
+    const slotIndex = typeof doc.data().slotIndex === "number" ? doc.data().slotIndex : 0
+    if (!bySlot.has(slotIndex)) {
+      bySlot.set(slotIndex, doc)
+    }
   }
+  return bySlot
+}
 
-  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+// Idempotent: for every schedule slot that doesn't already have an
+// "upcoming" lesson draft, creates one. Called both from the teacher UI
+// ("Подготовить урок" / after saving a schedule) and from reminders.js, so
+// it must be safe to call repeatedly for the same student. Returns the id
+// of the soonest upcoming lesson across all slots (occurrences is sorted
+// ascending), preserving the single-lessonId contract every caller relies
+// on.
+async function ensureUpcomingLesson(studentId) {
+  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
+  const studentSnapshot = await studentRef.get()
+
   if (!studentSnapshot.exists) {
+    logger.warn("ensureUpcomingLesson: student not found", { studentId })
     return null
   }
 
-  return getNextLessonDate(studentSnapshot.data().schedule)
+  const scheduleSlots = normalizeScheduleSlots(studentSnapshot.data())
+  if (scheduleSlots.length === 0) {
+    logger.warn("ensureUpcomingLesson: no schedule set, skipping draft creation", { studentId })
+    return null
+  }
+
+  const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").get()
+  const idsBySlot = new Map(
+    [...bucketUpcomingBySlot(existingUpcoming).entries()].map(([slotIndex, doc]) => [slotIndex, doc.id]),
+  )
+
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
+
+  for (const occurrence of occurrences) {
+    if (idsBySlot.has(occurrence.slotIndex)) {
+      continue
+    }
+    const draft = await createUpcomingDraft(studentId, occurrence.slotIndex, occurrence.date)
+    idsBySlot.set(occurrence.slotIndex, draft.id)
+    logger.info("ensureUpcomingLesson: created upcoming lesson draft", {
+      studentId,
+      lessonId: draft.id,
+      slotIndex: occurrence.slotIndex,
+    })
+  }
+
+  const soonestSlotIndex = occurrences[0]?.slotIndex
+  return idsBySlot.get(soonestSlotIndex) ?? null
 }
 
-// Unlike ensureUpcomingLesson (a no-op once a draft exists), this recomputes
-// the draft's date whenever the recurring schedule itself changes — so
-// editing a student's day/time actually moves their upcoming lesson instead
-// of leaving it stuck on the date it was first created with. A lesson with
-// an active reschedule (pending or already confirmed) is left alone: a
-// one-off reschedule shouldn't be silently overwritten by a later schedule
-// edit that has nothing to do with it.
+// Unlike ensureUpcomingLesson (a no-op once a draft exists for every slot),
+// this recomputes each slot's draft date whenever the recurring schedule
+// itself changes — so editing a student's day/time actually moves their
+// upcoming lesson instead of leaving it stuck on the date it was first
+// created with. A lesson with an active reschedule (pending or already
+// confirmed) is left alone: a one-off reschedule shouldn't be silently
+// overwritten by a later schedule edit that has nothing to do with it.
+// Returns the soonest upcoming lesson id across all slots, same contract as
+// ensureUpcomingLesson.
 async function syncUpcomingLessonToSchedule(studentId) {
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
 
@@ -117,40 +119,55 @@ async function syncUpcomingLessonToSchedule(studentId) {
     return null
   }
 
-  const schedule = studentSnapshot.data().schedule
-  const nextDate = getNextLessonDate(schedule)
-
-  if (!nextDate) {
+  const scheduleSlots = normalizeScheduleSlots(studentSnapshot.data())
+  if (scheduleSlots.length === 0) {
     logger.info("syncUpcomingLessonToSchedule: no schedule set, nothing to sync", { studentId })
     return null
   }
 
-  const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").limit(1).get()
+  const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").get()
+  const bySlot = bucketUpcomingBySlot(existingUpcoming)
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
+  const idsBySlot = new Map()
 
-  if (existingUpcoming.empty) {
-    return ensureUpcomingLesson(studentId)
-  }
+  for (const occurrence of occurrences) {
+    const existingDoc = bySlot.get(occurrence.slotIndex)
 
-  const existingDoc = existingUpcoming.docs[0]
-  const existingLesson = existingDoc.data()
+    if (!existingDoc) {
+      const draft = await createUpcomingDraft(studentId, occurrence.slotIndex, occurrence.date)
+      idsBySlot.set(occurrence.slotIndex, draft.id)
+      logger.info("syncUpcomingLessonToSchedule: created draft for new slot", {
+        studentId,
+        lessonId: draft.id,
+        slotIndex: occurrence.slotIndex,
+      })
+      continue
+    }
 
-  if (existingLesson.rescheduleStatus) {
-    logger.info("syncUpcomingLessonToSchedule: skip, lesson has an active reschedule", {
+    const existingLesson = existingDoc.data()
+
+    if (existingLesson.rescheduleStatus) {
+      logger.info("syncUpcomingLessonToSchedule: skip, lesson has an active reschedule", {
+        studentId,
+        lessonId: existingDoc.id,
+        slotIndex: occurrence.slotIndex,
+        rescheduleStatus: existingLesson.rescheduleStatus,
+      })
+      idsBySlot.set(occurrence.slotIndex, existingDoc.id)
+      continue
+    }
+
+    await existingDoc.ref.update({ date: Timestamp.fromDate(occurrence.date) })
+    idsBySlot.set(occurrence.slotIndex, existingDoc.id)
+    logger.info("syncUpcomingLessonToSchedule: updated draft date to match new schedule", {
       studentId,
       lessonId: existingDoc.id,
-      rescheduleStatus: existingLesson.rescheduleStatus,
+      slotIndex: occurrence.slotIndex,
     })
-    return existingDoc.id
   }
 
-  await existingDoc.ref.update({ date: Timestamp.fromDate(nextDate) })
-
-  logger.info("syncUpcomingLessonToSchedule: updated draft date to match new schedule", {
-    studentId,
-    lessonId: existingDoc.id,
-  })
-
-  return existingDoc.id
+  const soonestSlotIndex = occurrences[0]?.slotIndex
+  return idsBySlot.get(soonestSlotIndex) ?? null
 }
 
 async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
@@ -168,14 +185,65 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
     throw new HttpsError("not-found", "Урок не найден")
   }
 
+  const assignmentText = typeof text === "string" ? text : ""
+
   await lessonRef.update({
     "homework.assignment": {
-      text: typeof text === "string" ? text : "",
+      text: assignmentText,
       files: Array.isArray(files) ? files : [],
     },
   })
 
   logger.info("updateHomeworkAssignment: assignment saved", { studentId, lessonId })
+
+  const lesson = snapshot.data()
+  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
+
+  await createNotification({
+    target: "student",
+    studentId,
+    type: "assignment_added",
+    text: botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText),
+    lessonId,
+  })
+}
+
+// Direct client write elsewhere in the app (addLessonMaterial in
+// src/firebase/lessons.js) was moved to this callable-backed path solely so
+// attaching a material can trigger a "material_added" notification —
+// nothing about materials themselves needed server-side validation.
+async function addLessonMaterial(studentId, lessonId, material) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+  if (!material?.url) {
+    throw new HttpsError("invalid-argument", "Некорректный материал")
+  }
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+
+  await lessonRef.update({ materials: FieldValue.arrayUnion(material) })
+
+  logger.info("addLessonMaterial: material added", { studentId, lessonId })
+
+  const lesson = snapshot.data()
+  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
+
+  await createNotification({
+    target: "student",
+    studentId,
+    type: "material_added",
+    text: botMessages.MATERIAL_ADDED(lessonDate, material.title),
+    lessonId,
+  })
 }
 
 // Called when the teacher marks a lesson done in the unified
@@ -183,7 +251,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
 // (deduped by url) so they show up in the student's materials library,
 // which only reads lesson.materials/completed lessons — the assignment
 // itself lives under homework and isn't otherwise surfaced there.
-async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic } = {}) {
+async function completeLesson(studentId, lessonId, { attendance, homeworkDone, rating } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
@@ -216,7 +284,6 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
     attendance: attendance ?? null,
     homeworkDone: Boolean(homeworkDone),
     rating: rating ?? null,
-    topic: typeof topic === "string" ? topic.trim() : "",
     materials: Array.from(materialsByUrl.values()),
   })
 
@@ -273,26 +340,30 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
     rescheduleStatus,
   })
 
-  // Required lazily: reminderUtils/teacherNotifier pull in the bot adapters,
-  // which require this module for findStudentIdByChatIdentity etc. — a
-  // top-level require here would create a circular require. By call time
-  // the whole module graph has already finished loading, so this is safe.
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
   const oldDate = lesson.date?.toDate?.() ?? null
 
   if (initiator === "teacher") {
     const keyboards = botMessages.RESCHEDULE_KEYBOARDS(lessonId, studentId)
     logger.info("proposeReschedule: VK keyboard built", { studentId, lessonId, vkKeyboard: JSON.stringify(keyboards.vk) })
-    await sendReminderToStudent(studentId, botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate), {
+    await createNotification({
+      target: "student",
+      studentId,
+      type: "reschedule_proposed_to_student",
+      text: botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate),
+      lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
     const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
-    await sendMessageToTeacher(botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate))
+    await createNotification({
+      target: "teacher",
+      studentId,
+      type: "reschedule_proposed_to_teacher",
+      text: botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate),
+      lessonId,
+    })
   }
 
   return rescheduleStatus
@@ -345,26 +416,22 @@ async function confirmReschedule(studentId, lessonId, confirmedBy) {
 
   logger.info("confirmReschedule: reschedule confirmed", { studentId, lessonId, confirmedBy })
 
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
   const newDate = proposedDate.toDate()
   const message = botMessages.RESCHEDULE_CONFIRMED(newDate)
 
-  await sendReminderToStudent(studentId, message)
-  await sendMessageToTeacher(message)
+  await createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: message, lessonId })
+  await createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: message, lessonId })
 
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
-  if (student?.googleEventId && originalDate) {
+  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
+  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+
+  if (eventId && originalDate) {
     try {
-      await rescheduleLessonEvent(
-        student.googleEventId,
-        originalDate,
-        newDate,
-        student.schedule?.durationMinutes ?? 60,
-      )
+      const durationMinutes = normalizeScheduleSlots(student)[slotIndex]?.durationMinutes ?? 60
+      await rescheduleLessonEvent(eventId, originalDate, newDate, durationMinutes)
     } catch (error) {
       logger.error("confirmReschedule: failed to update Google Calendar event", {
         studentId,
@@ -388,7 +455,9 @@ async function cancelReschedule(studentId, lessonId) {
   if (!snapshot.exists) {
     throw new HttpsError("not-found", "Урок не найден")
   }
-  const initiator = snapshot.data().rescheduleInitiator
+  const lesson = snapshot.data()
+  const initiator = lesson.rescheduleInitiator
+  const originalDate = lesson.date?.toDate?.() ?? null
 
   await lessonRef.update({
     rescheduled: false,
@@ -400,16 +469,13 @@ async function cancelReschedule(studentId, lessonId) {
 
   logger.info("cancelReschedule: reschedule cancelled", { studentId, lessonId })
 
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
-  const message = botMessages.RESCHEDULE_REJECTED()
+  const message = botMessages.RESCHEDULE_REJECTED(originalDate)
 
   // Notify whoever originally proposed — the other side is the one acting.
   if (initiator === "teacher") {
-    await sendMessageToTeacher(message)
+    await createNotification({ target: "teacher", studentId, type: "reschedule_rejected", text: message, lessonId })
   } else if (initiator === "student") {
-    await sendReminderToStudent(studentId, message)
+    await createNotification({ target: "student", studentId, type: "reschedule_rejected", text: message, lessonId })
   }
 }
 
@@ -451,21 +517,29 @@ async function proposeCancellation(studentId, lessonId, initiator) {
     cancellationStatus,
   })
 
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
   const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
 
   if (initiator === "teacher") {
     const keyboards = botMessages.CANCELLATION_KEYBOARDS(lessonId, studentId)
-    await sendReminderToStudent(studentId, botMessages.CANCELLATION_PROPOSED_TO_STUDENT(lessonDate), {
+    await createNotification({
+      target: "student",
+      studentId,
+      type: "cancellation_proposed_to_student",
+      text: botMessages.CANCELLATION_PROPOSED_TO_STUDENT(lessonDate),
+      lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
     const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
-    await sendMessageToTeacher(botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate))
+    await createNotification({
+      target: "teacher",
+      studentId,
+      type: "cancellation_proposed_to_teacher",
+      text: botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate),
+      lessonId,
+    })
   }
 
   return cancellationStatus
@@ -497,29 +571,15 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
     )
   }
 
-  await lessonRef.update({
-    status: "cancelled",
-    cancellationStatus: "confirmed",
-    cancellationInitiator: null,
-  })
-
-  logger.info("confirmCancellation: cancellation confirmed", { studentId, lessonId, confirmedBy })
-
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
-  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
-  const message = botMessages.CANCELLATION_CONFIRMED(lessonDate)
-
-  await sendReminderToStudent(studentId, message)
-  await sendMessageToTeacher(message)
-
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
-  if (student?.googleEventId) {
+  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
+  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+
+  if (eventId) {
     try {
-      await deleteLessonEvent(student.googleEventId)
+      await deleteLessonEvent(eventId)
     } catch (error) {
       logger.error("confirmCancellation: failed to delete Google Calendar event", {
         studentId,
@@ -529,8 +589,20 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
     }
   }
 
-  const nextLessonId = await ensureUpcomingLesson(studentId)
-  logger.info("confirmCancellation: ensured next upcoming lesson", { studentId, nextLessonId })
+  // The cancelled lesson is removed outright rather than kept around with
+  // status "cancelled" — the next occurrence of this slot gets its own
+  // draft created lazily (dailyReminderMidday's ensureUpcomingDraftsForAllStudents,
+  // or whenever the teacher next opens this student's card), not eagerly
+  // here, so a cancellation doesn't immediately "resurrect" a lesson.
+  await lessonRef.delete()
+
+  logger.info("confirmCancellation: cancellation confirmed, lesson deleted", { studentId, lessonId, confirmedBy })
+
+  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
+  const message = botMessages.CANCELLATION_CONFIRMED(lessonDate)
+
+  await createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: message, lessonId })
+  await createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: message, lessonId })
 }
 
 async function rejectCancellation(studentId, lessonId) {
@@ -555,16 +627,13 @@ async function rejectCancellation(studentId, lessonId) {
 
   logger.info("rejectCancellation: cancellation rejected", { studentId, lessonId })
 
-  const { sendReminderToStudent } = require("./reminderUtils")
-  const { sendMessageToTeacher } = require("./teacherNotifier")
-
   const message = botMessages.CANCELLATION_REJECTED()
 
   // Notify whoever originally proposed — the other side is the one acting.
   if (initiator === "teacher") {
-    await sendMessageToTeacher(message)
+    await createNotification({ target: "teacher", studentId, type: "cancellation_rejected", text: message, lessonId })
   } else if (initiator === "student") {
-    await sendReminderToStudent(studentId, message)
+    await createNotification({ target: "student", studentId, type: "cancellation_rejected", text: message, lessonId })
   }
 }
 
@@ -628,14 +697,37 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
 
   logger.info("recordHomeworkSubmission: submission recorded", { studentId, lessonId })
 
+  const [studentSnapshot, lessonSnapshot] = await Promise.all([
+    db.collection(STUDENTS_COLLECTION).doc(studentId).get(),
+    lessonsRef(studentId).doc(lessonId).get(),
+  ])
+  const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
+  const lessonData = lessonSnapshot.exists ? lessonSnapshot.data() : null
+  const lessonDate = lessonData?.rescheduledDate?.toDate?.() ?? lessonData?.date?.toDate?.() ?? null
+
+  await createNotification({
+    target: "teacher",
+    studentId,
+    type: "homework_submitted",
+    text: botMessages.HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate),
+    lessonId,
+  })
+  await createNotification({
+    target: "student",
+    studentId,
+    type: "homework_received",
+    text: botMessages.HOMEWORK_RECEIVED(),
+    lessonId,
+  })
+
   return lessonId
 }
 
 module.exports = {
   ensureUpcomingLesson,
-  getEffectiveLessonDate,
   syncUpcomingLessonToSchedule,
   updateHomeworkAssignment,
+  addLessonMaterial,
   completeLesson,
   proposeReschedule,
   confirmReschedule,

@@ -328,7 +328,13 @@ async function handleHomeworkFile(chatId, incomingFile) {
     const lessonId = await recordHomeworkSubmission(studentId, url)
 
     logger.info("Telegram homework file saved", { chatId, studentId, lessonId })
-    await sendMessage(chatId, lessonId ? botMessages.HOMEWORK_RECEIVED() : botMessages.HOMEWORK_NO_LESSON())
+
+    // recordHomeworkSubmission already sent the "homework_received"
+    // notification (and its bot message) when a lesson existed — only the
+    // no-lesson case still needs a direct reply here.
+    if (!lessonId) {
+      await sendMessage(chatId, botMessages.HOMEWORK_NO_LESSON())
+    }
   } catch (error) {
     logger.error("Failed to process Telegram homework file", { chatId, studentId, error })
     await sendMessage(chatId, botMessages.HOMEWORK_SAVE_FAILED())

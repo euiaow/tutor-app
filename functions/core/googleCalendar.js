@@ -1,7 +1,7 @@
 const { google } = require("googleapis")
 const logger = require("firebase-functions/logger")
 const { getAuthorizedClient } = require("./googleAuth")
-const { getNextLessonDate, getZonedParts, SCHEDULE_TIME_ZONE } = require("./schedule")
+const { getNextLessonDateForSlot, normalizeScheduleSlots, getZonedParts, SCHEDULE_TIME_ZONE } = require("./schedule")
 
 const CALENDAR_ID = "primary"
 const CALENDAR_TIME_ZONE = SCHEDULE_TIME_ZONE
@@ -21,13 +21,13 @@ function toFloatingDateTime(date) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00`
 }
 
-function buildEventResource(student) {
-  const start = getNextLessonDate(student.schedule)
+function buildEventResourceForSlot(student, slot) {
+  const start = getNextLessonDateForSlot(slot)
   if (!start) {
     return null
   }
 
-  const durationMinutes = student.schedule?.durationMinutes ?? 60
+  const durationMinutes = slot?.durationMinutes ?? 60
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000)
 
   const resource = {
@@ -58,15 +58,9 @@ async function getCalendarOrNull() {
   }
 }
 
-async function createLessonEvent(student) {
+async function createEventFromResource(resource) {
   const calendar = await getCalendarOrNull()
   if (!calendar) {
-    return null
-  }
-
-  const resource = buildEventResource(student)
-  if (!resource) {
-    logger.warn("Cannot build Google Calendar event: no valid schedule", { studentName: student.name })
     return null
   }
 
@@ -78,15 +72,9 @@ async function createLessonEvent(student) {
   return response.data.id
 }
 
-async function updateLessonEvent(eventId, student) {
+async function updateEventFromResource(eventId, resource) {
   const calendar = await getCalendarOrNull()
   if (!calendar) {
-    return
-  }
-
-  const resource = buildEventResource(student)
-  if (!resource) {
-    logger.warn("Cannot build Google Calendar event: no valid schedule", { studentName: student.name })
     return
   }
 
@@ -105,12 +93,81 @@ async function updateLessonEvent(eventId, student) {
   }
 }
 
+// Diffs a student's current scheduleSlots against their existing
+// googleEventIds map (keyed by slot index, e.g. {"0": eventId, "1": eventId})
+// and creates/updates/deletes events so the calendar ends up with exactly
+// one recurring event per slot. Writes the rebuilt map back onto the
+// student doc itself.
+async function syncScheduleSlots(studentId, student, studentRef) {
+  const scheduleSlots = normalizeScheduleSlots(student)
+  const existingEventIds = student.googleEventIds ?? {}
+  const nextEventIds = {}
+
+  for (let index = 0; index < scheduleSlots.length; index += 1) {
+    const key = String(index)
+    const slot = scheduleSlots[index]
+    const existingEventId = existingEventIds[key] ?? null
+    const resource = buildEventResourceForSlot(student, slot)
+
+    if (!resource) {
+      logger.warn("syncScheduleSlots: cannot build event, invalid slot", { studentId, slotIndex: index })
+      if (existingEventId) {
+        nextEventIds[key] = existingEventId
+      }
+      continue
+    }
+
+    if (existingEventId) {
+      try {
+        await updateEventFromResource(existingEventId, resource)
+        nextEventIds[key] = existingEventId
+        logger.info("syncScheduleSlots: updated event", { studentId, slotIndex: index, eventId: existingEventId })
+      } catch (error) {
+        logger.error("syncScheduleSlots: update failed, keeping existing mapping", {
+          studentId,
+          slotIndex: index,
+          eventId: existingEventId,
+          error,
+        })
+        nextEventIds[key] = existingEventId
+      }
+      continue
+    }
+
+    try {
+      const eventId = await createEventFromResource(resource)
+      if (eventId) {
+        nextEventIds[key] = eventId
+        logger.info("syncScheduleSlots: created event", { studentId, slotIndex: index, eventId })
+      } else {
+        logger.warn("syncScheduleSlots: create skipped, calendar not connected", { studentId, slotIndex: index })
+      }
+    } catch (error) {
+      logger.error("syncScheduleSlots: create failed", { studentId, slotIndex: index, error })
+    }
+  }
+
+  for (const [key, eventId] of Object.entries(existingEventIds)) {
+    if (key in nextEventIds) {
+      continue
+    }
+    try {
+      await deleteLessonEvent(eventId)
+      logger.info("syncScheduleSlots: deleted stale event", { studentId, slotIndex: key, eventId })
+    } catch (error) {
+      logger.warn("syncScheduleSlots: failed to delete stale event, skipping", { studentId, slotIndex: key, error })
+    }
+  }
+
+  await studentRef.update({ googleEventIds: nextEventIds })
+}
+
 // Reschedules a single occurrence of the student's recurring lesson event
 // without touching the recurring series itself: looks up the specific
 // instance nearest the lesson's original date via the Calendar API's
 // instances() endpoint and patches just that instance's start/end. Patching
-// the master event directly (as updateLessonEvent does) would shift the
-// entire weekly series, not just this one lesson.
+// the master event directly (as updateEventFromResource does) would shift
+// the entire weekly series, not just this one lesson.
 async function rescheduleLessonEvent(eventId, originalDate, newDate, durationMinutes) {
   if (!eventId || !originalDate || !newDate) {
     return
@@ -179,4 +236,4 @@ async function deleteLessonEvent(eventId) {
   }
 }
 
-module.exports = { createLessonEvent, updateLessonEvent, deleteLessonEvent, rescheduleLessonEvent }
+module.exports = { syncScheduleSlots, deleteLessonEvent, rescheduleLessonEvent }

@@ -37,7 +37,20 @@ function INVALID_TOKEN() {
 }
 
 function HOMEWORK_RECEIVED() {
-  return "Домашка получена! ✓ Репетитор её увидит перед уроком."
+  return "✅ Домашка получена! Репетитор увидит её перед уроком."
+}
+
+function HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate) {
+  return `📝 ${studentName} прислал(а) домашнее задание к уроку ${formatMoscowDateTime(lessonDate)}`
+}
+
+function ASSIGNMENT_ADDED(lessonDate, assignmentText) {
+  const tail = assignmentText ? assignmentText : "Проверь личный кабинет"
+  return `📚 Репетитор добавил задание к уроку ${formatMoscowDateTime(lessonDate)}: ${tail}`
+}
+
+function MATERIAL_ADDED(lessonDate, materialTitle) {
+  return `📎 К уроку ${formatMoscowDateTime(lessonDate)} добавлен новый материал: ${materialTitle}`
 }
 
 function HOMEWORK_NO_LESSON() {
@@ -78,23 +91,19 @@ function formatMoscowDateTime(date) {
 }
 
 function RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, newDate) {
-  return `Репетитор предлагает перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}.
-Ответь:
-✅ Подтвердить
-❌ Отклонить`
+  return `📅 Репетитор предлагает перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}`
 }
 
 function RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, newDate) {
-  return `Ученик ${studentName} предлагает перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}.
-Подтверди или отклони в панели учителя.`
+  return `📅 ${studentName} просит перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}`
 }
 
 function RESCHEDULE_CONFIRMED(newDate) {
-  return `Перенос подтверждён! Новое время: ${formatMoscowDateTime(newDate)}`
+  return `✅ Перенос урока подтверждён. Новое время: ${formatMoscowDateTime(newDate)}`
 }
 
-function RESCHEDULE_REJECTED() {
-  return "Перенос отклонён"
+function RESCHEDULE_REJECTED(originalDate) {
+  return `❌ Перенос урока отклонён. Урок остаётся ${formatMoscowDateTime(originalDate)}`
 }
 
 function RESCHEDULE_ASK_DATE() {
@@ -160,23 +169,19 @@ function RESCHEDULE_KEYBOARDS(lessonId, studentId) {
 }
 
 function CANCELLATION_PROPOSED_TO_STUDENT(lessonDate) {
-  return `Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate)}.
-Ответь:
-✅ Подтвердить отмену
-❌ Отклонить`
+  return `🔴 Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate)}`
 }
 
 function CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate) {
-  return `Ученик ${studentName} просит отменить урок ${formatMoscowDateTime(lessonDate)}.
-Подтверди или отклони в панели учителя.`
+  return `🔴 ${studentName} просит отменить урок ${formatMoscowDateTime(lessonDate)}`
 }
 
 function CANCELLATION_CONFIRMED(lessonDate) {
-  return `Урок ${formatMoscowDateTime(lessonDate)} отменён.`
+  return `❌ Урок ${formatMoscowDateTime(lessonDate)} отменён`
 }
 
 function CANCELLATION_REJECTED() {
-  return "Отмена урока отклонена. Урок остаётся в силе."
+  return "↩️ Отмена урока отклонена. Урок остаётся в силе."
 }
 
 function CANCELLATION_CALLBACK_FAILED() {
@@ -222,8 +227,9 @@ function CANCELLATION_KEYBOARDS(lessonId, studentId) {
 }
 
 // lessonDate accepts either a Firestore Timestamp or a plain Date — reminders.js
-// passes whatever getEffectiveLessonDate() resolved (a Date), but this stays
-// tolerant of a raw Timestamp too. This runs server-side (Cloud Functions),
+// passes whatever effective date it resolved (rescheduledDate ?? date, a
+// Date), but this stays tolerant of a raw Timestamp too. This runs
+// server-side (Cloud Functions),
 // so the lesson time is formatted in Europe/Moscow explicitly rather than via
 // Intl.DateTimeFormat().resolvedOptions().timeZone, which reflects the
 // server's own timezone and not the student's.
@@ -231,18 +237,43 @@ function toDate(lessonDate) {
   return typeof lessonDate?.toDate === "function" ? lessonDate.toDate() : lessonDate
 }
 
-function REMINDER_MIDDAY(lessonDate, assignmentText) {
-  const lessonTime = toDate(lessonDate)
-  const lessonTimeFormatted = lessonTime.toLocaleTimeString("ru-RU", {
+function moscowDayKey(date) {
+  return date.toLocaleDateString("en-CA", { timeZone: "Europe/Moscow" })
+}
+
+function dayLabel(date, now) {
+  return moscowDayKey(date) === moscowDayKey(now) ? "Сегодня" : "Завтра"
+}
+
+function formatMoscowTime(date) {
+  return date.toLocaleTimeString("ru-RU", {
     timeZone: "Europe/Moscow",
     hour: "2-digit",
     minute: "2-digit",
   })
+}
 
-  const tail = assignmentText
-    ? `Задание: ${assignmentText}\nЕсли готово — пришли фото домашки сюда в чат.`
-    : "Проверь, есть ли домашнее задание — если есть, пришли фото сюда в чат."
-  return `Напоминаем: завтра в ${lessonTimeFormatted} у тебя урок! 📚\n${tail}`
+// lessons: [{ date, assignmentText }], sorted ascending, all falling within
+// "the rest of today + all of tomorrow" (see reminders.js) — so dayLabel
+// only ever needs to distinguish those two days.
+function REMINDER_MIDDAY_SUMMARY(lessons, now) {
+  if (lessons.length === 1) {
+    const { date, assignmentText } = lessons[0]
+    const label = dayLabel(date, now).toLowerCase()
+    const time = formatMoscowTime(toDate(date))
+    const tail = assignmentText
+      ? `Задание: ${assignmentText}\nЕсли готово — пришли фото домашки сюда в чат.`
+      : "Проверь, есть ли домашнее задание — если есть, пришли фото сюда в чат."
+    return `🔔 Напоминаем: ${label} в ${time} у тебя урок!\n${tail}`
+  }
+
+  const lines = lessons.map(({ date, assignmentText }) => {
+    const label = dayLabel(date, now)
+    const time = formatMoscowTime(toDate(date))
+    return `- ${label} в ${time}${assignmentText ? ` — ${assignmentText}` : ""}`
+  })
+
+  return `🔔 Ближайшие уроки:\n${lines.join("\n")}\nНе забудь домашку — пришли фото сюда если готова.`
 }
 
 function buildPreLessonMessage(lessonDate, homeworkText) {
@@ -282,12 +313,15 @@ module.exports = {
   INVALID_PIN,
   INVALID_TOKEN,
   HOMEWORK_RECEIVED,
+  HOMEWORK_SUBMITTED_TO_TEACHER,
+  ASSIGNMENT_ADDED,
+  MATERIAL_ADDED,
   HOMEWORK_NO_LESSON,
   UNKNOWN_MESSAGE,
   STUDENT_NOT_LINKED,
   HOMEWORK_SAVE_FAILED,
   REGISTRATION_FAILED,
-  REMINDER_MIDDAY,
+  REMINDER_MIDDAY_SUMMARY,
   buildPreLessonMessage,
   RESCHEDULE_PROPOSED_TO_STUDENT,
   RESCHEDULE_PROPOSED_TO_TEACHER,

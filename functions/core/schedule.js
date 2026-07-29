@@ -43,12 +43,12 @@ function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-function getNextLessonDate(schedule) {
-  if (!schedule || typeof schedule.dayOfWeek !== "number" || !schedule.time) {
+function getNextLessonDateForSlot(slot) {
+  if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
   }
 
-  const [hours, minutes] = schedule.time.split(":").map(Number)
+  const [hours, minutes] = slot.time.split(":").map(Number)
   if (Number.isNaN(hours) || Number.isNaN(minutes)) {
     return null
   }
@@ -59,7 +59,7 @@ function getNextLessonDate(schedule) {
   // offset, so reading it off a UTC-midnight Date built from Moscow's
   // year/month/day is safe.
   const mskWeekday = new Date(Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day)).getUTCDay()
-  const daysUntil = (schedule.dayOfWeek - mskWeekday + 7) % 7
+  const daysUntil = (slot.dayOfWeek - mskWeekday + 7) % 7
 
   const candidateDay = new Date(
     Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day + daysUntil),
@@ -79,6 +79,78 @@ function getNextLessonDate(schedule) {
   }
 
   return candidate
+}
+
+function isValidSlot(slot) {
+  return Boolean(slot) && typeof slot.dayOfWeek === "number" && typeof slot.time === "string" && slot.time !== ""
+}
+
+// Reads a student doc's schedule regardless of whether it's already been
+// migrated to the new scheduleSlots array or still has the legacy single
+// `schedule` object (see functions/scripts/migrateSchedule.js) — every
+// read path goes through this so the two shapes never need separate
+// handling downstream.
+function normalizeScheduleSlots(data) {
+  if (!data) {
+    return []
+  }
+
+  if (Array.isArray(data.scheduleSlots)) {
+    return data.scheduleSlots.filter(isValidSlot).map((slot) => ({
+      dayOfWeek: slot.dayOfWeek,
+      time: slot.time,
+      durationMinutes: slot.durationMinutes ?? 60,
+    }))
+  }
+
+  if (isValidSlot(data.schedule)) {
+    return [
+      {
+        dayOfWeek: data.schedule.dayOfWeek,
+        time: data.schedule.time,
+        durationMinutes: data.schedule.durationMinutes ?? 60,
+      },
+    ]
+  }
+
+  return []
+}
+
+// Earliest next occurrence across every slot — used wherever only a single
+// "next lesson" date is needed (e.g. the collapsed schedule display).
+function getNextLessonDate(scheduleSlots) {
+  const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
+  const dates = slots.map(getNextLessonDateForSlot).filter(Boolean)
+
+  if (dates.length === 0) {
+    return null
+  }
+
+  return dates.reduce((earliest, date) => (date < earliest ? date : earliest))
+}
+
+// Returns the next `count` lesson occurrences across all slots, merged and
+// sorted ascending, each tagged with which slot produced it. Seeds one
+// "pointer" date per slot at its true next occurrence, repeatedly emits the
+// smallest pointer and advances only that slot's pointer by a week — so
+// calling this with count === scheduleSlots.length is guaranteed to return
+// exactly one entry per slot (a slot's second occurrence is always >= 7
+// days out, i.e. always later than any other slot's first).
+function getUpcomingLessonDates(scheduleSlots, count) {
+  const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
+  const pointers = slots
+    .map((slot, index) => ({ index, date: getNextLessonDateForSlot(slot) }))
+    .filter((pointer) => pointer.date)
+
+  const results = []
+  while (results.length < count && pointers.length > 0) {
+    pointers.sort((a, b) => a.date - b.date)
+    const next = pointers[0]
+    results.push({ date: next.date, slotIndex: next.index })
+    next.date = new Date(next.date.getTime() + 7 * 24 * 60 * 60 * 1000)
+  }
+
+  return results
 }
 
 const RESCHEDULE_DATE_PATTERN = /^(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})$/
@@ -117,6 +189,9 @@ function parseRescheduleDateInput(text) {
 
 module.exports = {
   getNextLessonDate,
+  getNextLessonDateForSlot,
+  getUpcomingLessonDates,
+  normalizeScheduleSlots,
   SCHEDULE_TIME_ZONE,
   getZonedParts,
   zonedTimeToUtc,

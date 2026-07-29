@@ -14,6 +14,7 @@ import {
   ensureUpcomingLesson,
   subscribeToLesson,
   updateHomeworkAssignment,
+  updateLessonTopic,
 } from "@/firebase/lessons"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
@@ -224,13 +225,16 @@ export function HomeworkLessonDialog({
     setSaveError("")
 
     try {
-      await updateHomeworkAssignment(studentId, lessonId, {
-        text: assignmentText,
-        files: assignmentFiles,
-      })
+      await Promise.all([
+        updateHomeworkAssignment(studentId, lessonId, {
+          text: assignmentText,
+          files: assignmentFiles,
+        }),
+        updateLessonTopic(studentId, lessonId, topic),
+      ])
     } catch (error) {
-      console.error("Failed to save homework assignment:", error)
-      setSaveError(error?.message || "Не удалось сохранить задание")
+      console.error("Failed to save lesson topic/assignment:", error)
+      setSaveError(error?.message || "Не удалось сохранить")
     } finally {
       setSaving(false)
     }
@@ -264,7 +268,7 @@ export function HomeworkLessonDialog({
     setCompleteError("")
 
     try {
-      await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic })
+      await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
       handleDialogOpenChange(false)
     } catch (error) {
       console.error("Failed to complete lesson:", error)
@@ -293,6 +297,25 @@ export function HomeworkLessonDialog({
           </div>
         ) : (
           <div className="mt-6 flex flex-col gap-6">
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold text-foreground">Тема урока</span>
+
+              {isEditableAssignment ? (
+                <input
+                  type="text"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  disabled={saving}
+                  placeholder="Present Simple"
+                  className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+                />
+              ) : (
+                <p className="rounded-xl bg-muted px-3.5 py-2.5 text-sm text-foreground">
+                  {topic || "Тема не указана"}
+                </p>
+              )}
+            </div>
+
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold text-foreground">Задание</span>
 
@@ -378,7 +401,7 @@ export function HomeworkLessonDialog({
                       Сохраняем...
                     </>
                   ) : (
-                    "Сохранить задание"
+                    "Сохранить"
                   )}
                 </Button>
               ) : null}
@@ -430,7 +453,6 @@ export function HomeworkLessonDialog({
                 <p className="text-sm text-foreground">
                   Оценка: {optionLabel(RATING_OPTIONS, lesson.rating)}
                 </p>
-                <p className="text-sm text-foreground">Тема: {lesson.topic || "—"}</p>
               </div>
             ) : mode === "upcoming" ? (
               <Button type="button" onClick={() => setMode("completing")}>
@@ -471,18 +493,6 @@ export function HomeworkLessonDialog({
                   />
                 </div>
 
-                <label className="flex flex-col gap-1.5 text-sm font-semibold text-foreground">
-                  Тема урока
-                  <input
-                    type="text"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    disabled={completing}
-                    placeholder="Present Simple"
-                    className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
-                  />
-                </label>
-
                 {completeError ? (
                   <span className="text-sm font-semibold text-destructive">{completeError}</span>
                 ) : null}
@@ -494,55 +504,53 @@ export function HomeworkLessonDialog({
                       Сохраняем...
                     </>
                   ) : (
-                    "Сохранить"
+                    "Сохранить и завершить урок"
                   )}
                 </Button>
               </div>
             )}
 
-            {isCompleted ? (
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-semibold text-foreground">Дополнительные материалы</span>
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold text-foreground">Дополнительные материалы</span>
 
-                <input
-                  ref={extraFileInputRef}
-                  type="file"
-                  onChange={handleAddExtraMaterial}
-                  disabled={uploadingExtra}
-                  className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
-                />
+              <input
+                ref={extraFileInputRef}
+                type="file"
+                onChange={handleAddExtraMaterial}
+                disabled={uploadingExtra}
+                className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
+              />
 
-                {uploadingExtra ? (
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Загрузка файла...
-                  </span>
-                ) : null}
+              {uploadingExtra ? (
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Загрузка файла...
+                </span>
+              ) : null}
 
-                {extraUploadError ? (
-                  <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
-                ) : null}
+              {extraUploadError ? (
+                <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
+              ) : null}
 
-                {lesson.materials.length > 0 ? (
-                  <ul className="flex flex-col gap-1.5">
-                    {lesson.materials.map((material, index) => (
-                      <li
-                        key={`${material.url}-${index}`}
-                        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
-                      >
-                        <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Материалов пока нет</p>
-                )}
-              </div>
-            ) : null}
+              {lesson?.materials?.length > 0 ? (
+                <ul className="flex flex-col gap-1.5">
+                  {lesson.materials.map((material, index) => (
+                    <li
+                      key={`${material.url}-${index}`}
+                      className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+                    >
+                      <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">Материалов пока нет</p>
+              )}
+            </div>
           </div>
         )}
       </DialogContent>

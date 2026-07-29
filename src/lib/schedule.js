@@ -52,12 +52,12 @@ function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-export function getNextLessonDate(schedule) {
-  if (!schedule || typeof schedule.dayOfWeek !== "number" || !schedule.time) {
+function getNextLessonDateForSlot(slot) {
+  if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
   }
 
-  const [hours, minutes] = schedule.time.split(":").map(Number)
+  const [hours, minutes] = slot.time.split(":").map(Number)
   if (Number.isNaN(hours) || Number.isNaN(minutes)) {
     return null
   }
@@ -68,7 +68,7 @@ export function getNextLessonDate(schedule) {
   // offset, so reading it off a UTC-midnight Date built from Moscow's
   // year/month/day is safe.
   const mskWeekday = new Date(Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day)).getUTCDay()
-  const daysUntil = (schedule.dayOfWeek - mskWeekday + 7) % 7
+  const daysUntil = (slot.dayOfWeek - mskWeekday + 7) % 7
 
   const candidateDay = new Date(
     Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day + daysUntil),
@@ -88,6 +88,52 @@ export function getNextLessonDate(schedule) {
   }
 
   return candidate
+}
+
+function isValidSlot(slot) {
+  return Boolean(slot) && typeof slot.dayOfWeek === "number" && typeof slot.time === "string" && slot.time !== ""
+}
+
+// Reads a student doc regardless of whether it's already been migrated to
+// scheduleSlots (array) or still has the legacy single `schedule` object —
+// see functions/scripts/migrateSchedule.js and mapStudentDoc in
+// src/firebase/students.js, which calls this for every student read.
+export function normalizeScheduleSlots(data) {
+  if (!data) {
+    return []
+  }
+
+  if (Array.isArray(data.scheduleSlots)) {
+    return data.scheduleSlots.filter(isValidSlot).map((slot) => ({
+      dayOfWeek: slot.dayOfWeek,
+      time: slot.time,
+      durationMinutes: slot.durationMinutes ?? 60,
+    }))
+  }
+
+  if (isValidSlot(data.schedule)) {
+    return [
+      {
+        dayOfWeek: data.schedule.dayOfWeek,
+        time: data.schedule.time,
+        durationMinutes: data.schedule.durationMinutes ?? 60,
+      },
+    ]
+  }
+
+  return []
+}
+
+// Earliest next occurrence across every slot.
+export function getNextLessonDate(scheduleSlots) {
+  const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
+  const dates = slots.map(getNextLessonDateForSlot).filter(Boolean)
+
+  if (dates.length === 0) {
+    return null
+  }
+
+  return dates.reduce((earliest, date) => (date < earliest ? date : earliest))
 }
 
 export function formatNextLessonDate(date) {

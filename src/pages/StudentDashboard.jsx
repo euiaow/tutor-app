@@ -6,12 +6,18 @@ import { MaterialsLibrary } from "@/components/materials-library"
 import { Achievements } from "@/components/achievements"
 import { LessonHistory } from "@/components/lesson-history"
 import { LessonStats } from "@/components/lesson-stats"
+import { NotificationIcon, NotificationsList } from "@/components/notifications-list"
 import { formatLessonDateTime } from "@/lib/schedule"
+import { formatRelativeTime } from "@/lib/notifications"
 import { Spinner } from "@/components/ui/spinner"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { LoginScreen } from "@/components/auth/login-screen"
 import { subscribeToStudent } from "@/firebase/students"
+import {
+  subscribeToStudentNotifications,
+  markNotificationRead,
+} from "@/firebase/notifications"
 import {
   getLessons,
   subscribeToUpcomingLesson,
@@ -202,12 +208,14 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   }, [studentId])
 
   // subscribeToUpcomingLesson only matches status === "upcoming", so the
-  // moment confirmCancellation flips that lesson's status to "cancelled" it
-  // drops out of that query entirely (onData(null)) — same as it always did
-  // when a lesson gets completed. To actually show "Урок отменён" for that
-  // brief window before the next draft lesson appears, the last known lesson
-  // id is watched directly until either it resolves as cancelled or a new
-  // upcoming lesson shows up above.
+  // moment a lesson stops being upcoming it drops out of that query entirely
+  // (onData(null)) — whether because it was completed (doc persists with
+  // status "completed") or cancelled (confirmCancellation now deletes the
+  // doc outright, see core/lessons.js). To actually show "Урок отменён" for
+  // that brief window before the next draft lesson appears, the last known
+  // lesson id is watched directly: the doc no longer existing is exactly the
+  // cancellation case (completion never deletes the doc), until either that
+  // resolves or a new upcoming lesson shows up above.
   useEffect(() => {
     if (lesson || !lastLessonIdRef.current) {
       return
@@ -218,7 +226,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       studentId,
       lessonId,
       (doc) => {
-        setCancelledLesson(doc?.status === "cancelled" ? doc : null)
+        setCancelledLesson(doc === null || doc?.status === "cancelled" ? { id: lessonId } : null)
       },
       (error) => {
         console.error("Failed to check cancelled lesson:", error)
@@ -500,11 +508,81 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   )
 }
 
-function NotificationsPlaceholder() {
+function AllNotificationsDialog({ notifications, open, onOpenChange, onNotificationClick }) {
   return (
-    <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-      <span className="text-sm font-semibold text-foreground">Уведомления</span>
-      <span className="text-sm text-muted-foreground">Нет новых уведомлений</span>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Все уведомления</DialogTitle>
+        <DialogDescription>Последние {notifications.length} уведомлений</DialogDescription>
+
+        <div className="mt-6 max-h-[60vh] overflow-y-auto">
+          <NotificationsList notifications={notifications} onNotificationClick={onNotificationClick} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function StudentNotifications({ studentId }) {
+  const [notifications, setNotifications] = useState([])
+  const [allOpen, setAllOpen] = useState(false)
+  const hasUnread = notifications.some((notification) => !notification.read)
+  const lastNotification = notifications[0] ?? null
+
+  useEffect(() => {
+    const unsubscribe = subscribeToStudentNotifications(studentId, setNotifications, (firestoreError) => {
+      console.error("Failed to load notifications:", firestoreError)
+    })
+
+    return unsubscribe
+  }, [studentId])
+
+  async function handleNotificationClick(notification) {
+    if (!notification.read) {
+      try {
+        await markNotificationRead(notification.id)
+      } catch (err) {
+        console.error("Failed to mark notification read:", err)
+      }
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+      {lastNotification ? (
+        <button
+          type="button"
+          onClick={() => handleNotificationClick(lastNotification)}
+          className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+        >
+          <NotificationIcon type={lastNotification.type} />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className={`text-sm text-foreground ${lastNotification.read ? "" : "font-semibold"}`}>
+              {lastNotification.text}
+            </span>
+            <span className="text-xs text-muted-foreground">{formatRelativeTime(lastNotification.createdAt)}</span>
+          </span>
+        </button>
+      ) : (
+        <span className="text-sm text-muted-foreground">Нет новых уведомлений</span>
+      )}
+
+      <Button type="button" variant="outline" size="sm" className="relative shrink-0" onClick={() => setAllOpen(true)}>
+        {hasUnread ? (
+          <span
+            aria-hidden="true"
+            className="absolute right-1 top-1 size-2 rounded-full bg-red-500 ring-2 ring-card"
+          />
+        ) : null}
+        Все уведомления
+      </Button>
+
+      <AllNotificationsDialog
+        notifications={notifications}
+        open={allOpen}
+        onOpenChange={setAllOpen}
+        onNotificationClick={handleNotificationClick}
+      />
     </div>
   )
 }
@@ -627,9 +705,9 @@ function StudentDashboardContent({ studentId }) {
         </span>
       </header>
 
-      <NextLessonPlate studentId={studentId} hasSchedule={Boolean(student.schedule)} />
+      <NextLessonPlate studentId={studentId} hasSchedule={Boolean(student.scheduleSlots?.length)} />
 
-      <NotificationsPlaceholder />
+      <StudentNotifications studentId={studentId} />
 
       <div className="flex flex-col gap-4 md:flex-row">
         <div className="w-full md:w-1/3">
@@ -649,6 +727,7 @@ function StudentDashboardContent({ studentId }) {
       <LessonStats lessons={lessons} />
 
       <LessonHistory
+        studentId={studentId}
         lessons={lessons.filter((lesson) => lesson.status !== "upcoming")}
         loading={lessonsLoading}
         error={lessonsError}

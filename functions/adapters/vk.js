@@ -1,5 +1,6 @@
 const { defineSecret } = require("firebase-functions/params")
 const { HttpsError } = require("firebase-functions/v2/https")
+const { FieldValue } = require("firebase-admin/firestore")
 const logger = require("firebase-functions/logger")
 const { db } = require("../core/firestore")
 const {
@@ -20,6 +21,7 @@ const botMessages = require("../core/botMessages")
 const { parseRescheduleDateInput } = require("../core/schedule")
 
 const SESSIONS_COLLECTION = "vkSessions"
+const PROCESSED_MESSAGES_COLLECTION = "vkProcessedMessages"
 
 // TODO: заменить на реальный домен приложения, когда он будет известен
 const PLACEHOLDER_DOMAIN = "PLACEHOLDER_DOMAIN"
@@ -376,10 +378,54 @@ async function handleHomeworkFile(peerId, attachment) {
     const lessonId = await recordHomeworkSubmission(studentId, url)
 
     logger.info("VK homework file saved", { peerId, studentId, lessonId })
-    await sendMessage(peerId, lessonId ? botMessages.HOMEWORK_RECEIVED() : botMessages.HOMEWORK_NO_LESSON())
+
+    // recordHomeworkSubmission already sent the "homework_received"
+    // notification (and its bot message) when a lesson existed — only the
+    // no-lesson case still needs a direct reply here.
+    if (!lessonId) {
+      await sendMessage(peerId, botMessages.HOMEWORK_NO_LESSON())
+    }
   } catch (error) {
     logger.error("Failed to process VK homework file", { peerId, studentId, error })
     await sendMessage(peerId, botMessages.HOMEWORK_SAVE_FAILED())
+  }
+}
+
+// VK retries a message_new event if it doesn't get the "ok" response back
+// quickly enough (e.g. while a photo is still being downloaded/uploaded),
+// which without this guard re-runs the whole handler — duplicate homework
+// submissions, duplicate registration steps, etc. Keyed by
+// peer_id+conversation_message_id (stable and always present on incoming
+// messages), falling back to the message's own id if that's ever missing.
+// `.create()` fails if the doc already exists, so the reservation is
+// atomic even if two deliveries race each other.
+async function reserveMessageProcessing(message) {
+  const key =
+    message?.peer_id != null && message?.conversation_message_id != null
+      ? `${message.peer_id}_${message.conversation_message_id}`
+      : message?.id != null
+        ? `id_${message.id}`
+        : null
+
+  if (!key) {
+    logger.warn("VK message has no id to dedupe on, processing without idempotency guard", {
+      peerId: message?.peer_id,
+    })
+    return true
+  }
+
+  try {
+    await db
+      .collection(PROCESSED_MESSAGES_COLLECTION)
+      .doc(key)
+      .create({ processedAt: FieldValue.serverTimestamp() })
+    return true
+  } catch (error) {
+    if (error.code === 6) {
+      logger.info("VK message_new already processed, skipping duplicate delivery", { key })
+      return false
+    }
+    throw error
   }
 }
 
@@ -391,6 +437,11 @@ async function handleMessageNew(object) {
 
   if (!peerId) {
     logger.info("VK message_new ignored: no peer id", { object })
+    return
+  }
+
+  const shouldProcess = await reserveMessageProcessing(message)
+  if (!shouldProcess) {
     return
   }
 

@@ -19,14 +19,15 @@ const {
   GOOGLE_OAUTH_CLIENT_SECRET,
 } = require("./core/googleAuth")
 const {
-  createLessonEvent,
-  updateLessonEvent,
+  syncScheduleSlots,
   deleteLessonEvent,
 } = require("./core/googleCalendar")
+const { normalizeScheduleSlots } = require("./core/schedule")
 const {
   ensureUpcomingLesson,
   syncUpcomingLessonToSchedule,
   updateHomeworkAssignment,
+  addLessonMaterial,
   completeLesson,
   proposeReschedule,
   confirmReschedule,
@@ -112,25 +113,51 @@ exports.deleteStudent = onCall(
   },
 )
 
-exports.updateHomeworkAssignment = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
-  }
-
-  const { studentId, lessonId, text, files } = request.data ?? {}
-
-  try {
-    await updateHomeworkAssignment(studentId, lessonId, { text, files })
-    return { success: true }
-  } catch (error) {
-    if (error instanceof HttpsError) {
-      throw error
+exports.updateHomeworkAssignment = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    logger.error("Failed to update homework assignment", error)
-    throw new HttpsError("internal", "Не удалось сохранить задание")
-  }
-})
+    const { studentId, lessonId, text, files } = request.data ?? {}
+
+    try {
+      await updateHomeworkAssignment(studentId, lessonId, { text, files })
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to update homework assignment", error)
+      throw new HttpsError("internal", "Не удалось сохранить задание")
+    }
+  },
+)
+
+exports.addLessonMaterial = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonId, material } = request.data ?? {}
+
+    try {
+      await addLessonMaterial(studentId, lessonId, material)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to add lesson material", error)
+      throw new HttpsError("internal", "Не удалось добавить материал")
+    }
+  },
+)
 
 exports.ensureUpcomingLesson = onCall(async (request) => {
   if (!request.auth) {
@@ -161,10 +188,10 @@ exports.completeLesson = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
   }
 
-  const { studentId, lessonId, attendance, homeworkDone, rating, topic } = request.data ?? {}
+  const { studentId, lessonId, attendance, homeworkDone, rating } = request.data ?? {}
 
   try {
-    await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating, topic })
+    await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
     return { success: true }
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -176,10 +203,6 @@ exports.completeLesson = onCall(async (request) => {
   }
 })
 
-// 12:00 Moscow time (== 9:00 UTC) — reminds students whose lesson is
-// tomorrow. timeZone is set explicitly rather than hand-converting to a UTC
-// cron expression, so the fire time stays correct even if Moscow's offset
-// rules ever change.
 // Reachable from both dashboards, same reasoning as confirmCancellation
 // below: the teacher proposing from TeacherDashboard (Firebase Auth
 // session) and, as of the student-portal reschedule/cancel buttons, the
@@ -335,8 +358,13 @@ exports.rejectCancellation = onCall(
   },
 )
 
+// 9:00 Moscow time — reminds students about every upcoming lesson between
+// now and the end of tomorrow (Moscow calendar day), one combined message
+// per student. timeZone is set explicitly rather than hand-converting to a
+// UTC cron expression, so the fire time stays correct even if Moscow's
+// offset rules ever change.
 exports.dailyReminderMidday = onSchedule(
-  { schedule: "0 12 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { schedule: "0 9 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async () => {
     await dailyReminderMidday()
   },
@@ -353,7 +381,10 @@ exports.dailyReminderPreLesson = onSchedule(
   },
 )
 
-exports.telegramWebhook = onRequest({ secrets: [TELEGRAM_BOT_TOKEN] }, async (req, res) => {
+// Both secrets are needed even though this is the Telegram webhook: a
+// homework submission here can trigger a teacher notification, and the
+// teacher's contact platform (integrations/teacherContact) may be VK.
+exports.telegramWebhook = onRequest({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (req, res) => {
   // Wait for the update to finish processing before acknowledging, so a
   // Cloud Functions instance freeze right after the response can't drop
   // an in-flight Firestore write or Telegram reply. Telegram tolerates a
@@ -367,8 +398,10 @@ exports.telegramWebhook = onRequest({ secrets: [TELEGRAM_BOT_TOKEN] }, async (re
   res.status(200).send("OK")
 })
 
+// Same reasoning as telegramWebhook above: a homework submission received
+// here may need to notify the teacher on Telegram.
 exports.vkWebhook = onRequest(
-  { secrets: [VK_GROUP_TOKEN, VK_CONFIRMATION_CODE] },
+  { secrets: [VK_GROUP_TOKEN, VK_CONFIRMATION_CODE, TELEGRAM_BOT_TOKEN] },
   async (req, res) => {
     // Same fix as telegramWebhook: process the event fully, then respond,
     // so an instance freeze right after the response can't drop an
@@ -496,9 +529,7 @@ exports.getCalendarEmbedInfo = onCall(
   },
 )
 
-function isScheduleEqual(a, b) {
-  if (a === b) return true
-  if (!a || !b) return false
+function isSlotEqual(a, b) {
   return (
     a.dayOfWeek === b.dayOfWeek &&
     a.time === b.time &&
@@ -506,12 +537,18 @@ function isScheduleEqual(a, b) {
   )
 }
 
+function isScheduleSlotsEqual(slotsA, slotsB) {
+  if (slotsA.length !== slotsB.length) return false
+  return slotsA.every((slot, index) => isSlotEqual(slot, slotsB[index]))
+}
+
 // Reacts to every students/{studentId} write (creation via registration,
 // or a schedule edit from the dashboard) rather than requiring each call
-// site that writes `schedule` to remember to also call ensureUpcomingLesson
-// itself — updateStudentSchedule is a plain client-side updateDoc today, not
-// a callable, so a Firestore trigger is the only place guaranteed to see
-// every schedule write regardless of where it came from.
+// site that writes scheduleSlots to remember to also call
+// ensureUpcomingLesson itself — updateStudentSchedule is a plain
+// client-side updateDoc today, not a callable, so a Firestore trigger is
+// the only place guaranteed to see every schedule write regardless of
+// where it came from.
 exports.syncUpcomingLessonOnScheduleChange = onDocumentWritten(
   { document: "students/{studentId}" },
   async (event) => {
@@ -525,10 +562,10 @@ exports.syncUpcomingLessonOnScheduleChange = onDocumentWritten(
       return
     }
 
-    const beforeSchedule = before?.schedule ?? null
-    const afterSchedule = after.schedule ?? null
+    const beforeSlots = normalizeScheduleSlots(before)
+    const afterSlots = normalizeScheduleSlots(after)
 
-    if (isScheduleEqual(beforeSchedule, afterSchedule)) {
+    if (isScheduleSlotsEqual(beforeSlots, afterSlots)) {
       return
     }
 
@@ -549,89 +586,54 @@ exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
     const before = beforeSnapshot.exists ? beforeSnapshot.data() : null
     const after = afterSnapshot.exists ? afterSnapshot.data() : null
 
-    const beforeSchedule = before?.schedule ?? null
-    const afterSchedule = after?.schedule ?? null
+    if (!after) {
+      // Student doc deleted — deleteStudent already cleans up calendar
+      // events directly, nothing to do here.
+      return
+    }
 
-    // This trigger writes googleEventId back onto the same document, which
+    const beforeSlots = normalizeScheduleSlots(before)
+    const afterSlots = normalizeScheduleSlots(after)
+
+    // This trigger writes googleEventIds back onto the same document, which
     // fires it again. Without this guard that self-write would recurse
-    // forever (schedule stays the same each time, only googleEventId
-    // changes) — bail out immediately whenever schedule didn't change,
+    // forever (schedule stays the same each time, only googleEventIds
+    // changes) — bail out immediately whenever the slots didn't change,
     // regardless of what else changed in the document.
-    if (isScheduleEqual(beforeSchedule, afterSchedule)) {
+    if (isScheduleSlotsEqual(beforeSlots, afterSlots)) {
       logger.info("Google Calendar sync: skip, schedule unchanged", { studentId, action: "skip" })
       return
     }
 
-    const existingEventId = before?.googleEventId ?? null
+    if (afterSlots.length === 0) {
+      const existingEventIds = before?.googleEventIds ?? {}
+      const legacyEventId = before?.googleEventId ?? null
+      const eventIdsToDelete = [...Object.values(existingEventIds), ...(legacyEventId ? [legacyEventId] : [])]
 
-    if (!afterSchedule) {
-      if (!existingEventId) {
-        logger.info("Google Calendar sync: skip, no schedule and no event", {
-          studentId,
-          action: "skip",
-        })
+      if (eventIdsToDelete.length === 0) {
+        logger.info("Google Calendar sync: skip, no schedule and no events", { studentId, action: "skip" })
         return
       }
 
-      logger.info("Google Calendar sync: deleting event", {
-        studentId,
-        action: "delete",
-        eventId: existingEventId,
-      })
+      logger.info("Google Calendar sync: deleting events", { studentId, action: "delete", count: eventIdsToDelete.length })
 
-      try {
-        await deleteLessonEvent(existingEventId)
-        logger.info("Google Calendar sync: delete succeeded", { studentId, action: "delete" })
-      } catch (error) {
-        logger.error("Google Calendar sync: delete failed", { studentId, action: "delete", error })
-      }
-
-      if (afterSnapshot.exists) {
-        await afterSnapshot.ref.update({ googleEventId: FieldValue.delete() })
-      }
-      return
-    }
-
-    if (!existingEventId) {
-      logger.info("Google Calendar sync: creating event", { studentId, action: "create" })
-
-      try {
-        const eventId = await createLessonEvent(after)
-        if (eventId) {
-          await afterSnapshot.ref.update({ googleEventId: eventId })
-          logger.info("Google Calendar sync: create succeeded", { studentId, action: "create", eventId })
-        } else {
-          logger.warn("Google Calendar sync: create skipped, calendar not connected", {
-            studentId,
-            action: "create",
-          })
+      for (const eventId of eventIdsToDelete) {
+        try {
+          await deleteLessonEvent(eventId)
+        } catch (error) {
+          logger.error("Google Calendar sync: delete failed", { studentId, action: "delete", eventId, error })
         }
-      } catch (error) {
-        logger.error("Google Calendar sync: create failed", { studentId, action: "create", error })
       }
+
+      await afterSnapshot.ref.update({ googleEventIds: FieldValue.delete(), googleEventId: FieldValue.delete() })
       return
     }
-
-    logger.info("Google Calendar sync: updating event", {
-      studentId,
-      action: "update",
-      eventId: existingEventId,
-    })
 
     try {
-      await updateLessonEvent(existingEventId, after)
-      logger.info("Google Calendar sync: update succeeded", {
-        studentId,
-        action: "update",
-        eventId: existingEventId,
-      })
+      await syncScheduleSlots(studentId, after, afterSnapshot.ref)
+      logger.info("Google Calendar sync: slots synced", { studentId, slotCount: afterSlots.length })
     } catch (error) {
-      logger.error("Google Calendar sync: update failed", {
-        studentId,
-        action: "update",
-        eventId: existingEventId,
-        error,
-      })
+      logger.error("Google Calendar sync: failed", { studentId, error })
     }
   },
 )

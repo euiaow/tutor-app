@@ -1,10 +1,12 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { CalendarDays, CheckCircle2, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { MaterialLink } from "@/components/material-link"
+import { getLessons } from "@/firebase/lessons"
 
-const VISIBLE_COUNT = 5
+const VISIBLE_COUNT = 3
 
 const ATTENDANCE_BADGES = {
   on_time: {
@@ -104,8 +106,66 @@ function LessonCard({ lesson }) {
   )
 }
 
-export function LessonHistory({ lessons, loading, error }) {
-  const [visibleCount, setVisibleCount] = useState(VISIBLE_COUNT)
+// Loads on demand (one-time getDocs via getLessons) the moment it's opened,
+// rather than reusing the page-load fetch — decoupled from whatever the
+// small preview list above already has in memory.
+function LessonHistoryDialog({ studentId, open, onOpenChange }) {
+  const [lessons, setLessons] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    setLoading(true)
+    setError("")
+
+    getLessons(studentId)
+      .then((data) => {
+        if (cancelled) return
+        setLessons(data.filter((lesson) => lesson.status !== "upcoming"))
+      })
+      .catch((fetchError) => {
+        console.error("Failed to load full lesson history:", fetchError)
+        if (cancelled) return
+        setError("Не удалось загрузить историю уроков")
+      })
+      .finally(() => {
+        if (cancelled) return
+        setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, studentId])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogTitle>История уроков</DialogTitle>
+
+        {loading ? (
+          <Spinner label="Загрузка уроков..." />
+        ) : error ? (
+          <p className="mt-4 text-sm font-semibold text-destructive">{error}</p>
+        ) : lessons.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">Уроки пока не добавлены</p>
+        ) : (
+          <ul className="mt-4 flex flex-col gap-3">
+            {lessons.map((lesson) => (
+              <LessonCard key={lesson.id} lesson={lesson} />
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function LessonHistory({ studentId, lessons, loading, error }) {
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
 
   return (
     <section aria-labelledby="lesson-history-title" className="flex flex-col gap-3">
@@ -126,23 +186,25 @@ export function LessonHistory({ lessons, loading, error }) {
       ) : (
         <>
           <ul className="flex flex-col gap-3">
-            {lessons.slice(0, visibleCount).map((lesson) => (
+            {lessons.slice(0, VISIBLE_COUNT).map((lesson) => (
               <LessonCard key={lesson.id} lesson={lesson} />
             ))}
           </ul>
-          {lessons.length > visibleCount ? (
+          {lessons.length > VISIBLE_COUNT ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="self-start"
-              onClick={() => setVisibleCount((prev) => prev + 5)}
+              onClick={() => setIsHistoryOpen(true)}
             >
-              Показать ещё
+              Показать всю историю
             </Button>
           ) : null}
         </>
       )}
+
+      <LessonHistoryDialog studentId={studentId} open={isHistoryOpen} onOpenChange={setIsHistoryOpen} />
     </section>
   )
 }
