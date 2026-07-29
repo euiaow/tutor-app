@@ -31,6 +31,8 @@ import {
   submitHomeworkFile,
 } from "@/firebase/lessons"
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
+import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
+import { openExternalLink } from "@/lib/telegramWebApp"
 
 // datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
 // timezone, not UTC — offsetting by getTimezoneOffset() before calling
@@ -193,6 +195,14 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   const [uploadHomeworkError, setUploadHomeworkError] = useState("")
   const homeworkFileInputRef = useRef(null)
   const lastLessonIdRef = useRef(null)
+  const [videoCallUrl, setVideoCallUrl] = useState(null)
+
+  useEffect(() => {
+    const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
+      console.error("Failed to load video call url:", error),
+    )
+    return () => unsub()
+  }, [])
 
   async function handleHomeworkFileChange(e) {
     const file = e.target.files?.[0]
@@ -526,6 +536,17 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               ) : null}
               <p className="mt-1.5 text-xs text-primary-foreground/70">Или отправить в бот в ТГ/ВК</p>
             </div>
+
+            {videoCallUrl ? (
+              <Button
+                type="button"
+                size="sm"
+                className="bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
+                onClick={() => openExternalLink(videoCallUrl)}
+              >
+                🎥 Подключиться
+              </Button>
+            ) : null}
 
             {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
               <div className="flex flex-wrap gap-2">

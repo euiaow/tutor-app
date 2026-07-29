@@ -9,6 +9,9 @@ import { ExtraLessonDialog } from "@/components/teacher/extra-lesson-dialog"
 import { ContactButton } from "@/components/teacher/contact-button"
 import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
+import { VideoCallSettings } from "@/components/teacher/video-call-settings"
+import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
+import { openExternalLink } from "@/lib/telegramWebApp"
 import { Spinner } from "@/components/ui/spinner"
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
@@ -225,7 +228,7 @@ function formatRescheduleDate(date) {
   })
 }
 
-function UpcomingLessonCard({ lesson, studentName, student }) {
+function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
@@ -295,7 +298,7 @@ function UpcomingLessonCard({ lesson, studentName, student }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-semibold text-card-foreground">{studentName}</p>
-          <StudentTags student={student} compact />
+          <StudentTags student={student} />
           {lesson.isExtraLesson ? (
             <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
               доп.
@@ -423,6 +426,16 @@ function UpcomingLessonCard({ lesson, studentName, student }) {
         <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
           Открыть
         </Button>
+        {videoCallUrl ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => openExternalLink(videoCallUrl)}
+          >
+            🎥 Начать урок
+          </Button>
+        ) : null}
         {student ? <ContactButton student={student} /> : null}
       </div>
 
@@ -463,7 +476,7 @@ function PastLessonCard({ lesson, studentName, student }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-semibold text-card-foreground">{studentName}</p>
-          <StudentTags student={student} compact />
+          <StudentTags student={student} />
         </div>
         <p className="text-xs text-muted-foreground">
           {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
@@ -630,6 +643,14 @@ export function TeacherDashboard() {
   const [completedLessons, setCompletedLessons] = useState([])
   const [completedVisibleCount] = useState(2)
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
+  const [videoCallUrl, setVideoCallUrl] = useState(null)
+
+  useEffect(() => {
+    const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
+      console.error("Failed to load video call url:", error),
+    )
+    return () => unsub()
+  }, [])
 
   async function handleSignOut() {
     try {
@@ -731,6 +752,7 @@ export function TeacherDashboard() {
             <span className="text-lg font-extrabold tracking-tight text-foreground">Учебный портал</span>
           </div>
           <div className="flex items-center gap-2">
+            <VideoCallSettings />
             <TeacherNotificationsBell />
             <Button type="button" variant="outline" size="lg" onClick={handleSignOut}>
               <LogOut aria-hidden="true" />
@@ -806,6 +828,7 @@ export function TeacherDashboard() {
                   lesson={lesson}
                   studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
                   student={students.find((s) => s.id === lesson.studentId)}
+                  videoCallUrl={videoCallUrl}
                 />
               ))}
             </ul>

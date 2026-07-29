@@ -27,6 +27,13 @@ function TeacherRoute() {
 }
 
 export default function App() {
+  useEffect(() => {
+    if (window.Telegram?.WebApp) {
+      window.Telegram.WebApp.ready()
+      window.Telegram.WebApp.expand()
+    }
+  }, [])
+
   return (
     <BrowserRouter>
       <Routes>

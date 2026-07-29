@@ -7,7 +7,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
-import { getContactUrl } from "@/lib/contact"
+import { getContactUrl, isDefaultTelegramContact } from "@/lib/contact"
+import { openExternalLink } from "@/lib/telegramWebApp"
 import { updateStudentContactUrl } from "@/firebase/students"
 
 function EditContactUrlForm({ student, onDone }) {
@@ -56,6 +57,7 @@ function EditContactUrlForm({ student, onDone }) {
 export function ContactButton({ student }) {
   const [editing, setEditing] = useState(false)
   const url = getContactUrl(student)
+  const isDefaultTelegram = Boolean(url) && isDefaultTelegramContact(student)
 
   async function handleReset() {
     try {
@@ -71,8 +73,12 @@ export function ContactButton({ student }) {
         {url ? (
           <button
             type="button"
-            onClick={() => window.open(url, "_blank")}
-            className="flex flex-1 items-center justify-center gap-1.5 px-3 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-secondary/80"
+            onClick={() => openExternalLink(url)}
+            className={`flex flex-1 items-center justify-center gap-1.5 px-3 text-sm font-semibold transition-colors ${
+              isDefaultTelegram
+                ? "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
+                : "text-secondary-foreground hover:bg-secondary/80"
+            }`}
           >
             <MessageCircle className="size-4" aria-hidden="true" />
             Написать

@@ -151,7 +151,7 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
     logger.info("Telegram registration completed", { chatId, studentId })
     await sendMessage(
       chatId,
-      botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`),
+      botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`, true),
     )
   } catch (error) {
     logger.error("Telegram registration failed", { chatId, token: session.token, error })

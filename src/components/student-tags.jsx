@@ -23,13 +23,12 @@ function Tag({ code }) {
   )
 }
 
-export function StudentTags({ student, compact = false }) {
+export function StudentTags({ student }) {
   if (!student) return null
 
   const subjectCodes = student.subject ?? []
-  const showExamTag = !compact && student.examTarget
 
-  if (subjectCodes.length === 0 && !showExamTag) {
+  if (subjectCodes.length === 0 && !student.examTarget) {
     return null
   }
 
@@ -38,7 +37,7 @@ export function StudentTags({ student, compact = false }) {
       {subjectCodes.map((code) => (
         <Tag key={code} code={code} />
       ))}
-      {showExamTag ? <Tag code={student.examTarget} /> : null}
+      {student.examTarget ? <Tag code={student.examTarget} /> : null}
     </div>
   )
 }

@@ -9,8 +9,7 @@ export function AddPaymentForm({ studentId, onDone }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit() {
     const parsed = Number(count)
     if (!parsed || parsed <= 0 || saving) return
 
@@ -28,7 +27,10 @@ export function AddPaymentForm({ studentId, onDone }) {
   }
 
   return (
-    <form className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm" onSubmit={handleSubmit}>
+    <form
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm"
+      onSubmit={(e) => e.preventDefault()}
+    >
       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         Сколько занятий оплачено
         <input
@@ -37,7 +39,6 @@ export function AddPaymentForm({ studentId, onDone }) {
           value={count}
           onChange={(e) => setCount(e.target.value)}
           disabled={saving}
-          autoFocus
           className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
         />
       </label>
@@ -59,7 +60,13 @@ export function AddPaymentForm({ studentId, onDone }) {
         <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onDone} disabled={saving}>
           Отмена
         </Button>
-        <Button type="submit" size="sm" className="flex-1" disabled={!count || Number(count) <= 0 || saving}>
+        <Button
+          type="button"
+          size="sm"
+          className="flex-1"
+          onClick={handleSubmit}
+          disabled={!count || Number(count) <= 0 || saving}
+        >
           {saving ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Добавить"}
         </Button>
       </div>

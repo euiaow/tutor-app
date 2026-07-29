@@ -204,6 +204,64 @@ src/
   no shared module) that are supposed to agree conceptually, not
   literally import from each other.
 
+- **Every Cloud Functions v2 `onCall` that reaches `createNotification`
+  (even transitively) must declare `secrets: [TELEGRAM_BOT_TOKEN,
+  VK_GROUP_TOKEN]`, or bot delivery silently no-ops.** v2 only mounts
+  secrets a function explicitly lists; if it's missing, the bot adapter's
+  outbound request goes out with no token, the platform (VK/Telegram)
+  rejects it, and `createNotification` swallows that failure (by design —
+  see its own doc comment) so the caller never sees an error. Found twice
+  in one session (`createExtraLesson`, `completeLesson` — the latter via
+  the balance tracker's low-balance notification, added in an earlier
+  session without re-checking this) purely by reading real
+  `firebase functions:log` output, not by inspecting code. When adding a
+  new code path that (even indirectly) calls `createNotification`, check
+  its `onCall`'s secrets array before assuming the notification "works
+  because the code looks right" — it can look completely correct and
+  still fail silently in production.
+- **HTML5 form constraint validation runs *before* the `submit` event is
+  dispatched — a JS `onSubmit` handler's `e.preventDefault()` never
+  executes if the browser's own validation fails first.** A `<button
+  type="submit">` inside a `<form>` with a constrained input (e.g.
+  `min="1"` on a number field) will, on an invalid value, make the browser
+  scroll/focus to the invalid field and stop right there — no `submit`
+  event, no handler call, nothing to prevent. Any form meant to behave
+  like a pure-JS async action (rather than a real HTML form submission)
+  should use `type="button" onClick={handler}` instead of relying on
+  `type="submit"` + `preventDefault()`, which only works once the input is
+  already valid and doesn't help in the case that actually breaks
+  ([[activeContext]] session 5, `add-payment-form.jsx`).
+
+- **`openExternalLink(url)` (`src/lib/telegramWebApp.js`) is the only
+  sanctioned way to open an external link/URL in a new context** — checks
+  `window.Telegram?.WebApp?.openLink` first (Telegram Mini App context),
+  falls back to plain `window.open(url, "_blank", "noopener,noreferrer")`
+  otherwise. Any *new* external-link button should use this, not a raw
+  `window.open` — but note in-app navigation (React Router routes,
+  Dialog/Sheet open state) is a completely different thing and must never
+  be routed through this; it's for leaving the app to an external URL
+  only.
+- **Never combine a native `autoFocus` attribute with a Popover/Dialog
+  built on floating-ui/Base UI.** Confirmed root cause (session 6, via a
+  real captured browser trace, not guesswork) of a scroll-to-page-top bug
+  in the balance Popover's payment form: React's `autoFocus` fires a
+  synchronous native `.focus()` during the initial commit, which happens
+  *before* the Popover's `Positioner` has computed and applied its final
+  on-screen position (that's async, driven by floating-ui's own rAF/
+  layout-effect timing) — so the browser scrolls to wherever the element
+  currently sits (effectively document top), then the Popover repositions
+  a moment later, leaving the page scrolled to the wrong place. Base UI's
+  *own* internal initial-focus mechanism
+  (`floating-ui-react/components/FloatingFocusManager.js`, via
+  `enqueueFocus`) has this same theoretical `preventScroll: false` gap for
+  focus-on-open, but in this case the actual trigger was the redundant
+  native `autoFocus` attribute layered on top of it, not Base UI's own
+  code. If a Popover/Dialog needs its first field focused, don't reach
+  for `autoFocus` — either rely on the library's built-in initial-focus
+  behavior (already timed to run after positioning) or focus manually
+  inside a layout effect that runs after the popup is confirmed
+  positioned.
+
 ## Component relationships
 
 - `TeacherDashboard.jsx` composes `components/teacher/student-card.jsx`

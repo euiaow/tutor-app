@@ -68,7 +68,43 @@
 - Student card decluttered: balance/rate/payment button moved out
   entirely, now Финансы-only.
 - Финансы table: "Предмет" column now shows tags instead of text; new
-  "Оплата" column with an inline Popover payment form per row.
+  "Оплата" column with an inline Popover payment form per row. Column
+  renamed to "Теги" (session 5), now shows every tag (subjects + exam
+  target), not a subset.
+- Extra-lesson and low-balance bot notifications actually reach
+  Telegram/VK now — both `createExtraLesson` and `completeLesson` were
+  silently missing `TELEGRAM_BOT_TOKEN`/`VK_GROUP_TOKEN` in their secrets
+  declaration, so `createNotification`'s bot-dispatch step failed with no
+  visible error to the caller. Fixed in session 5, see [[systemPatterns]].
+- Balance-popover ("+ Внести" in Финансы) no longer scrolls the page to
+  top on submit — was HTML5 constraint validation intercepting the click
+  before React's `onSubmit` handler ever ran; fixed by switching the
+  submit button to `type="button"` with a plain `onClick`.
+- `HomeworkLessonDialog`'s "Дополнительные материалы" block now correctly
+  hidden while a lesson is still upcoming, shown only once "Урок прошёл"
+  is clicked or the lesson is completed — each material now has a working
+  delete button (`removeLessonMaterial`, direct `arrayRemove`).
+- Telegram contact link now opens `tg://user?id=<id>` for bot-registered
+  (numeric-id) students instead of giving up — opens the chat directly in
+  the Telegram app; the "Написать" button is visually flagged amber when
+  it's this auto-derived link rather than a manually confirmed one.
+- Telegram Mini App groundwork: Web App SDK loaded, `ready()`/`expand()`
+  called on mount, `openExternalLink` used for the one real external-link
+  button that existed (`ContactButton`) plus the two new video-call
+  buttons. Bot's post-registration message now hints at the menu button
+  for Telegram students specifically. **Still needs a manual BotFather
+  config step outside this repo before the menu button actually shows.**
+- Video call button: one shared `integrations/videoCall` link the teacher
+  sets once (Popover in the dashboard header), surfaced as "🎥 Начать
+  урок"/"🎥 Подключиться" next to the reschedule/cancel buttons on both
+  dashboards whenever a link is set — no per-lesson association, no time
+  gating.
+- Balance-popover scroll-to-top bug (session 6) — root cause confirmed
+  via a real user-captured console trace: `autoFocus` on the payment
+  form's number input raced ahead of Base UI's own position computation,
+  focusing (and thus scrolling to) the element before the Popover was
+  positioned. Fixed by removing `autoFocus`; temporary trace listener
+  removed.
 
 ## Known issues / open items
 

@@ -1,4 +1,5 @@
 import {
+  arrayRemove,
   collection,
   collectionGroup,
   doc,
@@ -145,6 +146,15 @@ export async function submitHomeworkFile(studentId, fileUrl) {
 export async function updateLessonTopic(studentId, lessonId, topic) {
   const ref = doc(db, "students", studentId, "lessons", lessonId)
   await updateDoc(ref, { topic })
+}
+
+// Direct client write (same pattern as updateLessonTopic) — removing a
+// material doesn't need a server-side notification, so no callable needed.
+// material must be the exact object as stored in lesson.materials, since
+// arrayRemove matches by deep-equality.
+export async function removeLessonMaterial(studentId, lessonId, material) {
+  const ref = doc(db, "students", studentId, "lessons", lessonId)
+  await updateDoc(ref, { materials: arrayRemove(material) })
 }
 
 export function subscribeToLesson(studentId, lessonId, onData, onError) {

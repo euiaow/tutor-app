@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { AlertCircle, Loader2, Paperclip, ExternalLink } from "lucide-react"
+import { AlertCircle, Loader2, Paperclip, ExternalLink, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,6 +13,7 @@ import {
   completeLesson,
   ensureUpcomingLesson,
   getNearestUpcomingLesson,
+  removeLessonMaterial,
   subscribeToLesson,
   updateHomeworkAssignment,
   updateLessonTopic,
@@ -97,6 +98,7 @@ export function HomeworkLessonDialog({
   const [uploadingExtra, setUploadingExtra] = useState(false)
   const [extraUploadError, setExtraUploadError] = useState("")
   const extraFileInputRef = useRef(null)
+  const [removingMaterialUrl, setRemovingMaterialUrl] = useState(null)
 
   // Reset so a later re-open starts fresh instead of keeping whatever was
   // left over from the previous time this dialog was open. Done directly in
@@ -260,6 +262,20 @@ export function HomeworkLessonDialog({
       if (extraFileInputRef.current) {
         extraFileInputRef.current.value = ""
       }
+    }
+  }
+
+  async function handleRemoveExtraMaterial(material) {
+    if (removingMaterialUrl) return
+
+    setRemovingMaterialUrl(material.url)
+    try {
+      await removeLessonMaterial(studentId, lessonId, material)
+    } catch (error) {
+      console.error("Failed to remove material:", error)
+      setExtraUploadError(error?.message || "Не удалось удалить файл")
+    } finally {
+      setRemovingMaterialUrl(null)
     }
   }
 
@@ -512,47 +528,62 @@ export function HomeworkLessonDialog({
               </div>
             )}
 
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-foreground">Дополнительные материалы</span>
+            {mode === "completing" || isCompleted ? (
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-semibold text-foreground">Дополнительные материалы</span>
 
-              <input
-                ref={extraFileInputRef}
-                type="file"
-                onChange={handleAddExtraMaterial}
-                disabled={uploadingExtra}
-                className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
-              />
+                <input
+                  ref={extraFileInputRef}
+                  type="file"
+                  onChange={handleAddExtraMaterial}
+                  disabled={uploadingExtra}
+                  className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
+                />
 
-              {uploadingExtra ? (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Загрузка файла...
-                </span>
-              ) : null}
+                {uploadingExtra ? (
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Загрузка файла...
+                  </span>
+                ) : null}
 
-              {extraUploadError ? (
-                <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
-              ) : null}
+                {extraUploadError ? (
+                  <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
+                ) : null}
 
-              {lesson?.materials?.length > 0 ? (
-                <ul className="flex flex-col gap-1.5">
-                  {lesson.materials.map((material, index) => (
-                    <li
-                      key={`${material.url}-${index}`}
-                      className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
-                    >
-                      <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-muted-foreground">Материалов пока нет</p>
-              )}
-            </div>
+                {lesson?.materials?.length > 0 ? (
+                  <ul className="flex flex-col gap-1.5">
+                    {lesson.materials.map((material, index) => (
+                      <li
+                        key={`${material.url}-${index}`}
+                        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
+                      >
+                        <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExtraMaterial(material)}
+                          disabled={removingMaterialUrl !== null}
+                          aria-label={`Удалить ${material.title}`}
+                          className="shrink-0 text-destructive transition-colors hover:text-destructive/80 disabled:opacity-50"
+                        >
+                          {removingMaterialUrl === material.url ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Trash2 className="size-4" aria-hidden="true" />
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Материалов пока нет</p>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
       </DialogContent>

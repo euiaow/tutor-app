@@ -19,10 +19,17 @@ function NAME_SAVED(name) {
   return `Отлично, ${name}! Теперь придумай 4-значный код — он понадобится для входа в личный кабинет на сайте.`
 }
 
-function PIN_SAVED(url) {
+// showMenuButtonHint is Telegram-only (the "кнопка меню" is a Telegram
+// client feature VK has no equivalent of) — telegram.js passes true,
+// vk.js leaves it false, same shared message otherwise.
+function PIN_SAVED(url, showMenuButtonHint = false) {
+  const menuButtonHint = showMenuButtonHint
+    ? "\nОткрой личный кабинет через кнопку меню внизу чата 📱"
+    : ""
+
   return `Готово! Ты зарегистрирован(а) 🎉
 Вот ссылка на твой личный кабинет: ${url}
-
+${menuButtonHint}
 Здесь ты будешь видеть расписание, задания и свой прогресс.
 Когда получишь домашнее задание — просто пришли фото сюда в чат, я передам репетитору.`
 }

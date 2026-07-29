@@ -126,7 +126,7 @@ export function FinanceSection({ students }) {
             <thead>
               <tr className="border-b border-border text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <th className="px-4 py-3">Имя</th>
-                <th className="px-4 py-3">Предмет</th>
+                <th className="px-4 py-3">Теги</th>
                 <th className="px-4 py-3">Баланс</th>
                 <th className="px-4 py-3">Ставка/час</th>
                 <th className="px-4 py-3">Оплата</th>
@@ -143,7 +143,7 @@ export function FinanceSection({ students }) {
                   >
                     <td className="px-4 py-3 font-semibold text-card-foreground">{student.name}</td>
                     <td className="px-4 py-3">
-                      <StudentTags student={student} compact />
+                      <StudentTags student={student} />
                     </td>
                     <td className={`px-4 py-3 font-bold ${getBalanceColorClass(balance, student.lowBalanceThreshold ?? 1)}`}>
                       {balance} {pluralizeLessons(balance)}

@@ -164,7 +164,7 @@ exports.addLessonMaterial = onCall(
 )
 
 exports.createExtraLesson = onCall(
-  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -291,25 +291,28 @@ exports.getNearestUpcomingLesson = onCall(async (request) => {
   }
 })
 
-exports.completeLesson = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
-  }
-
-  const { studentId, lessonId, attendance, homeworkDone, rating } = request.data ?? {}
-
-  try {
-    await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
-    return { success: true }
-  } catch (error) {
-    if (error instanceof HttpsError) {
-      throw error
+exports.completeLesson = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    logger.error("Failed to complete lesson", error)
-    throw new HttpsError("internal", "Не удалось сохранить итоги урока")
-  }
-})
+    const { studentId, lessonId, attendance, homeworkDone, rating } = request.data ?? {}
+
+    try {
+      await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to complete lesson", error)
+      throw new HttpsError("internal", "Не удалось сохранить итоги урока")
+    }
+  },
+)
 
 // Reachable from both dashboards, same reasoning as confirmCancellation
 // below: the teacher proposing from TeacherDashboard (Firebase Auth
