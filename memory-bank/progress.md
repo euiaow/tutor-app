@@ -105,6 +105,53 @@
   focusing (and thus scrolling to) the element before the Popover was
   positioned. Fixed by removing `autoFocus`; temporary trace listener
   removed.
+- Curriculum templates (session 7, Phases 1–2 of a 4-phase feature): new
+  "Учебные планы" section in `TeacherDashboard.jsx` — create/edit/delete
+  reusable program templates (`curriculumTemplates/` collection: name,
+  examTarget, topics[], prototypes[]), admin content only, plain client
+  Firestore CRUD, no Cloud Functions (Phase 1). A template can now be
+  assigned to a student — `assignCurriculumTemplate` callable copies the
+  template's topics/prototypes into a new singleton
+  `students/{id}/curriculumProgress/main` doc (each item gets `covered:
+  false`), records `curriculumSourceTemplateId` on the student, full
+  overwrite (never merge) if replacing an existing assignment; UI lives in
+  `student-profile-section.jsx`'s edit form (Phase 2). Completing a lesson
+  can now mark specific topics/prototypes covered — `markTopicsCovered`
+  callable + a "Пройденный материал" picker in `HomeworkLessonDialog`'s
+  completing mode, read-only "Пройдено: ..." text once the lesson is
+  completed (Phase 3). The student list is now a row list, not a card
+  grid — each row shows a progress bar (topics covered / total, or
+  "Программа не назначена"), expands in place to show the schedule block,
+  profile form, and a two-column read/manually-toggleable Темы/Прототипы
+  checklist; `student-card.jsx` is gone, replaced by `student-row.jsx`
+  (Phase 4). Students themselves now see a "Прогресс подготовки" block on
+  their own dashboard (percent + progress bars for topics and, if
+  present, prototypes) that expands to a full Темы/Прототипы breakdown
+  (pass/remaining, a "К повторению" flag on items covered during a
+  poorly-rated lesson, a "на этой неделе" recent-activity nudge) — two
+  unplanned addenda added after the 4 phases, since none of them had
+  touched `StudentDashboard.jsx`. `markTopicsCovered` also now records
+  `needsReview` per item based on the completing lesson's own rating.
+  **The full teacher+student feature is now complete.** Two follow-up UI
+  fixes: `HomeworkLessonDialog` no longer overflows the viewport
+  uncontrollably (fixed header/scrollable middle/sticky footer, single
+  merged primary action button); the curriculum progress lists on both
+  dashboards now truncate to 3 items with a "Показать все (N)"/"Свернуть"
+  toggle via a new reusable `TruncatedList` component instead of
+  rendering unboundedly. See [[activeContext]] for the caveats (stale
+  collapsed-row percentages on the teacher side, manual Console rules
+  still pending, nothing manually verified yet).
+- Single entry point `/app` for the Telegram menu button and public QR
+  codes: routes to the student's own dashboard (skipping the PIN, but
+  only after verifying the Telegram identity against Firestore, never
+  trusting the URL param alone), a self-service signup screen, or a
+  no-auth public landing page depending on context. Self-service signup
+  (`/start signup` on Telegram, the exact text "регистрация" on VK) reuses
+  the existing bot registration state machine end-to-end and notifies the
+  teacher once complete. Deployed and live at that URL, but the
+  Telegram-side Menu Button still needs to be configured manually in
+  BotFather before it's actually reachable from inside the bot — see
+  [[activeContext]].
 
 ## Known issues / open items
 
@@ -115,6 +162,14 @@
 - **Nothing described above is committed to git** — production runs off
   uncommitted working-tree state; see [[activeContext]] for why this is
   now flagged as the top risk.
+- Curriculum templates feature (session 7) is fully implemented (all 4
+  phases) but **not manually verified end-to-end** at all yet — create/
+  edit/delete a template, assign/replace it on a student, mark topics
+  covered during lesson completion, and the new row-list progress display
+  all need a real click-through. Console Firestore rules for
+  `curriculumTemplates`/`students/{id}/curriculumProgress` also still need
+  manual setup (no local rules file exists in this repo, by deliberate
+  decision — see [[systemPatterns]]).
 - `functions/scripts/migrateSchedule.js` — still unconfirmed whether the
   backfill has ever actually been run against production Firestore.
 - Student homework file upload from the web (new this session) is the

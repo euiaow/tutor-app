@@ -2,9 +2,13 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
+  query,
   runTransaction,
   updateDoc,
+  where,
 } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { db, functions } from "./firebase"
@@ -33,6 +37,7 @@ export function mapStudentDoc(id, data) {
     telegramChatId: data.telegramChatId ?? null,
     vkPeerId: data.vkPeerId ?? null,
     contactUrl: data.contactUrl ?? null,
+    curriculumSourceTemplateId: data.curriculumSourceTemplateId ?? null,
   }
 }
 
@@ -110,6 +115,25 @@ export async function updateStudentProfile(studentId, { subject, examTarget, hou
 // the student doc itself — see functions/core/students.js.
 export async function deleteStudent(studentId) {
   await deleteStudentCallable({ studentId })
+}
+
+// Used by /app's Telegram entry-point detection — students have no auth,
+// so a plain client-side query is the same trust model already used
+// everywhere else for student data (see CLAUDE.md architecture note).
+export async function findStudentIdByTelegramUserId(telegramUserId) {
+  const ref = collection(db, STUDENTS_COLLECTION)
+  const studentQuery = query(ref, where("telegramChatId", "==", String(telegramUserId)), limit(1))
+  const snapshot = await getDocs(studentQuery)
+  return snapshot.empty ? null : snapshot.docs[0].id
+}
+
+// Used to verify a skipPin=true URL param actually matches the Telegram
+// identity making the request, before trusting it to bypass the PIN
+// screen — never trust the query param alone.
+export async function getStudentTelegramChatId(studentId) {
+  const ref = doc(db, STUDENTS_COLLECTION, studentId)
+  const snapshot = await getDoc(ref)
+  return snapshot.exists() ? (snapshot.data().telegramChatId ?? null) : null
 }
 
 export async function verifyStudentAccessCode(studentId, code) {

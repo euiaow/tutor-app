@@ -64,17 +64,17 @@ function LessonCard({ lesson }) {
   const rating = RATING_BADGES[lesson.rating]
 
   return (
-    <li className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+    <li className="glass-soft flex flex-col gap-3 rounded-4xl p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-          <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CalendarDays className="size-3.5" aria-hidden="true" />
           {formatDate(lesson.date)}
         </div>
         {attendance ? <Badge {...attendance} /> : null}
       </div>
 
-      <p className="text-base font-bold text-card-foreground text-balance">
-        {lesson.topic || "Без темы"}
+      <p className="font-display text-base text-foreground text-balance">
+        {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
       </p>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -164,7 +164,7 @@ export function LessonHistory({ studentId, lessons, loading, error }) {
 
   return (
     <section aria-labelledby="lesson-history-title" className="flex flex-col gap-3">
-      <h2 id="lesson-history-title" className="text-lg font-extrabold text-foreground">
+      <h2 id="lesson-history-title" className="font-display px-1 text-lg text-foreground">
         История уроков
       </h2>
 

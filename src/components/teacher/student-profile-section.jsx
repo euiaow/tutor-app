@@ -2,7 +2,89 @@ import { useState } from "react"
 import { Pencil, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { updateStudentProfile } from "@/firebase/students"
+import { assignCurriculumTemplate, getCurriculumTemplates } from "@/firebase/curriculum"
 import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatSubjects, formatExamTarget } from "@/lib/student-profile"
+
+function CurriculumAssignmentBlock({ student, templates }) {
+  const [replacing, setReplacing] = useState(false)
+  const [selectedTemplateId, setSelectedTemplateId] = useState("")
+  const [assigning, setAssigning] = useState(false)
+  const [error, setError] = useState("")
+
+  const matchingTemplates = student.examTarget
+    ? templates.filter((template) => template.examTarget === student.examTarget)
+    : templates
+
+  const currentTemplateName = templates.find(
+    (template) => template.id === student.curriculumSourceTemplateId,
+  )?.name
+
+  async function handleAssign() {
+    if (!selectedTemplateId || assigning) return
+
+    setAssigning(true)
+    setError("")
+    try {
+      await assignCurriculumTemplate(student.id, selectedTemplateId)
+      setReplacing(false)
+      setSelectedTemplateId("")
+    } catch (err) {
+      console.error("Failed to assign curriculum template:", err)
+      setError(err?.message || "Не удалось назначить программу")
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  function handleReplaceClick() {
+    if (
+      !confirm(
+        "Весь текущий прогресс по темам и прототипам будет сброшен и заменён новой программой. Продолжить?",
+      )
+    ) {
+      return
+    }
+    setReplacing(true)
+  }
+
+  const showPicker = !student.curriculumSourceTemplateId || replacing
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs text-muted-foreground">Учебный план</span>
+
+      {!showPicker ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm text-foreground">Назначена программа: {currentTemplateName ?? "—"}</span>
+          <Button type="button" variant="outline" size="sm" onClick={handleReplaceClick}>
+            Заменить
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedTemplateId}
+            onChange={(e) => setSelectedTemplateId(e.target.value)}
+            disabled={assigning}
+            className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+          >
+            <option value="">Выберите план</option>
+            {matchingTemplates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+          <Button type="button" size="sm" onClick={handleAssign} disabled={!selectedTemplateId || assigning}>
+            {assigning ? "Назначаем..." : "Назначить программу"}
+          </Button>
+        </div>
+      )}
+
+      {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
+    </div>
+  )
+}
 
 export function StudentProfileSection({ student }) {
   const [editing, setEditing] = useState(false)
@@ -11,6 +93,7 @@ export function StudentProfileSection({ student }) {
   const [examTarget, setExamTarget] = useState(student.examTarget)
   const [hourlyRate, setHourlyRate] = useState(student.hourlyRate)
   const [autoRemindLowBalance, setAutoRemindLowBalance] = useState(student.autoRemindLowBalance)
+  const [curriculumTemplates, setCurriculumTemplates] = useState([])
 
   function handleEnterEdit() {
     setSubject(student.subject)
@@ -18,6 +101,10 @@ export function StudentProfileSection({ student }) {
     setHourlyRate(student.hourlyRate)
     setAutoRemindLowBalance(student.autoRemindLowBalance)
     setEditing(true)
+
+    getCurriculumTemplates()
+      .then(setCurriculumTemplates)
+      .catch((err) => console.error("Failed to load curriculum templates:", err))
   }
 
   function toggleSubject(value) {
@@ -120,6 +207,8 @@ export function StudentProfileSection({ student }) {
           className="size-4"
         />
       </label>
+
+      <CurriculumAssignmentBlock student={student} templates={curriculumTemplates} />
 
       <div className="flex gap-2 pt-1">
         <Button

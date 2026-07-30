@@ -50,10 +50,20 @@
   functions with "Quota exceeded for total allowable CPU per project per
   region"** (Cloud Run health-check failure, us-central1) when deploying
   many functions at once — this is a project-level Cloud Run CPU quota,
-  not a code problem. Fix is just to retry the specific failed function(s)
-  by name (`firebase deploy --only functions:name1,functions:name2`);
-  it's usually transient but has taken 3+ retries with ~60s gaps in
-  practice. Don't try to "fix" this by changing function code/config.
+  not a code problem. Don't try to "fix" this by changing function
+  code/config. **Updated guidance (session 7, curriculum-progress
+  session)**: retrying the *same failed batch together* did not help at
+  all — two consecutive re-attempts of the identical 6-7 failed functions
+  as one command failed the same way both times, zero progress. What
+  actually worked: deploying the failed functions **one at a time**
+  (`firebase deploy --only functions:<single-name>`, one command per
+  function) with a ~45s pause between each — every single one succeeded
+  on its first solo attempt, no further failures. This strongly suggests
+  the flake is triggered by *concurrent* deploys competing for the
+  region's CPU quota at the exact health-check moment, not a genuinely
+  exhausted quota — so the fix is sequential, single-function retries,
+  not "just retry the batch again" or "wait longer before retrying the
+  batch."
 
 ## Dependencies worth knowing about
 

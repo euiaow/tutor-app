@@ -5,6 +5,7 @@ const logger = require("firebase-functions/logger")
 const { db } = require("../core/firestore")
 const {
   completeRegistration,
+  createSelfServiceToken,
   getRegistrationTokenStatus,
 } = require("../core/registration")
 const {
@@ -38,6 +39,14 @@ function isFourDigitPin(text) {
 function isRescheduleRequestText(text) {
   const normalized = text.trim().toLowerCase()
   return normalized.includes("перенести урок") || normalized.includes("хочу перенести")
+}
+
+// VK has no "/start {arg}" deep-link mechanic like Telegram — this is the
+// self-service entry point instead, triggered by the exact word (not a
+// substring match, unlike isRescheduleRequestText, since "регистрация"
+// could otherwise false-positive inside an unrelated sentence).
+function isSignupRequestText(text) {
+  return text.trim().toLowerCase() === "регистрация"
 }
 
 function parseVkPayload(rawPayload) {
@@ -476,6 +485,15 @@ async function handleMessageNew(object) {
         await handleRescheduleRequest(peerId, studentId)
         return
       }
+    }
+
+    if (isSignupRequestText(text)) {
+      const token = await createSelfServiceToken()
+      await sessionRef.set({ token, step: "awaiting_name" })
+
+      logger.info("VK self-service signup started", { peerId, token })
+      await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
+      return
     }
 
     await handleNoSessionMessage(peerId, text, ref)

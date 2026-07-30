@@ -1,15 +1,421 @@
 # Active Context
 
-_Last updated: 2026-07-29 (session 6)_
+_Last updated: 2026-07-30 (session 7, all 4 phases + 4 addenda done)_
 
 ## Current work focus
 
 **Everything described below is deployed to production** (`firebase deploy
 --only functions:<name>[,...]` per-function, plus `firebase deploy --only
 hosting` once after building) but **nothing is committed to git**.
-Production now runs off working-tree state from *six* uncommitted sessions
+Production now runs off working-tree state from *seven* uncommitted sessions
 stacked on `824ec3c`. Still the single biggest risk, growing each session —
 see the recurring note below.
+
+### Session 7 (complete) — учебные планы (curriculum templates) feature, 4 phases
+
+A new multi-phase feature, specified by the user up front as four separate
+phases, each with its own deploy + manual verification checklist + a
+`/workflow:update-memory` call at the end of that phase. **All 4 phases
+are done as of this update** — the feature (templates, assignment, marking
+covered during lesson completion, and progress display) is fully
+implemented and deployed. See the loose-ends section below for what's
+still unverified.
+
+**Project-wide decision covering all 4 phases**: the repo has **no
+`firestore.rules` file** (confirmed again this session — `firebase.json`
+only declares `firestore.indexes.json`, no rules path at all) — this was
+already known from session 2's Storage-rules caveat, now reconfirmed for
+Firestore specifically. The spec for this feature assumed rules could be
+"added by analogy" and deployed via `firestore:rules`; the user
+explicitly overrode this: **no firestore.rules file will be created, no
+deploy command in any of the 4 phases should include `firestore:rules`**,
+and the user will configure Console rules for `curriculumTemplates` (Phase
+1) and `students/{id}/curriculumProgress` (Phase 2) manually themselves,
+outside this checkout. **If a future session is tempted to "finally" add a
+firestore.rules file while continuing this feature, don't — that decision
+was deliberate and explicit, not a stopgap.**
+
+**Phase 1 — curriculum template CRUD (admin content, no student linkage
+yet), DONE:**
+
+- New collection `curriculumTemplates/{templateId}`: `name`, `examTarget`
+  (`"ege"|"oge"|"school"`), `topics: Array<{id, title}>`,
+  `prototypes: Array<{id, title}>`, `createdAt`/`updatedAt`.
+- New `src/firebase/curriculum.js` — plain client Firestore CRUD
+  (`addDoc`/`updateDoc`/`deleteDoc`/`getDocs`), **no Cloud Functions
+  involved at all** — same "admin content, teacher-only, direct write"
+  shape as `updateStudentSchedule` (see [[systemPatterns]]'s existing note
+  on when something needs a callable vs. a plain write: only when
+  server-side notification/validation is needed, and this has neither).
+- New `src/components/teacher/curriculum-section.jsx` — "Учебные планы"
+  section (same page-section shape as "Финансы": `<h2>` + content),
+  wired into `TeacherDashboard.jsx` right after `FinanceSection`, before
+  `PendingRegistrations`. Compact row list (name, `examTarget` tag reusing
+  `student-tags.jsx`'s `TAG_STYLES` map directly — `ege`/`oge`/`school`
+  already existed there since those are also exam-target values on
+  students), topic/prototype counts, edit/delete buttons, "+ Создать
+  план" button opening a `CurriculumEditorDialog` (name input + type
+  select + two `RowList` sections for topics/prototypes — same
+  row-with-delete-button + "+ Добавить" pattern already used for
+  `scheduleSlots` in `student-card.jsx`). Save filters out empty-title
+  rows before writing.
+- **Deliberately not realtime**: list state is a local `getDocs` fetch,
+  re-run after every create/update/delete, not an `onSnapshot`
+  subscription — this is single-teacher admin content edited by the one
+  person who'll ever see the list, so the realtime-by-default convention
+  used elsewhere in this project (session 2's decision, ledger/lesson
+  history) wasn't judged worth the extra listener here.
+- Deployed via `firebase deploy --only hosting` only (no functions
+  touched this phase). Build passes. **Not yet manually verified
+  end-to-end** (create/edit/delete a template with real topics/
+  prototypes) — same caveat as every other feature in this project.
+
+**Phase 2 — assign a template to a student, copying it into personal
+progress, DONE:**
+
+- `students/{id}` gained `curriculumSourceTemplateId: string | null`
+  (reference only — which template the current progress was copied
+  from). New singleton subcollection doc
+  `students/{id}/curriculumProgress/main` (not a set of per-topic docs) —
+  `topics`/`prototypes` arrays copied from the template with `covered:
+  false, coveredAt: null` added per item, plus `assignedAt`.
+- New `functions/core/curriculum.js` — `assignCurriculumTemplate(studentId,
+  templateId)`: reads the template, **fully overwrites**
+  `curriculumProgress/main` (deliberate replace, never a merge — matches
+  the spec's explicit "осознанная замена, не слияние"), writes
+  `curriculumSourceTemplateId` onto the student doc. No Firestore
+  transaction needed (unlike `finance.js`'s balance functions) since
+  there's no counter arithmetic to race against, just a full
+  read-then-overwrite. Exported as callable `assignCurriculumTemplate` in
+  `index.js`, teacher-auth-gated, no secrets declared (doesn't touch
+  bots/notifications, so the missing-secrets class of bug from session 5
+  doesn't apply here).
+- `src/components/teacher/student-profile-section.jsx` gained a
+  `CurriculumAssignmentBlock` (defined in the same file, not a new one) in
+  the profile edit form: templates are fetched fresh via one-time
+  `getCurriculumTemplates()` inside `handleEnterEdit` (same place the
+  existing subject/examTarget/etc. local state gets seeded), filtered to
+  the student's `examTarget` when set. Shows "Назначена программа:
+  {name}" once assigned, with a "Заменить" button gated behind a
+  `confirm()` warning about progress being reset before it reopens the
+  picker.
+- Deployed via `firebase deploy --only functions:assignCurriculumTemplate,hosting`
+  — confirmed "Successful create operation", no CPU-quota retry needed
+  this time. **Not yet manually verified end-to-end** (assign a template,
+  check `curriculumProgress/main` in Firestore has the right copy with
+  `covered: false`, confirm the UI shows the assigned name, replace and
+  confirm the reset).
+
+**Phase 3 — mark topics/prototypes covered during lesson completion,
+DONE:**
+
+- New `markTopicsCovered(studentId, lessonId, {topicIds, prototypeIds})`
+  in `functions/core/curriculum.js` — a Firestore transaction over
+  `curriculumProgress/main` that flips `covered: true` +
+  `coveredAt: Timestamp.now()` on the matching topics/prototypes, and
+  mirrors the full `{id, title}` objects onto the lesson doc itself as
+  `coveredTopics`/`coveredPrototypes` (for lesson-history display, no
+  re-lookup needed later). **Reused `Timestamp.now()` instead of
+  `FieldValue.serverTimestamp()`** for `coveredAt` — this project already
+  established (via `recordHomeworkSubmission`'s
+  `homework.submission.files` arrayUnion entry, `core/lessons.js`) that a
+  server-timestamp sentinel doesn't resolve correctly when nested inside
+  an array element, only at the top level of a document; the same
+  constraint applies here since `covered`/`coveredAt` live inside
+  `topics[]`/`prototypes[]` elements. **Silent no-op if
+  `curriculumProgress/main` doesn't exist** (no program assigned) — by
+  spec, so completing a lesson never fails just because a student has no
+  program. Exported as callable `markTopicsCovered`, teacher-auth-gated,
+  no secrets needed.
+- `HomeworkLessonDialog` gained a `CoveredMaterialPicker` (one local
+  component, used twice — topics and prototypes): a multi-row `<select>`
+  picker where each row's own options exclude both already-covered items
+  and items picked by a *different* row in the same session (a row's own
+  current pick stays visible in its own dropdown). Falls back to "Все
+  темы/прототипы программы пройдены" once nothing's left to pick.
+  `curriculumProgress` is fetched via one `getCurriculumProgress` call
+  whenever the dialog opens (cheap, mode-independent), reset to `null` on
+  close; the picker itself only renders inside `mode === "completing"`,
+  gated on that fetch being non-null (hidden entirely for students with
+  no program). `handleCompleteLesson` calls `completeLesson` first, then
+  `markTopicsCovered` only if at least one id was actually picked — never
+  called with two empty arrays. Completed lessons show a read-only
+  "Пройдено (темы): ..."/"Пройдено (прототипы): ..." line straight off
+  `lesson.coveredTopics`/`coveredPrototypes` — no re-fetch needed for that
+  view.
+- Deployed via `firebase deploy --only functions:markTopicsCovered,hosting`
+  — "Successful create operation", no CPU-quota retry needed. **Not yet
+  manually verified end-to-end** (assign a program, complete a lesson
+  picking topics/prototypes, confirm `covered`/`coveredAt` and the lesson
+  doc's `coveredTopics`/`coveredPrototypes`, reopen completed lesson to
+  see the read-only text, confirm picked items don't reappear on the next
+  lesson).
+
+**Phase 4 — student list rows with progress bar + expandable detail,
+DONE (closes out the feature):**
+
+- `student-card.jsx` **deleted outright** — its only consumer (the
+  student grid in `TeacherDashboard.jsx`) is gone. Its schedule-editing
+  logic and `DeleteStudentDialog` were moved (copied, not re-imported) into
+  a new `src/components/teacher/student-row.jsx`, now scoped as
+  sub-components of one row instead of a standalone card.
+  `TeacherDashboard.jsx`'s "Зарегистрированные ученики" grid
+  (`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3`) is now a `<ul>` of
+  `<StudentRow>` inside one bordered card, rows separated by `border-b`
+  (matches the Финансы table's row convention).
+- Collapsed row: avatar link / name / tags / progress bar (or "Программа
+  не назначена" if unassigned) / three action buttons (Подготовить урок,
+  `ContactButton`, delete) / chevron. The whole row is a keyboard-
+  accessible clickable div toggling local `expanded` state; every
+  actionable element inside stops propagation so clicking a button
+  doesn't also toggle the row. Expanded state renders inline (**plain
+  conditional render, not an animated height transition** — no
+  `Collapsible` component exists anywhere in this repo, confirmed by
+  search before implementing) with a left-border + tinted background
+  reading as nested content: the moved schedule block, the unchanged
+  `StudentProfileSection` (already had Phase 2's assignment block), and a
+  new two-column (Темы/Прототипы) `CurriculumProgressDetail` checklist.
+- **Key reconciliation of a real tension in the spec**: it said "don't
+  subscribe to everyone's progress at once, only the expanded row" but
+  the verification checklist requires every *collapsed* row to already
+  show a correct percentage. Resolved as two separate mechanisms: (1) one
+  **one-time** `collectionGroup` scan across every student's
+  `curriculumProgress` at once — new `getAllCurriculumProgressByStudent()`
+  in `src/firebase/curriculum.js`, called once in `TeacherDashboard.jsx`
+  whenever `students.length` changes, populating a
+  `{studentId: {topics, prototypes}}` map passed down as each row's
+  `progressSummary` — a single bounded read, not a listener, satisfies
+  "don't hold N listeners open" while still covering every row; (2) a
+  **live** `onSnapshot` via `subscribeToCurriculumProgress(studentId,
+  ...)`, opened only while that row is expanded (torn down on collapse)
+  — the actual per-student *subscription* the spec meant. **Known gap**:
+  the batch summary isn't re-fetched when a template is newly assigned
+  while the list is already loaded — that student's collapsed-row percent
+  stays stale until the next full reload/student-count change; only the
+  currently-expanded row's live view reflects an assignment made in the
+  same session immediately.
+- New `setCurriculumItemCovered(studentId, kind, itemId, covered)` in
+  `src/firebase/curriculum.js` — the spec's own "manual correction"
+  option: Firestore doesn't support indexing into an array by element id
+  via a dot-path in `updateDoc`, so this reads the whole topics/prototypes
+  array via `getDoc`, maps in the toggle (`covered` +
+  `coveredAt: Timestamp.now()`, same array-nested-timestamp constraint as
+  Phase 3), writes the whole array back. UI labels this explicitly
+  ("Ручная корректировка — обычно отмечается через завершение урока") so
+  it doesn't read as the normal lesson-completion flow.
+- Deployed via `firebase deploy --only hosting` (no backend changes this
+  phase). **Not yet manually verified** (bars render with correct %,
+  expand/collapse, nested blocks all functional, buttons don't trigger
+  row toggle, manual checkbox toggle actually updates Firestore) — same
+  caveat as everything else, now compounded across all 4 phases.
+
+**Addendum — StudentDashboard.jsx progress display (unplanned 5th piece,
+DONE):** none of the 4 phases above ever touched `StudentDashboard.jsx` —
+a genuine gap, not a bug, since no phase's prompt asked for it. User
+caught this and asked for a read-only "Прогресс подготовки" block on the
+student side. New `CurriculumProgressCard`, defined inline inside
+`src/pages/StudentDashboard.jsx` (matches this file's existing convention
+of defining page-specific sub-components like `NextLessonPlate`/
+`StudentNotifications` inline rather than extracting separate files) —
+subscribes via the same `subscribeToCurriculumProgress(studentId, ...)`
+Phase 4's expanded teacher row already uses, renders nothing at all if no
+`curriculumProgress` doc exists (no "0%" flash for unprogrammed
+students). Shows topics percent as a large number + "Тем пройдено: N из
+M" + a thin primary-colored progress bar (same visual language as Phase
+4's teacher-side bars, not a new pattern); an identical prototypes block
+only renders when `prototypes.length > 0`. Placed directly after
+`NextLessonPlate`, before `StudentNotifications` — no Bolt-migration
+placeholder existed for this in the layout (checked, none did), so this
+was the most natural "right after the next lesson" slot. Deployed via
+`firebase deploy --only hosting` only, no backend changes (pure display
+of data Phase 3 already writes). **Not yet manually verified** against a
+real student with covered topics (should match the teacher's expanded-row
+view by construction, same data source — not human-confirmed).
+
+This closes the loop on the feature end-to-end: teacher-facing (templates,
+assignment, marking covered, progress display) and student-facing
+(read-only progress display) surfaces both exist now.
+
+**Addendum 2 — needsReview flag + richer student progress display,
+DONE:** `markTopicsCovered` (`functions/core/curriculum.js`) gained a
+`rating` param (the same rating already collected in
+`HomeworkLessonDialog`'s completing-mode form, just threaded through
+`index.js` and the client wrapper) — every topic/prototype marked covered
+in that call now also gets `needsReview: rating === "needs_work"`, tying
+"needs review" to the actual lesson rating rather than separate teacher
+input. `StudentDashboard.jsx`'s `CurriculumProgressCard` gained a
+collapse/expand toggle (plain conditional render, same pattern as the
+teacher's expandable student rows — no new visual pattern introduced).
+Collapsed view adds: a "К повторению: ..." amber line (only when any
+covered item has `needsReview`, capped at 3 names + "и ещё N"), and a
+"На этой неделе пройдено N тем" line computed client-side from `coveredAt`
+within the last 7 days — **explicitly omitted entirely, never "0 тем",**
+when nothing was covered that week (an explicit anti-demotivation
+instruction). Expanded view replaces this with full Темы/Прототипы
+sections, each split into a dated "Пройдено (N)" list (items with
+`needsReview` show a "↻ повторить" marker) and a plain "Осталось пройти
+(M)" title list; the prototypes section is omitted entirely when the
+program has none.
+
+**Deploy flake finding worth remembering** (also in [[techContext]]):
+deploying multiple failed functions together as one retry batch made
+zero progress across two attempts — switching to one
+`firebase deploy --only functions:<name>` per function, ~45s apart,
+succeeded on every single one immediately. The flake is concurrency-
+triggered, not a truly exhausted quota — future sessions should retry
+failed functions one at a time, not as a batch. This session's deploy
+also incidentally redeployed 6 functions with no logic changes of their
+own this session (`updateHomeworkAssignment`, `createExtraLesson`,
+`completeLesson`, `cancelReschedule`, `confirmCancellation`,
+`startGoogleOAuth`) purely because they were bundled into the original
+`--only functions` (unscoped) command alongside `markTopicsCovered`.
+
+**Not yet manually verified** (complete a lesson rated "старайся лучше" +
+mark a topic → `needsReview: true` and it appears in "К повторению";
+"отлично" rating → no `needsReview`; expand/collapse; "на этой неделе"
+phrase disappears with no recent coverage).
+
+**Addendum 3 — two UI fixes, DONE:**
+
+1. **`HomeworkLessonDialog` overflow fix.** The dialog's `DialogContent`
+   was restructured into a fixed header / scrollable middle / sticky
+   footer (`flex flex-col`, outer `max-h-[90vh] sm:max-h-[85vh]
+   overflow-hidden`, padding moved from the shared `DialogContent`
+   default onto each of the three inner sections instead, via
+   `className="...p-0..."` overriding the shared component's `p-6 sm:p-8`
+   through `cn()`/tailwind-merge — only for this one dialog's usage, the
+   shared `ui/dialog.jsx` component itself is untouched). The header
+   (title/date) never scrolls; the middle (topic, assignment, response,
+   Итоги-урока card, curriculum picker, materials) is
+   `flex-1 min-h-0 overflow-y-auto`; the footer is `sticky bottom-0
+   border-t bg-card` and holds a single merged primary action button
+   (label/handler/disabled branch on `mode`) — replacing what used to be
+   two separate buttons ("Урок прошёл" / "Сохранить и завершить урок") in
+   different spots. Footer is hidden when `isCompleted` (nothing to act
+   on) or while preparing/erroring. The secondary "Сохранить" button for
+   editing topic/assignment text stays in the scrollable middle — it's a
+   contextual save tied to the Задание block, not the dialog's primary
+   CTA, and wasn't meant to be sticky.
+2. **New reusable `src/components/truncated-list.jsx`** —
+   `<TruncatedList items limit=3 renderItem emptyLabel />`: shows the
+   first `limit` items, then a "Показать все (N)"/"Свернуть" text link
+   (style borrowed from `materials-library.jsx`'s existing "Показать
+   все") that expands **in place**, not via a Dialog like that component
+   does — appropriate here since every usage already lives inside an
+   already-expanded block. Wired into `StudentDashboard.jsx`'s
+   `CurriculumItemGroups` (all 4 lists: covered/remaining topics,
+   covered/remaining prototypes) and `student-row.jsx`'s
+   `CurriculumChecklistColumn` (2 lists: topics, prototypes — **not** 4,
+   see note below).
+   - **Structural note worth remembering**: the teacher's `StudentRow`
+     curriculum checklist and the student's own progress card are *not*
+     structured the same way, despite looking similar. The student view
+     has a real covered/remaining split (`CurriculumItemGroups`,
+     4 lists). The teacher's `StudentRow` checklist
+     (`CurriculumChecklistColumn`) is one unified list per topics/
+     prototypes showing every item with a covered/uncovered checkbox
+     icon — never split into two lists. This task's phrasing assumed 4
+     parallel lists existed in both places; only `TruncatedList` was
+     applied to whatever actually exists in each place, no split
+     structure was invented in `StudentRow` (out of scope — "не трогай
+     остальную логику").
+
+Deployed via `firebase deploy --only hosting`, no backend changes, build
+passes. **Not yet manually verified** (dialog scroll/sticky-footer
+behavior at mobile vs. desktop widths; expand/collapse of the truncated
+lists in both locations).
+
+**Addendum 4 — единая точка входа `/app` (Telegram menu button + public QR
+landing + self-service signup), DONE:**
+
+New `src/pages/AppEntry.jsx` at route `/app` resolves three scenarios at
+load time, in this order: (1) inside a Telegram Mini App
+(`window.Telegram.WebApp.initDataUnsafe.user.id` present) with a linked
+student found via new `findStudentIdByTelegramUserId` — redirects to
+`/student/{id}?skipPin=true`; (2) inside Telegram with no linked student —
+shows `SelfServiceSignup`; (3) no Telegram context at all (plain browser,
+QR code) — shows new `src/pages/PublicLanding.jsx` (static pitch + two
+signup buttons via `openExternalLink` to the Telegram `?start=signup` deep
+link and the VK community, reusing `TELEGRAM_BOT_USERNAME`/`VK_GROUP`
+already exported from `src/lib/registration-links.js`).
+
+**skipPin, the security-sensitive part**: `StudentDashboard.jsx`'s
+`StudentGate` reads `?skipPin=true` but never trusts it alone — it only
+bypasses `LoginScreen` after independently confirming (via new
+`getStudentTelegramChatId`) that `window.Telegram.WebApp`'s own
+`initDataUnsafe.user.id` (read fresh client-side, never taken from the
+URL) genuinely equals *this* student's stored `telegramChatId`. Any
+mismatch, or no Telegram context at all (e.g. someone hand-typing
+`?skipPin=true` in a plain browser), silently falls through to the normal
+PIN screen — the param is simply ignored, not flagged as a failed
+attempt.
+
+**Self-service signup, backend**: `functions/core/registration.js` gained
+`createSelfServiceToken()` (token doc with `studentName: null,
+isSelfService: true`, no upfront name unlike the teacher-initiated flow).
+`completeRegistration()` now notifies the teacher
+(`createNotification({target: "teacher", ...})`, lazily-required
+`core/notifier` — same circular-require pattern already used by
+`core/lessons.js`/`core/finance.js`) whenever the completed token was
+self-service. `adapters/telegram.js`'s `handleStart` special-cases the
+literal `/start signup` deep link — mints a token via
+`createSelfServiceToken()` then reuses the *exact same*
+`awaiting_name`/`awaiting_pin` session machine as normal registration, no
+duplicated logic (had to rename the local var from `token` to `rawArg`
+throughout `handleStart` to keep "the raw /start argument, possibly the
+literal string `signup`" unambiguous from "an actual token"). VK has no
+Mini App / deep-link equivalent, so `adapters/vk.js` instead recognizes
+the exact-match text `"регистрация"` (new `isSignupRequestText`,
+deliberately exact-match not substring, unlike
+`isRescheduleRequestText`) as its self-service trigger in
+`handleMessageNew`'s no-session branch — same
+`createSelfServiceToken()` + session-start underneath. **Note**: VK users
+never see `SelfServiceSignup` at all — that screen only renders from
+`/app`'s Telegram branch; VK's self-service entry is a pure backend text
+trigger with no UI counterpart in this app.
+
+**Deploy hit the CPU-quota flake again, badly** — the full
+`firebase deploy --only functions,hosting` failed 13 functions at once
+(none of which had their own logic changed this session; they were just
+incidentally bundled in because they share modules like
+`core/registration.js`/`adapters/telegram.js`/`adapters/vk.js` that did
+change). All 13 were redeployed successfully one at a time
+(`firebase deploy --only functions:<name>`, ~45s apart) — 100% success
+rate solo, reconfirming [[techContext]]'s existing guidance that this
+flake is concurrency-triggered, not a real quota shortfall. Hosting then
+deployed cleanly on its own right after.
+
+**Known minor cosmetic gap, left as-is (out of scope for this task)**:
+`PendingRegistrations.jsx` shows a blank name for self-service tokens in
+the teacher's pending list (the token doc's `studentName` stays `null`
+forever — the chat-entered name only ever lands on the student doc at
+completion, same pre-existing quirk teacher-initiated tokens already have
+too, not something self-service made worse).
+
+**Manual step still needed — NOT something Claude can do** (no Telegram
+BotFather API tool exists in this environment, and the task's own "сделай
+сам" instruction was addressed to the human owner): configure the bot's
+Menu Button in BotFather → `/mybots` → bot → Bot Settings → Menu Button →
+Configure Menu Button → URL `https://princessschool-e678c.web.app/app`,
+label "Личный кабинет". Until this is done, the code is fully deployed and
+live at that URL, but there is no Telegram-side entry point to it yet.
+
+**Not yet manually verified**: any of the 4 verification steps from the
+task (plain-browser landing page, end-to-end Telegram signup + teacher
+notification, existing student's menu button skipping PIN, a
+hand-typed `?skipPin=true` on someone else's student URL still requiring
+the PIN in a plain browser).
+
+**Feature-wide reminder for the next session**: this is now an *eighth*
+consecutive session of uncommitted work on top of `824ec3c` — git history
+is unchanged from before session 7, and this session alone added a new
+top-level collection (`curriculumTemplates`), a new subcollection
+(`students/{id}/curriculumProgress`), 3 new Cloud Functions, and several
+new/rewritten frontend files (`student-card.jsx` is now gone). The
+project-wide no-firestore.rules-file decision (see its own note above)
+still stands — Console rules for `curriculumTemplates` and
+`students/{id}/curriculumProgress` still need manual configuration by the
+user, not yet confirmed done.
 
 ### Session 6 — scroll-bug re-diagnosis (unresolved), Telegram Mini App, video call button
 
@@ -475,7 +881,17 @@ repeated here.
 
 ## Loose ends / things to check before continuing
 
-- **Nothing across all six sessions is committed to git.** Still the
+- **Учебные планы feature (session 7) — all 4 phases done**, see their
+  own sections above for full detail. Remaining follow-ups:
+  - Manual Console Firestore rules for `curriculumTemplates` and
+    `students/{id}/curriculumProgress` — not yet done as far as this
+    session knows (project-wide decision: no local rules file for this
+    feature, see above).
+  - Collapsed-row progress percentages don't refresh live when a program
+    is newly assigned elsewhere in the same session — only a full
+    reload/student-count change re-runs the batch summary fetch.
+  - None of the 4 phases has been manually verified end-to-end yet.
+- **Nothing across all seven sessions is committed to git.** Still the
   single biggest risk, and it keeps compounding.
 - **Telegram bot menu-button config is a manual step, not done**: the
   code (Mini App `openLink`/`ready`/`expand`, `PIN_SAVED`'s hint text) is
@@ -544,7 +960,22 @@ repeated here.
   useState(2)` still has no setter (harmless, pre-existing).
 - No test suite exists in this repo — verification is manual.
 
-## Recent commit history (git — does not yet reflect any of the six sessions' work)
+## New files this session (session 7, all 4 phases)
+
+- `src/firebase/curriculum.js`
+- `src/components/teacher/curriculum-section.jsx`
+- `functions/core/curriculum.js` (Phase 2, extended Phase 3)
+- `src/components/teacher/student-row.jsx` (Phase 4, replaces student-card.jsx)
+- `src/pages/AppEntry.jsx`, `src/pages/PublicLanding.jsx`,
+  `src/components/self-service-signup.jsx` (Addendum 4, `/app` entry point)
+- `src/components/truncated-list.jsx` (Addendum 3)
+
+## Files removed this session (session 7, Phase 4)
+
+- `src/components/teacher/student-card.jsx` — fully replaced by
+  `student-row.jsx`; nothing else referenced it.
+
+## Recent commit history (git — does not yet reflect any of the seven sessions' work)
 
 - `dfc7cc6` — уведомления, фикс вк, фикс отмены, слоты в расписании.
 - `824ec3c` — reschedule + cancellation flows, VK bot.

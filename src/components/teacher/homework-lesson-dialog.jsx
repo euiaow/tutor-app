@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { AlertCircle, Loader2, Paperclip, ExternalLink, Trash2 } from "lucide-react"
+import { AlertCircle, Loader2, Paperclip, ExternalLink, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,6 +18,7 @@ import {
   updateHomeworkAssignment,
   updateLessonTopic,
 } from "@/firebase/lessons"
+import { getCurriculumProgress, markTopicsCovered } from "@/firebase/curriculum"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
 
@@ -62,6 +63,80 @@ function ToggleGroup({ options, value, onChange, disabled }) {
   )
 }
 
+// One "row" per selected item — each row is a <select> over items not yet
+// covered and not already picked by a different row in this same form
+// (picked-elsewhere items stay excluded from other rows' options, but a
+// row's own current value stays in its own list so it doesn't disappear).
+function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, allCoveredLabel }) {
+  const available = items.filter((item) => !item.covered)
+
+  if (available.length === 0) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-semibold text-foreground">{label}</span>
+        <p className="text-sm text-muted-foreground">{allCoveredLabel}</p>
+      </div>
+    )
+  }
+
+  function updateRow(index, value) {
+    onChange(selections.map((v, i) => (i === index ? value : v)))
+  }
+
+  function removeRow(index) {
+    onChange(selections.filter((_, i) => i !== index))
+  }
+
+  function addRow() {
+    onChange([...selections, ""])
+  }
+
+  function optionsForRow(index) {
+    const usedElsewhere = new Set(selections.filter((_, i) => i !== index).filter(Boolean))
+    return available.filter((item) => item.id === selections[index] || !usedElsewhere.has(item.id))
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm font-semibold text-foreground">{label}</span>
+
+      {selections.map((value, index) => (
+        <div key={index} className="flex items-center gap-2">
+          <select
+            value={value}
+            onChange={(e) => updateRow(index, e.target.value)}
+            className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none"
+          >
+            <option value="">Выберите...</option>
+            {optionsForRow(index).map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => removeRow(index)}
+            aria-label="Удалить строку"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50"
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={addRow}
+        className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted"
+      >
+        <Plus className="size-4" aria-hidden="true" />
+        {addLabel}
+      </button>
+    </div>
+  )
+}
+
 export function HomeworkLessonDialog({
   studentId,
   studentName,
@@ -100,6 +175,10 @@ export function HomeworkLessonDialog({
   const extraFileInputRef = useRef(null)
   const [removingMaterialUrl, setRemovingMaterialUrl] = useState(null)
 
+  const [curriculumProgress, setCurriculumProgress] = useState(null)
+  const [topicSelections, setTopicSelections] = useState([])
+  const [prototypeSelections, setPrototypeSelections] = useState([])
+
   // Reset so a later re-open starts fresh instead of keeping whatever was
   // left over from the previous time this dialog was open. Done directly in
   // the close handler (a user-triggered event, not an effect reacting to
@@ -114,6 +193,9 @@ export function HomeworkLessonDialog({
       setTopic("")
       setCompleteError("")
       setExtraUploadError("")
+      setCurriculumProgress(null)
+      setTopicSelections([])
+      setPrototypeSelections([])
     }
     onOpenChange(nextOpen)
   }
@@ -187,6 +269,16 @@ export function HomeworkLessonDialog({
       if (unsubscribe) unsubscribe()
     }
   }, [open, studentId, fixedLessonId])
+
+  // Loaded once per open, not tied to `mode` — cheap getDoc, only actually
+  // rendered once the teacher clicks into completing mode.
+  useEffect(() => {
+    if (!open) return
+
+    getCurriculumProgress(studentId)
+      .then(setCurriculumProgress)
+      .catch((error) => console.error("Failed to load curriculum progress:", error))
+  }, [open, studentId])
 
   useEffect(() => {
     if (lesson && !initializedAssignmentRef.current) {
@@ -287,6 +379,13 @@ export function HomeworkLessonDialog({
 
     try {
       await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
+
+      const topicIds = topicSelections.filter(Boolean)
+      const prototypeIds = prototypeSelections.filter(Boolean)
+      if (topicIds.length > 0 || prototypeIds.length > 0) {
+        await markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating })
+      }
+
       handleDialogOpenChange(false)
     } catch (error) {
       console.error("Failed to complete lesson:", error)
@@ -300,21 +399,27 @@ export function HomeworkLessonDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogTitle>{studentName}</DialogTitle>
-        <DialogDescription>
-          {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
-        </DialogDescription>
+      <DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden p-0 sm:max-h-[85vh]">
+        <div className="shrink-0 p-6 pb-0 sm:p-8 sm:pb-0">
+          <DialogTitle>{studentName}</DialogTitle>
+          <DialogDescription>
+            {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
+          </DialogDescription>
+        </div>
 
         {preparing ? (
-          <Spinner label="Готовим урок..." />
+          <div className="p-6 pt-6 sm:p-8 sm:pt-6">
+            <Spinner label="Готовим урок..." />
+          </div>
         ) : prepareError ? (
-          <div className="mt-6 flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
-            <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
-            <span>{prepareError}</span>
+          <div className="p-6 pt-6 sm:p-8 sm:pt-6">
+            <div className="flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+              <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+              <span>{prepareError}</span>
+            </div>
           </div>
         ) : (
-          <div className="mt-6 flex flex-col gap-6">
+          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6 pt-6 sm:p-8 sm:pt-6">
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold text-foreground">Тема урока</span>
 
@@ -471,12 +576,18 @@ export function HomeworkLessonDialog({
                 <p className="text-sm text-foreground">
                   Оценка: {optionLabel(RATING_OPTIONS, lesson.rating)}
                 </p>
+                {lesson.coveredTopics.length > 0 ? (
+                  <p className="text-sm text-foreground">
+                    Пройдено (темы): {lesson.coveredTopics.map((topic) => topic.title).join(", ")}
+                  </p>
+                ) : null}
+                {lesson.coveredPrototypes.length > 0 ? (
+                  <p className="text-sm text-foreground">
+                    Пройдено (прототипы): {lesson.coveredPrototypes.map((p) => p.title).join(", ")}
+                  </p>
+                ) : null}
               </div>
-            ) : mode === "upcoming" ? (
-              <Button type="button" onClick={() => setMode("completing")}>
-                Урок прошёл
-              </Button>
-            ) : (
+            ) : mode === "upcoming" ? null : (
               <div className="flex flex-col gap-5 rounded-2xl border border-border bg-muted/40 p-4">
                 <span className="text-sm font-bold text-foreground">Итоги урока</span>
 
@@ -511,20 +622,27 @@ export function HomeworkLessonDialog({
                   />
                 </div>
 
-                {completeError ? (
-                  <span className="text-sm font-semibold text-destructive">{completeError}</span>
+                {curriculumProgress ? (
+                  <div className="flex flex-col gap-4">
+                    <span className="text-sm font-bold text-foreground">Пройденный материал</span>
+                    <CoveredMaterialPicker
+                      label="Темы"
+                      items={curriculumProgress.topics}
+                      selections={topicSelections}
+                      onChange={setTopicSelections}
+                      addLabel="Добавить ещё"
+                      allCoveredLabel="Все темы программы пройдены"
+                    />
+                    <CoveredMaterialPicker
+                      label="Прототипы"
+                      items={curriculumProgress.prototypes}
+                      selections={prototypeSelections}
+                      onChange={setPrototypeSelections}
+                      addLabel="Добавить ещё"
+                      allCoveredLabel="Все прототипы программы пройдены"
+                    />
+                  </div>
                 ) : null}
-
-                <Button type="button" onClick={handleCompleteLesson} disabled={completing}>
-                  {completing ? (
-                    <>
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                      Сохраняем...
-                    </>
-                  ) : (
-                    "Сохранить и завершить урок"
-                  )}
-                </Button>
               </div>
             )}
 
@@ -586,6 +704,33 @@ export function HomeworkLessonDialog({
             ) : null}
           </div>
         )}
+
+        {!preparing && !prepareError && !isCompleted ? (
+          <div className="sticky bottom-0 shrink-0 border-t border-border bg-card p-4 sm:px-8">
+            {mode === "completing" && completeError ? (
+              <p className="mb-2 text-sm font-semibold text-destructive">{completeError}</p>
+            ) : null}
+            <Button
+              type="button"
+              className="w-full"
+              onClick={mode === "upcoming" ? () => setMode("completing") : handleCompleteLesson}
+              disabled={mode === "completing" && completing}
+            >
+              {mode === "completing" ? (
+                completing ? (
+                  <>
+                    <Loader2 className="animate-spin" aria-hidden="true" />
+                    Сохраняем...
+                  </>
+                ) : (
+                  "Сохранить и завершить урок"
+                )
+              ) : (
+                "Урок прошёл"
+              )}
+            </Button>
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

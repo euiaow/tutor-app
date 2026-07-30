@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Bell, CalendarPlus, CheckCircle2, GraduationCap, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { StudentCard } from "@/components/teacher/student-card"
+import { StudentRow } from "@/components/teacher/student-row"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
@@ -9,6 +9,8 @@ import { ExtraLessonDialog } from "@/components/teacher/extra-lesson-dialog"
 import { ContactButton } from "@/components/teacher/contact-button"
 import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
+import { CurriculumSection } from "@/components/teacher/curriculum-section"
+import { getAllCurriculumProgressByStudent } from "@/firebase/curriculum"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { openExternalLink } from "@/lib/telegramWebApp"
@@ -644,6 +646,7 @@ export function TeacherDashboard() {
   const [completedVisibleCount] = useState(2)
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
+  const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
 
   useEffect(() => {
     const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
@@ -688,6 +691,20 @@ export function TeacherDashboard() {
 
     return unsubscribe
   }, [])
+
+  // One-time batch read (not a subscription) — powers every collapsed row's
+  // progress bar at once, cheaper than a live listener per student; the
+  // currently-expanded row layers its own live subscription on top (see
+  // StudentRow). Re-fetched whenever the student count changes; doesn't
+  // otherwise react to a progress assignment made while this list is
+  // already loaded (that student's bar catches up next reload).
+  useEffect(() => {
+    if (students.length === 0) return
+
+    getAllCurriculumProgressByStudent()
+      .then(setCurriculumProgressByStudent)
+      .catch((error) => console.error("Failed to load curriculum progress summaries:", error))
+  }, [students.length])
 
   useEffect(() => {
     const unsubscribe = subscribeToUpcomingLessons(
@@ -885,19 +902,22 @@ export function TeacherDashboard() {
                 <p className="text-muted-foreground">Пока нет учеников в базе данных.</p>
               </div>
             ) : (
-              <div
-                aria-label="Список учеников"
-                className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
-              >
+              <ul aria-label="Список учеников" className="rounded-2xl border border-border bg-card px-2 shadow-sm">
                 {students.map((student) => (
-                  <StudentCard key={student.id} student={student} />
+                  <StudentRow
+                    key={student.id}
+                    student={student}
+                    progressSummary={curriculumProgressByStudent[student.id] ?? null}
+                  />
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         </section>
 
         {students.length > 0 ? <FinanceSection students={students} /> : null}
+
+        <CurriculumSection />
 
         <PendingRegistrations />
       </main>

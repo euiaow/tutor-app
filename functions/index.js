@@ -42,6 +42,7 @@ const {
 const { dailyReminderMidday, dailyReminderPreLesson } = require("./reminders")
 const { deleteStudent } = require("./core/students")
 const { addPayment } = require("./core/finance")
+const { assignCurriculumTemplate, markTopicsCovered } = require("./core/curriculum")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -238,6 +239,44 @@ exports.addPayment = onCall(
     }
   },
 )
+
+exports.assignCurriculumTemplate = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, templateId } = request.data ?? {}
+
+  try {
+    return await assignCurriculumTemplate(studentId, templateId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to assign curriculum template", error)
+    throw new HttpsError("internal", "Не удалось назначить программу")
+  }
+})
+
+exports.markTopicsCovered = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, lessonId, topicIds, prototypeIds, rating } = request.data ?? {}
+
+  try {
+    return await markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to mark topics covered", error)
+    throw new HttpsError("internal", "Не удалось отметить пройденный материал")
+  }
+})
 
 exports.ensureUpcomingLesson = onCall(async (request) => {
   if (!request.auth) {

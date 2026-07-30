@@ -262,10 +262,124 @@ src/
   inside a layout effect that runs after the popup is confirmed
   positioned.
 
+- **This repo has no local Firestore/Storage rules file, by deliberate,
+  reconfirmed decision — not a gap to fill.** `firebase.json` only
+  declares `firestore.indexes.json`; there is no `firestore.rules` or
+  `storage.rules` anywhere in git. First noted session 2 (Storage), and
+  reconfirmed session 7 when a new feature's spec assumed rules could be
+  "added by analogy" for a new collection — the user explicitly said not
+  to create a rules file and not to include `firestore:rules` in any
+  deploy command; Console-side rules are configured manually by the user
+  after each deploy instead. Treat this as standing policy for any future
+  new collection, not something to "finally fix" without being asked.
+- **Admin/config content the teacher alone edits (schedule slots,
+  curriculum templates) is always a direct client Firestore write, never
+  a callable** — a callable is reserved for cases needing server-side
+  validation, a notification side-effect, or student-facing trust
+  boundaries (see `createNotification`/`addLessonMaterial` above). New
+  `curriculumTemplates/` collection (session 7) follows
+  `updateStudentSchedule`'s shape exactly: `addDoc`/`updateDoc`/
+  `deleteDoc` straight from `src/firebase/curriculum.js`, no Cloud
+  Function involved at all.
+- **One-time batch read for a summary shown on every list row + a live
+  subscription only for whichever row is expanded, when both "show it
+  everywhere" and "don't hold N listeners open" are required at once.**
+  `TeacherDashboard.jsx`'s student list needs every row's curriculum
+  progress percentage visible while collapsed, but the feature's own spec
+  explicitly said not to subscribe to every student's progress
+  simultaneously. Resolved with two separate reads:
+  `getAllCurriculumProgressByStudent()` (one-time `collectionGroup` scan
+  across every student's `curriculumProgress` at once, re-run only when
+  `students.length` changes) feeds every row's percentage as a passed-down
+  prop, while `subscribeToCurriculumProgress` (`onSnapshot`) is only ever
+  opened for the currently-`expanded` row and torn down on collapse. If a
+  future feature has this same "show a summary everywhere, but only go
+  deep on the one thing open" shape, this is the established split — a
+  single bounded read for breadth, one listener for depth, not a listener
+  per item.
+- **A URL query param is never itself a trust signal — only what it lets
+  you cross-check against Firestore is.** `StudentDashboard.jsx`'s
+  `?skipPin=true` (session 7 addendum) only bypasses the PIN screen after
+  independently confirming, via a fresh Firestore read, that
+  `window.Telegram.WebApp`'s own `initDataUnsafe.user.id` matches the
+  target student's stored `telegramChatId` — the param alone (which
+  anyone can type into a URL) does nothing on its own. Any future
+  "trusted redirect" feature should follow the same shape: the URL can
+  suggest a shortcut, but the actual authority has to come from
+  server/Firestore state, checked at the moment of use.
+- **Bot self-service entry points reuse the existing registration state
+  machine rather than building a parallel one.** `createSelfServiceToken`
+  (`functions/core/registration.js`) just mints a token with
+  `isSelfService: true` and no upfront name; both
+  `adapters/telegram.js`'s `/start signup` and `adapters/vk.js`'s exact-
+  text `"регистрация"` trigger feed straight into the same
+  `awaiting_name`/`awaiting_pin` session steps every other registration
+  already uses. If a third entry point (another bot, another deep link)
+  is ever added, follow this shape — mint a token, start the session,
+  never fork the state machine itself.
+- **A tall `Dialog` that needs its primary action always reachable uses a
+  fixed-header / scrollable-middle / sticky-footer split, not one big
+  scrolling blob.** `HomeworkLessonDialog` (session 7 addendum) is the
+  first place this was needed: its `DialogContent` usage overrides the
+  shared component's default `p-6 sm:p-8` to `p-0` (via `className` —
+  `cn()`/tailwind-merge lets a specific usage's className win over
+  `ui/dialog.jsx`'s own defaults without editing that shared file), adds
+  `flex flex-col max-h-[90vh] sm:max-h-[85vh] overflow-hidden` on the
+  outer content, then applies padding per-section instead: a `shrink-0`
+  header (title/description, never scrolls), a
+  `flex-1 min-h-0 overflow-y-auto` middle (everything else), and a
+  `sticky bottom-0 border-t bg-card` footer holding the one primary
+  action button. If another dialog in this project ever grows tall
+  enough to need this, follow the same shape rather than inventing
+  something new.
+- **`TruncatedList` (`src/components/truncated-list.jsx`)** is the
+  reusable "show first N, reveal the rest in place" component — takes
+  `items`/`limit`/`renderItem`/`emptyLabel`, renders a "Показать все
+  (N)"/"Свернуть" text-link toggle once `items.length > limit`. Expands
+  **in place** (plain local state), unlike `materials-library.jsx`'s
+  older "Показать все" pattern which opens a `Dialog` — use the in-place
+  version whenever the list already lives inside content that's already
+  expanded/scrollable (nesting a modal inside already-expanded content is
+  the wrong shape), and the Dialog version only for a genuinely
+  top-level, always-collapsed-by-default list. Currently used for the
+  curriculum progress lists in both `StudentDashboard.jsx` and
+  `student-row.jsx` — note those two callers have genuinely different
+  underlying list shapes (see `productContext.md`/`activeContext.md` for
+  the covered/remaining-split vs. unified-checklist distinction) even
+  though both use the same `TruncatedList`.
+- **`students/{id}/curriculumProgress/main` is a singleton doc, not a
+  per-topic collection** — `assignCurriculumTemplate`
+  (`functions/core/curriculum.js`) always fully overwrites it via `.set()`
+  rather than merging, by explicit spec ("осознанная замена, не
+  слияние"). Unlike `finance.js`'s balance functions, this needs no
+  Firestore transaction — there's no counter arithmetic being raced, just
+  a plain read-the-template-then-overwrite-the-progress-doc sequence.
+  `markTopicsCovered` (same file) *does* use a transaction, since it
+  mutates specific elements inside `topics[]`/`prototypes[]` based on
+  current state and also writes the lesson doc in the same operation.
+- **`FieldValue.serverTimestamp()` cannot be used for a timestamp field
+  nested inside an array element — use `Timestamp.now()` there instead.**
+  First established via `recordHomeworkSubmission`'s
+  `homework.submission.files` `arrayUnion` entry (`core/lessons.js`), and
+  reused for `curriculumProgress/main`'s per-item `coveredAt`
+  (`markTopicsCovered`) for the same structural reason: both are
+  timestamp fields living inside a map that's itself an array element,
+  where the server-timestamp sentinel doesn't resolve. Only works as a
+  top-level document field (e.g. `assignedAt`, `updatedAt`,
+  `createdAt` elsewhere in this codebase all sit directly on the
+  document, not inside an array).
+
 ## Component relationships
 
-- `TeacherDashboard.jsx` composes `components/teacher/student-card.jsx`
-  and `components/teacher/homework-lesson-dialog.jsx` per student.
+- `TeacherDashboard.jsx` composes `components/teacher/student-row.jsx`
+  (session 7, Phase 4 — replaced the old `student-card.jsx` grid; that
+  file is deleted) and `components/teacher/homework-lesson-dialog.jsx`
+  per student. `StudentRow` itself composes the schedule-editing block
+  and delete-confirmation dialog (moved in from the old card, not
+  re-imported — they're private to this one file now) plus the existing
+  `StudentProfileSection` and a new `CurriculumProgressDetail` checklist,
+  all rendered inline when a row is expanded rather than in a separate
+  modal.
 - `StudentDashboard.jsx` is the unauthenticated student-facing view,
   reading/writing through `src/firebase/*` directly for calls that don't
   need teacher auth, and through callables (with `initiator`/`confirmedBy:

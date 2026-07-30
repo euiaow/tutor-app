@@ -58,6 +58,30 @@ async function generateUniqueId(collectionName, candidateFn, maxAttempts = 5) {
   )
 }
 
+// No name upfront — unlike createRegistrationToken (teacher pre-fills the
+// name before sharing a link), a self-service signup starts from the
+// student's own "/start signup"/"регистрация" trigger with nothing known
+// about them yet. The same awaiting_name/awaiting_pin session machine
+// fills the name in afterward, same as always; only isSelfService marks
+// this token so completeRegistration knows to notify the teacher.
+async function createSelfServiceToken() {
+  const token = await generateUniqueId(REGISTRATION_TOKENS_COLLECTION, () => randomToken())
+
+  await db
+    .collection(REGISTRATION_TOKENS_COLLECTION)
+    .doc(token)
+    .set({
+      studentName: null,
+      status: "pending",
+      isSelfService: true,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+  logger.info("Self-service registration token created", { token })
+
+  return token
+}
+
 async function createRegistrationToken(studentName) {
   if (!studentName || typeof studentName !== "string" || !studentName.trim()) {
     throw new HttpsError("invalid-argument", "Укажите имя ученика")
@@ -121,6 +145,8 @@ async function completeRegistration(token, fullName, accessCode, identity = null
     throw new HttpsError("failed-precondition", "Эта ссылка уже была использована")
   }
 
+  const isSelfService = tokenSnapshot.data().isSelfService === true
+
   const studentId = await generateUniqueId(
     STUDENTS_COLLECTION,
     () => `${slugify(fullName)}-${randomSuffix()}`,
@@ -161,6 +187,18 @@ async function completeRegistration(token, fullName, accessCode, identity = null
 
   logger.info("Registration completed", { token, studentId })
 
+  if (isSelfService) {
+    // Required lazily to avoid a circular require, same reasoning
+    // core/lessons.js and core/finance.js already use for this same module.
+    const { createNotification } = require("./notifier")
+    await createNotification({
+      target: "teacher",
+      studentId,
+      type: "self_service_registration",
+      text: `🎓 Новый ученик зарегистрировался самостоятельно: ${fullName.trim()}. Заполни его предмет, ставку и программу в панели.`,
+    })
+  }
+
   return studentId
 }
 
@@ -183,6 +221,7 @@ async function cancelRegistrationToken(token) {
 
 module.exports = {
   createRegistrationToken,
+  createSelfServiceToken,
   completeRegistration,
   getRegistrationTokenStatus,
   cancelRegistrationToken,

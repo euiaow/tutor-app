@@ -6,6 +6,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { StudentDashboard } from "./pages/StudentDashboard"
 import { TeacherDashboard } from "./pages/TeacherDashboard"
 import { TeacherLogin } from "./pages/TeacherLogin"
+import { AppEntry } from "./pages/AppEntry"
 
 function TeacherRoute() {
   const [user, setUser] = useState(undefined)
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/teacher" replace />} />
         <Route path="/teacher" element={<TeacherRoute />} />
         <Route path="/student/:studentId" element={<StudentDashboard />} />
+        <Route path="/app" element={<AppEntry />} />
       </Routes>
     </BrowserRouter>
   )

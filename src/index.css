@@ -5,7 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: 'Nunito', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Unbounded', ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -23,6 +24,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -37,41 +39,66 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --color-ink: var(--ink);
+  --color-ink-foreground: var(--ink-foreground);
+  --shadow-soft: var(--shadow-soft);
+  --shadow-glass: var(--shadow-glass);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 }
 
+/*
+ * Warm/amber design system, migrated from the "redesign v2" mockup
+ * (luminous-learn-dashboard-main). Card/border/muted/secondary are kept
+ * OPAQUE here, unlike the mockup's own translucent values — the mockup's
+ * "glass" look comes entirely from its own glass/glass-soft/glass-inset
+ * utility classes below (which set their own background/blur), not from
+ * these shared shadcn tokens. Every existing bg-card/border-border
+ * consumer across the whole app (including the teacher dashboard, not
+ * just the student page) reads these directly with no blur applied, so
+ * keeping them solid is what keeps that content readable.
+ */
 :root {
   color-scheme: light;
-  --background: oklch(0.985 0.005 265);
-  --foreground: oklch(0.22 0.03 265);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.03 265);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.03 265);
-  --primary: oklch(0.55 0.2 270);
-  --primary-foreground: oklch(0.99 0.01 270);
-  --secondary: oklch(0.96 0.02 265);
-  --secondary-foreground: oklch(0.35 0.08 270);
-  --muted: oklch(0.96 0.015 265);
-  --muted-foreground: oklch(0.55 0.03 265);
-  --accent: oklch(0.94 0.05 200);
-  --accent-foreground: oklch(0.35 0.1 220);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.015 265);
-  --input: oklch(0.92 0.015 265);
-  --ring: oklch(0.55 0.2 270);
-  --chart-1: oklch(0.55 0.2 270);
-  --chart-2: oklch(0.65 0.17 200);
-  --chart-3: oklch(0.7 0.16 150);
-  --chart-4: oklch(0.75 0.16 70);
-  --chart-5: oklch(0.68 0.18 30);
-  --radius: 1rem;
+  --background: oklch(0.69 0.007 70);
+  --foreground: oklch(0.26 0.02 60);
+  --card: oklch(0.99 0.005 70);
+  --card-foreground: oklch(0.26 0.02 60);
+  --popover: oklch(0.99 0.005 70);
+  --popover-foreground: oklch(0.26 0.02 60);
+  --primary: oklch(0.72 0.19 47);
+  --primary-foreground: oklch(0.99 0.01 80);
+  --secondary: oklch(0.94 0.02 65);
+  --secondary-foreground: oklch(0.32 0.02 60);
+  --muted: oklch(0.93 0.02 65);
+  --muted-foreground: oklch(0.52 0.02 60);
+  --accent: oklch(0.88 0.07 65);
+  --accent-foreground: oklch(0.28 0.03 55);
+  --destructive: oklch(0.62 0.19 22);
+  --destructive-foreground: oklch(0.99 0.01 80);
+  --border: oklch(0.88 0.02 60);
+  --input: oklch(0.88 0.02 60);
+  --ring: oklch(0.72 0.19 47);
+  --chart-1: oklch(0.72 0.19 47);
+  --chart-2: oklch(0.65 0.14 200);
+  --chart-3: oklch(0.7 0.16 145);
+  --chart-4: oklch(0.75 0.15 85);
+  --chart-5: oklch(0.65 0.18 30);
+  --radius: 1.75rem;
+  --ink: oklch(0.19 0.01 60);
+  --ink-foreground: oklch(0.97 0.01 80);
+  --gradient-warm: linear-gradient(135deg, oklch(0.78 0.17 55), oklch(0.68 0.2 38));
+  --shadow-soft: 0 24px 60px -24px oklch(0.5 0.1 50 / 0.35);
+  --shadow-glass: 0 32px 80px -32px oklch(0.45 0.09 50 / 0.45);
+  --glass-blur: saturate(160%) blur(28px);
+  /* Sidebar tokens: no Sidebar component exists in this app (confirmed by
+     search before this migration) — left untouched/inert rather than
+     guessing a warm equivalent for something nothing renders. */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -82,31 +109,49 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/*
+ * Dark theme intentionally disabled (kept here unused, not deleted, per
+ * explicit decision): the .dark class is never added by any JS in this
+ * app (confirmed by search), and prefers-color-scheme was overriding the
+ * light theme's carefully-picked warm palette with an unreadable
+ * light-background/white-text mismatch. Guaranteed light-only rendering
+ * matters more here than following the device's system theme. To
+ * re-enable: unwrap this comment and re-add a real mechanism for
+ * switching (a JS-toggled class, since the automatic media-query version
+ * was the actual bug).
+
 .dark {
   color-scheme: dark;
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --background: oklch(0.22 0.02 55);
+  --foreground: oklch(0.94 0.01 70);
+  --card: oklch(0.27 0.02 55);
+  --card-foreground: oklch(0.94 0.01 70);
+  --popover: oklch(0.27 0.02 55);
+  --popover-foreground: oklch(0.94 0.01 70);
+  --primary: oklch(0.72 0.19 47);
+  --primary-foreground: oklch(0.99 0.01 80);
+  --secondary: oklch(0.32 0.02 55);
+  --secondary-foreground: oklch(0.92 0.01 70);
+  --muted: oklch(0.3 0.02 55);
+  --muted-foreground: oklch(0.68 0.02 60);
+  --accent: oklch(0.36 0.05 60);
+  --accent-foreground: oklch(0.92 0.02 65);
+  --destructive: oklch(0.5 0.18 25);
+  --destructive-foreground: oklch(0.97 0.01 70);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.72 0.19 47);
+  --chart-1: oklch(0.72 0.19 47);
+  --chart-2: oklch(0.62 0.13 200);
+  --chart-3: oklch(0.62 0.15 145);
+  --chart-4: oklch(0.7 0.14 85);
+  --chart-5: oklch(0.58 0.17 30);
+  --ink: oklch(0.12 0.01 60);
+  --ink-foreground: oklch(0.97 0.01 80);
+  --gradient-warm: linear-gradient(135deg, oklch(0.68 0.18 50), oklch(0.58 0.19 35));
+  --shadow-soft: 0 24px 60px -24px oklch(0 0 0 / 0.45);
+  --shadow-glass: 0 32px 80px -32px oklch(0 0 0 / 0.55);
+  --glass-blur: saturate(160%) blur(28px);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -120,29 +165,36 @@
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --background: oklch(0.22 0.02 55);
+    --foreground: oklch(0.94 0.01 70);
+    --card: oklch(0.27 0.02 55);
+    --card-foreground: oklch(0.94 0.01 70);
+    --popover: oklch(0.27 0.02 55);
+    --popover-foreground: oklch(0.94 0.01 70);
+    --primary: oklch(0.72 0.19 47);
+    --primary-foreground: oklch(0.99 0.01 80);
+    --secondary: oklch(0.32 0.02 55);
+    --secondary-foreground: oklch(0.92 0.01 70);
+    --muted: oklch(0.3 0.02 55);
+    --muted-foreground: oklch(0.68 0.02 60);
+    --accent: oklch(0.36 0.05 60);
+    --accent-foreground: oklch(0.92 0.02 65);
+    --destructive: oklch(0.5 0.18 25);
+    --destructive-foreground: oklch(0.97 0.01 70);
+    --border: oklch(1 0 0 / 12%);
+    --input: oklch(1 0 0 / 16%);
+    --ring: oklch(0.72 0.19 47);
+    --chart-1: oklch(0.72 0.19 47);
+    --chart-2: oklch(0.62 0.13 200);
+    --chart-3: oklch(0.62 0.15 145);
+    --chart-4: oklch(0.7 0.14 85);
+    --chart-5: oklch(0.58 0.17 30);
+    --ink: oklch(0.12 0.01 60);
+    --ink-foreground: oklch(0.97 0.01 80);
+    --gradient-warm: linear-gradient(135deg, oklch(0.68 0.18 50), oklch(0.58 0.19 35));
+    --shadow-soft: 0 24px 60px -24px oklch(0 0 0 / 0.45);
+    --shadow-glass: 0 32px 80px -32px oklch(0 0 0 / 0.55);
+    --glass-blur: saturate(160%) blur(28px);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -154,11 +206,59 @@
   }
 }
 
+*/
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/*
+ * Glass utilities from the mockup — opt-in classes, not shared shadcn
+ * tokens, so they only affect markup that explicitly uses them (the new
+ * student-page sections mirroring the mockup's own classNames). Applying
+ * these to anything site-wide was not part of this migration.
+ *
+ * Background opacity intentionally lower than the mockup's own values
+ * (~12pt less white mix each) per explicit feedback that the cards read
+ * as too opaque — --card itself stays untouched (still opaque, still
+ * shared with the rest of the app) since only these page-scoped glass
+ * utilities were asked to get more transparent.
+ */
+@utility glass {
+  background: color-mix(in oklab, white 30%, transparent);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid color-mix(in oklab, white 55%, transparent);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility glass-soft {
+  background: color-mix(in oklab, white 43%, transparent);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid color-mix(in oklab, white 60%, transparent);
+  box-shadow: var(--shadow-soft);
+}
+
+@utility glass-inset {
+  background: color-mix(in oklab, white 28%, transparent);
+  border: 1px solid color-mix(in oklab, white 45%, transparent);
+}
+
+/*
+ * Hides the native scrollbar on an otherwise-normal overflow-y: auto
+ * container — scrolling itself (touch/wheel) keeps working, only the
+ * browser's own scrollbar chrome is removed. Used on the "Все уведомления"
+ * list, where a default OS scrollbar looked out of place against the
+ * glass-dialog styling.
+ */
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }

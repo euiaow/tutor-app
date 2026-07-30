@@ -63,6 +63,8 @@ function mapLessonDoc(id, studentId, data) {
     rescheduleProposedDate: data.rescheduleProposedDate?.toDate?.() ?? null,
     cancellationStatus: data.cancellationStatus ?? null,
     cancellationInitiator: data.cancellationInitiator ?? null,
+    coveredTopics: Array.isArray(data.coveredTopics) ? data.coveredTopics : [],
+    coveredPrototypes: Array.isArray(data.coveredPrototypes) ? data.coveredPrototypes : [],
   }
 }
 

@@ -4,6 +4,7 @@ const logger = require("firebase-functions/logger")
 const { db } = require("../core/firestore")
 const {
   completeRegistration,
+  createSelfServiceToken,
   getRegistrationTokenStatus,
 } = require("../core/registration")
 const {
@@ -94,20 +95,39 @@ async function answerCallbackQuery(callbackQueryId, text) {
 }
 
 async function handleStart(chatId, text) {
-  const token = parseStartToken(text)
+  const rawArg = parseStartToken(text)
 
-  if (!token) {
+  // "/start signup" is the entry point from /app's SelfServiceSignup screen
+  // (and from PublicLanding's Telegram button, ?start=signup) — a fresh
+  // token is minted right here rather than requiring the teacher to have
+  // pre-created one, then the exact same awaiting_name/awaiting_pin
+  // session machine below takes over, no separate code path to keep in
+  // sync.
+  if (rawArg === "signup") {
+    const token = await createSelfServiceToken()
+
+    await db
+      .collection(SESSIONS_COLLECTION)
+      .doc(String(chatId))
+      .set({ token, step: "awaiting_name" })
+
+    logger.info("Telegram self-service signup started", { chatId, token })
+    await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN())
+    return
+  }
+
+  if (!rawArg) {
     logger.info("Telegram /start received without a token", { chatId })
     await sendMessage(chatId, botMessages.WELCOME_NO_TOKEN())
     return
   }
 
-  logger.info("Telegram /start received with token", { chatId, token })
+  logger.info("Telegram /start received with token", { chatId, token: rawArg })
 
-  const tokenData = await getRegistrationTokenStatus(token)
+  const tokenData = await getRegistrationTokenStatus(rawArg)
 
   if (!tokenData || tokenData.status !== "pending") {
-    logger.warn("Telegram /start with invalid or used token", { chatId, token })
+    logger.warn("Telegram /start with invalid or used token", { chatId, token: rawArg })
     await sendMessage(chatId, botMessages.INVALID_TOKEN())
     return
   }
@@ -115,9 +135,9 @@ async function handleStart(chatId, text) {
   await db
     .collection(SESSIONS_COLLECTION)
     .doc(String(chatId))
-    .set({ token, step: "awaiting_name" })
+    .set({ token: rawArg, step: "awaiting_name" })
 
-  logger.info("Telegram session started", { chatId, token, step: "awaiting_name" })
+  logger.info("Telegram session started", { chatId, token: rawArg, step: "awaiting_name" })
   await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN())
 }
 
