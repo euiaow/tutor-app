@@ -1,28 +1,40 @@
 import { useEffect, useState } from "react"
-import { Plus } from "lucide-react"
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
+import { FileText } from "lucide-react"
 import { AddPaymentForm } from "@/components/teacher/add-payment-form"
 import { StudentTags } from "@/components/student-tags"
 import { subscribeToBalanceLedger } from "@/firebase/finance"
-import { pluralizeLessons, getBalanceColorClass } from "@/lib/student-profile"
+import { pluralizeLessons } from "@/lib/student-profile"
+import {
+  Avatar,
+  GhostBtn,
+  Panel,
+  Title,
+  TeacherDialog,
+  TeacherDialogContent,
+  TeacherDialogDescription,
+  TeacherDialogTitle,
+} from "@/components/teacher/theme-ui"
 
-function AddPaymentPopoverCell({ studentId }) {
-  const [open, setOpen] = useState(false)
+// Same danger/warn/ok split as getBalanceColorClass used to encode via
+// hardcoded Tailwind red/amber/emerald classes, expressed through the
+// teacher theme's own --balance-* tokens instead so it reads consistently
+// with the rest of the rose palette.
+function balanceColor(balance, lowBalanceThreshold) {
+  if (balance <= 0) return "var(--balance-danger)"
+  if (balance <= lowBalanceThreshold) return "var(--balance-warn)"
+  return "var(--balance-ok)"
+}
 
+function AddPaymentDialog({ studentId, open, onOpenChange }) {
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        onClick={(e) => e.stopPropagation()}
-        className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
-      >
-        <Plus className="size-3.5" aria-hidden="true" />
-        Внести
-      </PopoverTrigger>
-      <PopoverContent onClick={(e) => e.stopPropagation()}>
-        <AddPaymentForm studentId={studentId} onDone={() => setOpen(false)} />
-      </PopoverContent>
-    </Popover>
+    <TeacherDialog open={open} onOpenChange={onOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Внести оплату</TeacherDialogTitle>
+        <div className="mt-5">
+          <AddPaymentForm studentId={studentId} onDone={() => onOpenChange(false)} />
+        </div>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
@@ -41,9 +53,9 @@ function LedgerEntryRow({ entry }) {
   const isPayment = entry.type === "payment"
 
   return (
-    <li className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+    <li className="glass-tile flex items-center justify-between gap-3 rounded-[1rem] px-3 py-2 text-sm">
       <div className="min-w-0">
-        <p className={`font-semibold ${isPayment ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}`}>
+        <p className={`font-semibold ${isPayment ? "text-rose-deep" : "text-ink"}`}>
           {isPayment ? `+${entry.amount} оплата` : `${entry.amount} списание за урок`}
         </p>
         {entry.note ? <p className="truncate text-xs text-muted-foreground">{entry.note}</p> : null}
@@ -72,94 +84,102 @@ function StudentLedgerDialog({ student, open, onOpenChange }) {
   if (!student) return null
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogTitle>Баланс — {student.name}</DialogTitle>
-        <DialogDescription>История оплат и списаний за занятия.</DialogDescription>
+    <TeacherDialog open={open} onOpenChange={onOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Баланс — {student.name}</TeacherDialogTitle>
+        <TeacherDialogDescription>История оплат и списаний за занятия.</TeacherDialogDescription>
 
         <div className="mt-4 flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={() => setAddingPayment((v) => !v)}
-            className="self-start rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
-          >
+          <GhostBtn onClick={() => setAddingPayment((v) => !v)} className="self-start px-4 py-2">
             + Внести оплату
-          </button>
+          </GhostBtn>
 
           {addingPayment ? (
-            <AddPaymentForm studentId={student.id} onDone={() => setAddingPayment(false)} />
+            <div className="glass-tile rounded-[1.25rem] p-4">
+              <AddPaymentForm studentId={student.id} onDone={() => setAddingPayment(false)} />
+            </div>
           ) : null}
 
-          {entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Операций пока нет</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {entries.map((entry) => (
-                <LedgerEntryRow key={entry.id} entry={entry} />
-              ))}
-            </ul>
-          )}
+          <div className="max-h-[50vh] overflow-y-auto scrollbar-hidden pr-1">
+            {entries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Операций пока нет</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {entries.map((entry) => (
+                  <LedgerEntryRow key={entry.id} entry={entry} />
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
 export function FinanceSection({ students }) {
   const [selectedStudent, setSelectedStudent] = useState(null)
+  const [payingStudentId, setPayingStudentId] = useState(null)
 
   const sortedStudents = [...students].sort(
     (a, b) => (a.paidLessonsBalance ?? 0) - (b.paidLessonsBalance ?? 0),
   )
 
   return (
-    <section className="flex flex-col gap-4">
-      <h2 className="text-xl font-extrabold tracking-tight text-foreground">Финансы</h2>
+    <Panel>
+      <Title>Финансы</Title>
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <FileText className="size-3" aria-hidden="true" /> Ученики с предоплатой и задолженностями
+      </p>
 
       {sortedStudents.length === 0 ? (
-        <div className="rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
-          <p className="text-muted-foreground">Учеников пока нет</p>
-        </div>
+        <p className="mt-4 text-sm text-muted-foreground">Учеников пока нет</p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-sm">
-          <table className="w-full min-w-[560px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-border text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-3">Имя</th>
-                <th className="px-4 py-3">Теги</th>
-                <th className="px-4 py-3">Баланс</th>
-                <th className="px-4 py-3">Ставка/час</th>
-                <th className="px-4 py-3">Оплата</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedStudents.map((student) => {
-                const balance = student.paidLessonsBalance ?? 0
-                return (
-                  <tr
-                    key={student.id}
-                    onClick={() => setSelectedStudent(student)}
-                    className="cursor-pointer border-b border-border last:border-0 transition-colors hover:bg-muted"
-                  >
-                    <td className="px-4 py-3 font-semibold text-card-foreground">{student.name}</td>
-                    <td className="px-4 py-3">
+        <ul className="mt-3 divide-y divide-glass-border">
+          {sortedStudents.map((student) => {
+            const balance = student.paidLessonsBalance ?? 0
+            const initials = student.name
+              .split(" ")
+              .map((part) => part[0])
+              .slice(0, 2)
+              .join("")
+              .toUpperCase()
+
+            return (
+              <li key={student.id} className="flex flex-wrap items-center gap-3 py-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedStudent(student)}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <Avatar initials={initials} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-semibold text-ink">{student.name}</span>
                       <StudentTags student={student} />
-                    </td>
-                    <td className={`px-4 py-3 font-bold ${getBalanceColorClass(balance, student.lowBalanceThreshold ?? 1)}`}>
-                      {balance} {pluralizeLessons(balance)}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <AddPaymentPopoverCell studentId={student.id} />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </div>
+                </button>
+                <span
+                  className="shrink-0 text-right text-xs font-semibold"
+                  style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
+                >
+                  {balance} {pluralizeLessons(balance)}
+                </span>
+                <span className="shrink-0 text-right text-xs text-muted-foreground">
+                  {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPayingStudentId(student.id)}
+                  className="shrink-0 text-xs font-semibold text-rose-deep"
+                >
+                  Оплата
+                </button>
+              </li>
+            )
+          })}
+        </ul>
       )}
 
       <StudentLedgerDialog
@@ -167,6 +187,12 @@ export function FinanceSection({ students }) {
         open={Boolean(selectedStudent)}
         onOpenChange={(open) => !open && setSelectedStudent(null)}
       />
-    </section>
+
+      <AddPaymentDialog
+        studentId={payingStudentId}
+        open={Boolean(payingStudentId)}
+        onOpenChange={(open) => !open && setPayingStudentId(null)}
+      />
+    </Panel>
   )
 }

@@ -1,15 +1,102 @@
 # Active Context
 
-_Last updated: 2026-07-30 (session 7, all 4 phases + 4 addenda done)_
+_Last updated: 2026-07-30 (session 8, student-page glass redesign +
+localStorage bug investigation)_
 
 ## Current work focus
 
-**Everything described below is deployed to production** (`firebase deploy
---only functions:<name>[,...]` per-function, plus `firebase deploy --only
-hosting` once after building) but **nothing is committed to git**.
-Production now runs off working-tree state from *seven* uncommitted sessions
-stacked on `824ec3c`. Still the single biggest risk, growing each session —
-see the recurring note below.
+**Milestone: the user committed and pushed for the first time in this
+project's history.** Commit `3e365a3` ("эпп, редизайн ученика, учебный
+план, прогресс") landed on `main`, `git status` confirms the branch is up
+to date with `origin/main` (0 ahead/0 behind) — everything from session 7
+(the curriculum-templates feature, the `/app` entry point, the student-page
+"redesign v2" glass migration, and the first chunk of session 8's own
+glass-dialog work) is now actually saved in git, not just deployed. The
+"nothing is committed" risk that every prior session flagged is **resolved
+for everything up to that commit**. As of this update, only
+`src/pages/PublicLanding.jsx` is uncommitted (session 8's last edit, made
+after the user's commit — see below) — confirm in the next session whether
+that got committed too, and whether commits are continuing as a habit or
+this was a one-off.
+
+### Session 8 — student-page glass-dialog consistency + a real bug investigation
+
+Continuation of session 7's "redesign v2" glass migration on the student
+page (see that section below for the full migration). This session:
+
+1. **Extracted `src/components/glass-dialog.jsx`** (`GlassDialog`/
+   `GlassDialogContent`/`GlassDialogTitle`/`GlassDialogDescription`) — the
+   shared "grey-glass" modal look (`rounded-4xl border-white/50
+   bg-white/50 backdrop-blur-2xl shadow-[var(--shadow-glass)]`) that had
+   been hand-copied into `CancelLessonDialog`, `RescheduleDialog`, "Все
+   уведомления", and "Все материалы". All four now go through the shared
+   wrapper. `NotificationsList` (`src/components/notifications-list.jsx`,
+   shared with the teacher's own Sheet-based notification panel) gained
+   an opt-in `glass` boolean prop for row styling, defaulting `false` —
+   only the student-side dialog passes `glass`, so the teacher's panel
+   keeps its original solid-card look untouched.
+2. **Page background** (`StudentGate`'s `<main>`) got a
+   `bg-white/22 backdrop-blur-2xl` full-viewport overlay between the
+   existing `bg-glass.jpg` photo and the content — same translucency+blur
+   mechanism as the dialogs, but deliberately *lower* opacity than the
+   card surfaces (`glass`/`glass-soft`/`glass-inset` in `index.css`,
+   currently 30/43/28%) so cards still read as the foreground layer
+   rather than blending into an equally-opaque page. Matching the
+   dialog's 50% literally would have inverted that hierarchy — a
+   judgment call, not a literal token copy.
+3. **Hid the native scrollbar** on "Все уведомления"'s scroll container —
+   new `scrollbar-hidden` `@utility` in `index.css`
+   (`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`),
+   touch/wheel scrolling unaffected.
+4. **Investigated a real reported bug**: student PIN session appeared
+   "lost" (back button didn't restore the dashboard) after typing `/app`
+   manually in the address bar, then clicking "через Telegram" on
+   `PublicLanding`. **Two rounds** — the first diagnosis was wrong and
+   the user caught it: initially assumed Telegram Mini App's isolated
+   WebView storage (a real, documented phenomenon — see `AppEntry.jsx`'s
+   own comments), but the user clarified the repro was actually on
+   **desktop**, in a **plain browser**, never inside Telegram at all,
+   which invalidates that explanation outright. Lesson: don't commit to
+   a plausible root cause before pinning down the *exact* repro steps —
+   ask first. Round 2, code-only (no browser automation tool exists in
+   this environment, so nothing here was independently observed running):
+   grepped all of `src/` for every `localStorage` write and every
+   `navigate()`/`replace()` call. Both of the user's own specific
+   hypotheses came back concretely negative for this exact scenario — the
+   only two `localStorage` writers are correctly keyed `auth_${studentId}`
+   (never a shared key), and the only two `navigate()` calls in the whole
+   app don't execute on this path at all (`telegramUserId` is `null`
+   throughout a plain-browser visit, so `AppEntry`'s own redirect branch
+   is dead code here). Landed on the last remaining explanation —
+   `PublicLanding`'s buttons called `window.open(url, "_blank",
+   "noopener,noreferrer")` (via `src/lib/telegramWebApp.js`'s
+   `openExternalLink`) from a `Button onClick`, and scripted
+   `window.open()` for a URL with OS-level protocol/app handoff (`t.me`)
+   is known to behave unpredictably across browsers — but this was never
+   independently confirmed, only inferred as the last standing
+   possibility once the code-checkable hypotheses were ruled out.
+   **Fix**: replaced both buttons' `window.open()` handlers with a real
+   `<a>` via base-ui's `render` prop —
+   `<Button render={<a href={url} target="_blank" rel="noopener
+   noreferrer" />}>` — keeps the exact same visual styling while
+   rendering a genuine anchor. Confirmed this polymorphic `render` prop
+   is real by reading `node_modules/@base-ui/react`'s own type
+   declarations before using it (`BaseUIComponentProps` exposes
+   `render?: React.ReactElement | ComponentRenderFn<...>`) — **first use
+   of this pattern anywhere in the codebase**; it's the correct way to
+   make a shadcn `Button` render as something else when needed, instead
+   of hand-duplicating its class list on a raw element (which is what
+   every earlier "convert to a real button" pass in this project did
+   before this was known). Also added a reassurance line under
+   `PublicLanding`'s buttons regardless of root cause: "Если ты уже
+   заходил(а) в личный кабинет — просто закрой эту вкладку и вернись в
+   свой браузер, ссылка на кабинет останется рабочей."
+   **Not yet confirmed fixed** — the user was about to test when this
+   session may have ended abruptly. If they report back, this is the
+   first thing to check next session.
+
+All changes deployed via `firebase deploy --only hosting` (no functions
+touched this session), each build verified clean before deploying.
 
 ### Session 7 (complete) — учебные планы (curriculum templates) feature, 4 phases
 
@@ -406,16 +493,14 @@ notification, existing student's menu button skipping PIN, a
 hand-typed `?skipPin=true` on someone else's student URL still requiring
 the PIN in a plain browser).
 
-**Feature-wide reminder for the next session**: this is now an *eighth*
-consecutive session of uncommitted work on top of `824ec3c` — git history
-is unchanged from before session 7, and this session alone added a new
-top-level collection (`curriculumTemplates`), a new subcollection
-(`students/{id}/curriculumProgress`), 3 new Cloud Functions, and several
-new/rewritten frontend files (`student-card.jsx` is now gone). The
-project-wide no-firestore.rules-file decision (see its own note above)
-still stands — Console rules for `curriculumTemplates` and
-`students/{id}/curriculumProgress` still need manual configuration by the
-user, not yet confirmed done.
+**Feature-wide reminder, now resolved as of session 8**: this section
+originally flagged an eighth consecutive session of uncommitted work —
+**that streak ended in session 8**, when the user committed and pushed
+everything through this feature and the redesign work in one commit
+(`3e365a3`, see the top of this file). The project-wide no-firestore.rules-
+file decision (see its own note above) still stands — Console rules for
+`curriculumTemplates` and `students/{id}/curriculumProgress` still need
+manual configuration by the user, not yet confirmed done.
 
 ### Session 6 — scroll-bug re-diagnosis (unresolved), Telegram Mini App, video call button
 

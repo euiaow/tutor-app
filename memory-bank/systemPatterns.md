@@ -49,6 +49,22 @@ src/
 
 ## Key technical decisions
 
+- **To make a shadcn `Button` (or other `@base-ui/react` primitive) render
+  as a different element (e.g. a real `<a>` instead of a `<button>`), use
+  the `render` prop, not a hand-copied duplicate of `buttonVariants`'
+  class list on a raw element.** `@base-ui/react`'s components all support
+  `render?: React.ReactElement | ComponentRenderFn<...>` (confirmed by
+  reading `node_modules/@base-ui/react`'s own `.d.ts` files before first
+  using this — `BaseUIComponentProps` exposes it) — e.g. `<Button
+  render={<a href={url} target="_blank" rel="noopener noreferrer" />}>`
+  keeps the exact visual styling while genuinely rendering an `<a>`.
+  First used in `PublicLanding.jsx` (session 8) to fix unreliable
+  desktop back-navigation after a scripted `window.open()` call for an
+  external `t.me` link — a native anchor click is the browser's own
+  trusted mechanism for opening/handing off a link and doesn't carry
+  `window.open()`'s cross-browser popup/tab-reuse unpredictability. Reach
+  for `render` any time a "make this styled control open a real link"
+  need comes up again, instead of duplicating `buttonVariants`.
 - **Firestore trigger drives calendar/lesson sync, not the write path.**
   `students/{studentId}` writes fan out via `onDocumentWritten` to both
   `syncUpcomingLessonOnScheduleChange` and

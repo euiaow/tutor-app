@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
-import { Check, Copy, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/spinner"
+import { Check, Copy, Link2, Trash2 } from "lucide-react"
+import { GhostBtn, Panel, Title } from "@/components/teacher/theme-ui"
 import {
   cancelRegistrationToken,
   subscribeToPendingRegistrationTokens,
@@ -57,55 +56,44 @@ function PendingRegistrationItem({ item }) {
   }
 
   return (
-    <li className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <p className="truncate font-semibold text-card-foreground">{item.studentName}</p>
-        <p className="text-xs text-muted-foreground">Ссылка создана {formatDate(item.createdAt)}</p>
+    <li className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.5rem] px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-semibold text-ink">{item.studentName}</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">Ссылка создана {formatDate(item.createdAt)}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => handleCopy("vk", vkMessage)}>
+        <GhostBtn onClick={() => handleCopy("vk", vkMessage)} className="px-3.5 py-2">
           {copiedChannel === "vk" ? (
             <>
-              <Check aria-hidden="true" />
-              Скопировано
+              <Check className="size-3.5" aria-hidden="true" /> Скопировано
             </>
           ) : (
             <>
-              <Copy aria-hidden="true" />
-              Ссылка ВК
+              <Link2 className="size-3.5" aria-hidden="true" /> Ссылка ВК
             </>
           )}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => handleCopy("tg", telegramMessage)}
-        >
+        </GhostBtn>
+        <GhostBtn onClick={() => handleCopy("tg", telegramMessage)} className="px-3.5 py-2">
           {copiedChannel === "tg" ? (
             <>
-              <Check aria-hidden="true" />
-              Скопировано
+              <Check className="size-3.5" aria-hidden="true" /> Скопировано
             </>
           ) : (
             <>
-              <Copy aria-hidden="true" />
-              Ссылка ТГ
+              <Copy className="size-3.5" aria-hidden="true" /> Ссылка ТГ
             </>
           )}
-        </Button>
-        <Button
+        </GhostBtn>
+        <button
           type="button"
-          variant="ghost"
-          size="icon-sm"
           onClick={handleCancel}
           disabled={cancelling}
           aria-label={`Удалить приглашение для ${item.studentName}`}
-          className="shrink-0 text-muted-foreground hover:text-destructive"
+          className="text-muted-foreground/70 transition hover:text-destructive disabled:opacity-50"
         >
-          <Trash2 aria-hidden="true" />
-        </Button>
+          <Trash2 className="size-4" aria-hidden="true" />
+        </button>
       </div>
     </li>
   )
@@ -132,30 +120,35 @@ export function PendingRegistrations() {
     return unsubscribe
   }, [])
 
-  if (loading) {
-    return <Spinner label="Загрузка ожидающих регистрации..." />
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-center">
-        <p className="font-semibold text-destructive">{error}</p>
-      </div>
-    )
-  }
-
-  if (tokens.length === 0) {
+  if (loading || error || tokens.length === 0) {
+    if (loading) {
+      return (
+        <Panel>
+          <p className="text-sm text-muted-foreground">Загрузка ожидающих регистрации...</p>
+        </Panel>
+      )
+    }
+    if (error) {
+      return (
+        <Panel>
+          <p className="text-sm font-semibold text-destructive">{error}</p>
+        </Panel>
+      )
+    }
     return null
   }
 
   return (
-    <section aria-label="Ожидают регистрации" className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-foreground">Ожидают регистрации</h2>
-      <ul className="flex flex-col gap-3">
+    <Panel>
+      <Title>Ожидают регистрации</Title>
+      <ul className="mt-4 space-y-3">
         {tokens.map((item) => (
           <PendingRegistrationItem key={item.token} item={item} />
         ))}
       </ul>
-    </section>
+      <p className="mt-3 text-[11px] text-muted-foreground">
+        Ученик появится в списке автоматически после регистрации по ссылке.
+      </p>
+    </Panel>
   )
 }

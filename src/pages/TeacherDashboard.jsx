@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react"
-import { Bell, CalendarPlus, CheckCircle2, GraduationCap, LogOut } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import {
+  Bell,
+  CalendarClock,
+  CalendarPlus,
+  Check,
+  CircleSlash,
+  Clock,
+  FileText,
+  GraduationCap,
+  Info,
+  LogOut,
+  Play,
+  X,
+} from "lucide-react"
 import { StudentRow } from "@/components/teacher/student-row"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
@@ -15,7 +27,20 @@ import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { Spinner } from "@/components/ui/spinner"
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import {
+  Avatar,
+  GhostBtn,
+  Panel,
+  SolidBtn,
+  TeacherCancelBtn,
+  TeacherDialog,
+  TeacherDialogContent,
+  TeacherDialogDescription,
+  TeacherDialogTitle,
+  TeacherStatusBadge,
+  Title,
+  teacherInputCls,
+} from "@/components/teacher/theme-ui"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { NotificationsList } from "@/components/notifications-list"
 import { subscribeToStudents } from "@/firebase/students"
@@ -45,6 +70,7 @@ import {
 
 const MAX_CLUSTERED_LESSONS = 3
 const MAX_LESSON_GAP_DAYS = 6
+const MS_PER_DAY = 1000 * 60 * 60 * 24
 
 // If a student's lessons are weekly, showing 3 of them a week apart isn't
 // useful — only the first one is actually "coming up soon". Take lessons
@@ -64,7 +90,7 @@ function selectClusteredUpcomingLessons(lessons) {
     }
 
     const previous = selected[selected.length - 1]
-    const gapDays = (lesson.date - previous.date) / (1000 * 60 * 60 * 24)
+    const gapDays = (lesson.date - previous.date) / MS_PER_DAY
 
     if (gapDays > MAX_LESSON_GAP_DAYS) break
 
@@ -80,6 +106,18 @@ function selectClusteredUpcomingLessons(lessons) {
 function toDatetimeLocal(date) {
   const offset = date.getTimezoneOffset() * 60000
   return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function formatRescheduleDate(date) {
+  if (!date) return ""
+  return date.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 // The dialog is remounted (via a `key` on its usage below) every time it
@@ -123,37 +161,37 @@ function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogTitle>Предложить перенос</DialogTitle>
-        <DialogDescription>Выберите новую дату и время урока для ученика</DialogDescription>
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Предложить перенос</TeacherDialogTitle>
+        <TeacherDialogDescription>Выберите новую дату и время урока для ученика</TeacherDialogDescription>
 
-        <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
+        <form className="mt-5 flex flex-col gap-4" onSubmit={handleSubmit}>
           <div className="flex gap-2">
             <input
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={submitting}
-              className="h-11 flex-1 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+              className={teacherInputCls}
             />
             <input
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
               disabled={submitting}
-              className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+              className={`${teacherInputCls} max-w-36`}
             />
           </div>
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
 
-          <Button type="submit" size="lg" disabled={!date || !time || submitting} className="h-12">
+          <SolidBtn type="submit" className="w-full justify-center py-3 text-sm" disabled={!date || !time || submitting}>
             {submitting ? "Отправляем..." : "Отправить запрос ученику"}
-          </Button>
+          </SolidBtn>
         </form>
-      </DialogContent>
-    </Dialog>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
@@ -163,14 +201,11 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
 
   function handleOpenChange(nextOpen) {
     onOpenChange(nextOpen)
-    if (!nextOpen) {
-      setError("")
-    }
+    if (!nextOpen) setError("")
   }
 
   async function handleConfirm() {
     if (submitting) return
-
     setSubmitting(true)
     setError("")
     try {
@@ -185,49 +220,31 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogTitle>Отменить урок</DialogTitle>
-        <DialogDescription>
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Отменить урок</TeacherDialogTitle>
+        <TeacherDialogDescription>
           Вы уверены, что хотите предложить отменить урок{lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""}?
-        </DialogDescription>
+        </TeacherDialogDescription>
 
         {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
 
-        <div className="mt-6 flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="flex-1"
-            onClick={() => handleOpenChange(false)}
-            disabled={submitting}
-          >
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={submitting}>
             Назад
-          </Button>
-          <Button
+          </TeacherCancelBtn>
+          <button
             type="button"
-            className="flex-1 bg-red-600 text-white hover:bg-red-700"
             onClick={handleConfirm}
             disabled={submitting}
+            className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Отправляем..." : "Да, отменить"}
-          </Button>
+          </button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
-}
-
-function formatRescheduleDate(date) {
-  if (!date) return ""
-  return date.toLocaleString("ru-RU", {
-    timeZone: "Europe/Moscow",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
@@ -242,6 +259,15 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
   const hasAssignment =
     lesson.homework.assignment.text.trim() !== "" || lesson.homework.assignment.files.length > 0
   const hasSubmission = lesson.homework.submission.files.length > 0
+
+  // Шаг 2, правило 1: когда инициатива по переносу/отмене исходит от
+  // ученика (pending_teacher), обычные кнопки скрываются — остаются только
+  // Подтвердить/Отклонить/Подробнее. Во всех остальных состояниях
+  // (pending_student, confirmed, "доп.", без статуса) полный набор кнопок
+  // сохраняется как раньше.
+  const studentAsksReschedule = lesson.rescheduleStatus === "pending_teacher"
+  const studentAsksCancel = lesson.cancellationStatus === "pending_teacher"
+  const studentInitiated = studentAsksReschedule || studentAsksCancel
 
   async function handleConfirmReschedule() {
     if (rescheduleActionPending) return
@@ -292,153 +318,100 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
   }
 
   return (
-    <li
-      className={`flex flex-col gap-3 rounded-xl border p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
-        isCancelled ? "border-red-200 bg-red-50" : "border-border bg-card"
-      }`}
-    >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate font-semibold text-card-foreground">{studentName}</p>
-          <StudentTags student={student} />
-          {lesson.isExtraLesson ? (
-            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-              доп.
+    <li className={`glass-tile rounded-[1.5rem] p-3 ${isCancelled ? "border-destructive/40" : ""}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <button
+          type="button"
+          onClick={() => setDialogOpen(true)}
+          className="flex min-w-0 flex-1 basis-64 items-center gap-3 text-left"
+        >
+          <Avatar initials={studentName.slice(0, 2).toUpperCase()} />
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-ink">{studentName}</span>
+              {lesson.isExtraLesson ? <TeacherStatusBadge tone="rose">доп.</TeacherStatusBadge> : null}
+              <StudentTags student={student} />
+              {isCancelled ? <TeacherStatusBadge tone="red">Урок отменён</TeacherStatusBadge> : null}
+              {lesson.rescheduleStatus === "pending_student" ? (
+                <TeacherStatusBadge tone="amber">Ожидает подтверждения ученика</TeacherStatusBadge>
+              ) : null}
+              {studentAsksReschedule ? (
+                <TeacherStatusBadge tone="amber">Ученик предлагает перенос</TeacherStatusBadge>
+              ) : null}
+              {lesson.rescheduleStatus === "confirmed" ? (
+                <TeacherStatusBadge tone="green">Перенос подтверждён</TeacherStatusBadge>
+              ) : null}
+              {lesson.cancellationStatus === "pending_student" ? (
+                <TeacherStatusBadge tone="red">Ожидает подтверждения отмены</TeacherStatusBadge>
+              ) : null}
+              {studentAsksCancel ? <TeacherStatusBadge tone="red">Ученик просит отменить</TeacherStatusBadge> : null}
             </span>
-          ) : null}
-          {isCancelled ? (
-            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
-              ❌ Урок отменён
-            </span>
-          ) : null}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
-          {lesson.rescheduled ? <span className="ml-1.5 font-semibold text-primary">Перенесён</span> : null}
-        </p>
-        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-          <span className={hasAssignment ? "font-semibold text-primary" : "text-muted-foreground"}>
-            {hasAssignment ? "Задание добавлено ✓" : "Задание не добавлено"}
-          </span>
-          <span className={hasSubmission ? "font-semibold text-primary" : "text-muted-foreground"}>
-            {hasSubmission ? "ДЗ получено ✓" : "ДЗ не прислано"}
-          </span>
-        </div>
-
-        {lesson.rescheduleStatus === "pending_student" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-800">
-              🕐 Ожидает подтверждения ученика
-            </span>
-            {lesson.rescheduleProposedDate ? (
-              <span className="text-xs text-muted-foreground">
-                → {formatRescheduleDate(lesson.rescheduleProposedDate)}
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Clock className="size-3" aria-hidden="true" />
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                {lesson.rescheduled ? <span className="ml-1 font-semibold text-rose-deep">перенесён</span> : null}
               </span>
-            ) : null}
-          </div>
-        ) : null}
-
-        {lesson.rescheduleStatus === "pending_teacher" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-800">
-              🕐 Ученик предлагает перенос
-            </span>
-            {lesson.rescheduleProposedDate ? (
-              <span className="text-xs text-muted-foreground">
-                → {formatRescheduleDate(lesson.rescheduleProposedDate)}
+              <span className={hasAssignment ? "flex items-center gap-1 font-semibold text-rose-deep" : "flex items-center gap-1"}>
+                <FileText className="size-3" aria-hidden="true" />
+                {hasAssignment ? "Задание добавлено" : "Задание не добавлено"}
               </span>
-            ) : null}
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleConfirmReschedule}
-              disabled={rescheduleActionPending}
-            >
-              Подтвердить
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCancelReschedule}
-              disabled={rescheduleActionPending}
-            >
-              Отклонить
-            </Button>
-          </div>
-        ) : null}
-
-        {lesson.rescheduleStatus === "confirmed" ? (
-          <span className="mt-2 inline-flex w-fit items-center rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-800">
-            ✅ Перенос подтверждён
+              {hasSubmission ? (
+                <span className="flex items-center gap-1 font-semibold text-rose-deep">
+                  <Check className="size-3" aria-hidden="true" /> ДЗ получено
+                </span>
+              ) : null}
+            </span>
           </span>
-        ) : null}
+        </button>
 
-        {lesson.cancellationStatus === "pending_student" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
-              🔴 Ожидает подтверждения отмены учеником
-            </span>
-          </div>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {studentAsksReschedule ? (
+            <>
+              <SolidBtn onClick={handleConfirmReschedule} disabled={rescheduleActionPending}>
+                <Check className="size-3.5" aria-hidden="true" /> Подтвердить
+              </SolidBtn>
+              <GhostBtn onClick={handleCancelReschedule} disabled={rescheduleActionPending} className="px-3 py-1.5">
+                <X className="size-3.5" aria-hidden="true" /> Отклонить
+              </GhostBtn>
+            </>
+          ) : null}
 
-        {lesson.cancellationStatus === "pending_teacher" ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-800">
-              🔴 Ученик просит отменить урок
-            </span>
-            <Button
-              type="button"
-              size="sm"
-              className="bg-red-600 text-white hover:bg-red-700"
-              onClick={handleConfirmCancellation}
-              disabled={cancellationActionPending}
-            >
-              Подтвердить отмену
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleRejectCancellation}
-              disabled={cancellationActionPending}
-            >
-              Отклонить
-            </Button>
-          </div>
-        ) : null}
-      </div>
+          {studentAsksCancel ? (
+            <>
+              <SolidBtn onClick={handleConfirmCancellation} disabled={cancellationActionPending}>
+                <Check className="size-3.5" aria-hidden="true" /> Подтвердить отмену
+              </SolidBtn>
+              <GhostBtn onClick={handleRejectCancellation} disabled={cancellationActionPending} className="px-3 py-1.5">
+                <X className="size-3.5" aria-hidden="true" /> Отклонить
+              </GhostBtn>
+            </>
+          ) : null}
 
-      <div className="flex shrink-0 gap-2">
-        {!isCancelled ? (
-          <>
-            <Button type="button" variant="outline" size="sm" onClick={() => setRescheduleDialogOpen(true)}>
-              Перенести
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="bg-red-100 text-red-700 hover:bg-red-200"
-              onClick={() => setCancelDialogOpen(true)}
-            >
-              Отменить урок
-            </Button>
-          </>
-        ) : null}
-        <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
-          Открыть
-        </Button>
-        {videoCallUrl ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => openExternalLink(videoCallUrl)}
-          >
-            🎥 Начать урок
-          </Button>
-        ) : null}
-        {student ? <ContactButton student={student} /> : null}
+          {studentInitiated ? <span className="mx-0.5 h-5 w-px bg-glass-border" /> : null}
+
+          <GhostBtn onClick={() => setDialogOpen(true)} className="px-3 py-1.5">
+            <Info className="size-3.5" aria-hidden="true" /> Подробнее
+          </GhostBtn>
+
+          {!studentInitiated && !isCancelled ? (
+            <>
+              <GhostBtn onClick={() => setRescheduleDialogOpen(true)} className="px-3 py-1.5">
+                <CalendarClock className="size-3.5" aria-hidden="true" /> Перенести
+              </GhostBtn>
+              <GhostBtn onClick={() => setCancelDialogOpen(true)} className="px-3 py-1.5">
+                <CircleSlash className="size-3.5" aria-hidden="true" /> Отменить
+              </GhostBtn>
+              {videoCallUrl ? (
+                <SolidBtn onClick={() => openExternalLink(videoCallUrl)}>
+                  <Play className="size-3.5" aria-hidden="true" /> Начать урок
+                </SolidBtn>
+              ) : null}
+            </>
+          ) : null}
+
+          {student ? <ContactButton student={student} /> : null}
+        </div>
       </div>
 
       <HomeworkLessonDialog
@@ -474,21 +447,22 @@ function PastLessonCard({ lesson, studentName, student }) {
   const [dialogOpen, setDialogOpen] = useState(false)
 
   return (
-    <li className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
+    <li className="flex items-center gap-3 py-3">
+      <Avatar initials={studentName.slice(0, 2).toUpperCase()} />
+      <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate font-semibold text-card-foreground">{studentName}</p>
+          <span className="truncate font-semibold text-ink">{studentName}</span>
           <StudentTags student={student} />
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+          <Clock className="size-3" aria-hidden="true" />
           {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
         </p>
-        {lesson.topic ? <p className="mt-1.5 text-xs text-muted-foreground">{lesson.topic}</p> : null}
+        {lesson.topic ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{lesson.topic}</p> : null}
       </div>
-
-      <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+      <GhostBtn onClick={() => setDialogOpen(true)} className="px-4 py-2">
         Открыть
-      </Button>
+      </GhostBtn>
 
       <HomeworkLessonDialog
         studentId={lesson.studentId}
@@ -538,30 +512,32 @@ function AllPastLessonsDialog({ open, onOpenChange, students }) {
   }, [open])
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogTitle>Все прошедшие уроки</DialogTitle>
+    <TeacherDialog open={open} onOpenChange={onOpenChange}>
+      <TeacherDialogContent wide>
+        <TeacherDialogTitle>Все прошедшие уроки</TeacherDialogTitle>
 
-        {loading ? (
-          <Spinner label="Загрузка..." />
-        ) : error ? (
-          <p className="mt-4 text-sm font-semibold text-destructive">{error}</p>
-        ) : lessons.length === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">Уроков пока нет</p>
-        ) : (
-          <ul className="mt-4 flex flex-col gap-3">
-            {lessons.map((lesson) => (
-              <PastLessonCard
-                key={lesson.id}
-                lesson={lesson}
-                studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
-                student={students.find((s) => s.id === lesson.studentId)}
-              />
-            ))}
-          </ul>
-        )}
-      </DialogContent>
-    </Dialog>
+        <div className="mt-4 max-h-[70vh] overflow-y-auto scrollbar-hidden pr-1">
+          {loading ? (
+            <Spinner label="Загрузка..." />
+          ) : error ? (
+            <p className="text-sm font-semibold text-destructive">{error}</p>
+          ) : lessons.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Уроков пока нет</p>
+          ) : (
+            <ul className="divide-y divide-glass-border">
+              {lessons.map((lesson) => (
+                <PastLessonCard
+                  key={lesson.id}
+                  lesson={lesson}
+                  studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                  student={students.find((s) => s.id === lesson.studentId)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
@@ -598,31 +574,24 @@ function TeacherNotificationsBell() {
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <Button
+      <button
         type="button"
-        variant="outline"
-        size="icon-lg"
-        className="relative"
         onClick={() => setOpen(true)}
         aria-label="Уведомления"
+        className="glass-tile relative grid size-10 place-items-center rounded-full text-foreground/70"
       >
-        <Bell aria-hidden="true" />
-        {hasUnread ? (
-          <span
-            aria-hidden="true"
-            className="absolute right-1.5 top-1.5 size-2.5 rounded-full bg-red-500 ring-2 ring-card"
-          />
-        ) : null}
-      </Button>
+        <Bell className="size-4" aria-hidden="true" />
+        {hasUnread ? <span className="absolute right-2.5 top-2.5 size-2 rounded-full bg-primary" /> : null}
+      </button>
 
-      <SheetContent>
-        <SheetTitle>Уведомления</SheetTitle>
+      <SheetContent className="teacher-theme glass-panel rounded-l-[2rem] border-l-0">
+        <SheetTitle className="font-display text-ink">Уведомления</SheetTitle>
 
-        <div className="mt-6 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div className="mt-6 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto scrollbar-hidden">
           {notifications.some((notification) => !notification.read) ? (
-            <Button type="button" variant="outline" size="sm" className="self-start" onClick={handleMarkAllRead}>
+            <GhostBtn onClick={handleMarkAllRead} className="self-start px-4 py-2">
               Отметить все прочитанными
-            </Button>
+            </GhostBtn>
           ) : null}
 
           <NotificationsList notifications={notifications} onNotificationClick={handleNotificationClick} />
@@ -758,87 +727,125 @@ export function TeacherDashboard() {
 
   const clusteredUpcomingLessons = selectClusteredUpcomingLessons(upcomingLessons)
 
+  // Статы — новый блок из макета, без прямого аналога в текущем коде.
+  // Считаются из данных, уже загруженных на этой странице (без
+  // дополнительных подписок), чтобы не дублировать источники правды:
+  // FinanceSection отдельно грузит балансы, но paidLessonsBalance уже есть
+  // прямо в students[] (см. finance-section.jsx), поэтому четвёртый стат
+  // читает то же поле напрямую, а не через отдельный запрос.
+  const now = Date.now()
+  const lessonsThisWeek = upcomingLessons.filter((lesson) => {
+    const date = lesson.rescheduledDate ?? lesson.date
+    return date && date.getTime() - now <= 7 * MS_PER_DAY
+  }).length
+  const homeworkToReview = upcomingLessons.filter(
+    (lesson) => lesson.homework.submission.files.length > 0,
+  ).length
+  const paymentDue = students.filter((student) => (student.paidLessonsBalance ?? 0) <= 0).length
+
+  const stats = [
+    { value: String(lessonsThisWeek), label: "Уроков на неделе" },
+    { value: String(students.length), label: "Учеников" },
+    { value: String(homeworkToReview), label: "ДЗ на проверке" },
+    { value: String(paymentDue), label: "Оплата ожидается" },
+  ]
+
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b border-border bg-card/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+    <div className="teacher-theme relative min-h-screen px-4 py-6 md:px-8 md:py-10">
+      <div aria-hidden className="bg-grain-blobs">
+        <div className="blob-a" />
+        <div className="blob-b" />
+        <div className="grain-layer" />
+      </div>
+
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+        <header className="glass-panel flex items-center justify-between gap-4 rounded-[2rem] px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex size-10 shrink-0 items-center justify-center rounded-full text-primary-foreground"
+              style={{ background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" }}
+            >
               <GraduationCap className="size-5" aria-hidden="true" />
-            </span>
-            <span className="text-lg font-extrabold tracking-tight text-foreground">Учебный портал</span>
+            </div>
+            <div>
+              <h1 className="font-display text-lg tracking-tight text-ink">Учебный портал</h1>
+              <p className="text-xs text-muted-foreground">Кабинет преподавателя</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <VideoCallSettings />
             <TeacherNotificationsBell />
-            <Button type="button" variant="outline" size="lg" onClick={handleSignOut}>
-              <LogOut aria-hidden="true" />
-              Выйти
-            </Button>
+            <GhostBtn onClick={handleSignOut} className="px-4 py-2">
+              <LogOut className="size-3.5" aria-hidden="true" /> Выйти
+            </GhostBtn>
           </div>
+        </header>
+
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {stats.map((s) => (
+            <div key={s.label} className="glass-panel rounded-[1.75rem] px-5 py-4">
+              <div className="font-display text-3xl text-ink">{s.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{s.label}</div>
+            </div>
+          ))}
         </div>
-      </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-        {googleCalendarConnected === false ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
-            <p className="text-sm text-muted-foreground">
-              Синхронизируйте расписание занятий с Google Calendar
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleConnectGoogleCalendar}
-              disabled={connectingGoogleCalendar}
-            >
-              <CalendarPlus aria-hidden="true" />
-              {connectingGoogleCalendar ? "Переходим..." : "Подключить Google Calendar"}
-            </Button>
-          </div>
-        ) : googleCalendarConnected === true ? (
-          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
-            Google Calendar подключён
-          </p>
-        ) : null}
-
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Расписание</h2>
-            <ExtraLessonDialog students={students} />
-          </div>
-          {googleCalendarConnected === true ? (
-            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-              {embedLoading ? (
-                <Spinner label="Загрузка Google Calendar..." />
-              ) : embedError ? (
-                <div className="flex h-64 items-center justify-center p-6 text-center">
-                  <p className="text-sm text-destructive">{embedError}</p>
-                </div>
-              ) : embedUrl ? (
-                <iframe
-                  title="Google Calendar"
-                  src={`${embedUrl}&mode=WEEK`}
-                  style={{ border: 0, width: "100%", height: "600px" }}
-                  frameBorder="0"
-                  scrolling="no"
-                />
+        <Panel>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <Title>Расписание</Title>
+              {googleCalendarConnected === true ? (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="size-1.5 rounded-full bg-primary" /> Google Calendar подключён
+                </p>
+              ) : googleCalendarConnected === false ? (
+                <p className="mt-1 text-xs text-muted-foreground">Google Calendar не подключён</p>
               ) : null}
             </div>
-          ) : (
-            <div className="flex h-64 items-center justify-center rounded-2xl border border-dashed border-border bg-card text-center shadow-sm">
-              <p className="text-sm text-muted-foreground">
-                Google Calendar появится здесь после подключения
-              </p>
+            <ExtraLessonDialog students={students} />
+          </div>
+
+          {googleCalendarConnected === false ? (
+            <div className="glass-tile mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] px-4 py-3">
+              <p className="text-sm text-muted-foreground">Синхронизируйте расписание с Google Calendar</p>
+              <GhostBtn onClick={handleConnectGoogleCalendar} disabled={connectingGoogleCalendar} className="px-4 py-2">
+                <CalendarPlus className="size-3.5" aria-hidden="true" />
+                {connectingGoogleCalendar ? "Переходим..." : "Подключить"}
+              </GhostBtn>
             </div>
-          )}
-        </section>
+          ) : null}
+
+          <div className="glass-tile mt-4 overflow-hidden rounded-[1.5rem]">
+            {embedLoading ? (
+              <div className="p-6">
+                <Spinner label="Загрузка Google Calendar..." />
+              </div>
+            ) : embedError ? (
+              <div className="flex h-64 items-center justify-center p-6 text-center">
+                <p className="text-sm text-destructive">{embedError}</p>
+              </div>
+            ) : embedUrl ? (
+              <iframe
+                title="Google Calendar"
+                src={`${embedUrl}&mode=WEEK`}
+                style={{ border: 0, width: "100%", height: "600px" }}
+                frameBorder="0"
+                scrolling="no"
+              />
+            ) : (
+              <div className="flex h-64 items-center justify-center p-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Google Calendar появится здесь после подключения
+                </p>
+              </div>
+            )}
+          </div>
+        </Panel>
 
         {clusteredUpcomingLessons.length > 0 ? (
-          <section className="flex flex-col gap-4">
-            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Ближайшие уроки</h2>
-            <ul className="flex flex-col gap-3">
+          <Panel>
+            <Title>Ближайшие уроки</Title>
+            <ul className="mt-4 space-y-3">
               {clusteredUpcomingLessons.map((lesson) => (
                 <UpcomingLessonCard
                   key={lesson.id}
@@ -849,60 +856,53 @@ export function TeacherDashboard() {
                 />
               ))}
             </ul>
-          </section>
+          </Panel>
         ) : null}
 
-        {completedLessons.length > 0 ? (
-          <section className="flex flex-col gap-4">
-            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Прошедшие уроки</h2>
-            <ul className="flex flex-col gap-3">
-              {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
-                <PastLessonCard
-                  key={lesson.id}
-                  lesson={lesson}
-                  studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
-                />
-              ))}
-            </ul>
-            {completedLessons.length > completedVisibleCount ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="self-start"
-                onClick={() => setIsAllPastLessonsOpen(true)}
-              >
-                Показать все прошедшие уроки
-              </Button>
-            ) : null}
-          </section>
-        ) : null}
+        <div className="grid gap-5 lg:grid-cols-2">
+          {completedLessons.length > 0 ? (
+            <Panel>
+              <div className="flex items-center justify-between">
+                <Title>Прошедшие уроки</Title>
+              </div>
+              <ul className="mt-4 divide-y divide-glass-border">
+                {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
+                  <PastLessonCard
+                    key={lesson.id}
+                    lesson={lesson}
+                    studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                    student={students.find((s) => s.id === lesson.studentId)}
+                  />
+                ))}
+              </ul>
+              {completedLessons.length > completedVisibleCount ? (
+                <GhostBtn onClick={() => setIsAllPastLessonsOpen(true)} className="mt-3 self-start px-4 py-2">
+                  Показать все прошедшие уроки
+                </GhostBtn>
+              ) : null}
+            </Panel>
+          ) : null}
+
+          {students.length > 0 ? <FinanceSection students={students} /> : null}
+        </div>
 
         <AllPastLessonsDialog open={isAllPastLessonsOpen} onOpenChange={setIsAllPastLessonsOpen} students={students} />
 
-        <section className="flex flex-col gap-6">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-extrabold tracking-tight text-foreground">Ученики</h2>
+        <Panel>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Title>Ученики</Title>
             <RegistrationLinkDialog />
           </div>
 
-          <div className="flex flex-col gap-4">
-            <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
-              Зарегистрированные ученики
-            </h3>
-
+          <div className="mt-4">
             {loading ? (
               <Spinner label="Загрузка списка учеников..." />
             ) : error ? (
-              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-center">
-                <p className="font-semibold text-destructive">{error}</p>
-              </div>
+              <p className="text-sm font-semibold text-destructive">{error}</p>
             ) : students.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
-                <p className="text-muted-foreground">Пока нет учеников в базе данных.</p>
-              </div>
+              <p className="text-sm text-muted-foreground">Пока нет учеников в базе данных.</p>
             ) : (
-              <ul aria-label="Список учеников" className="rounded-2xl border border-border bg-card px-2 shadow-sm">
+              <div className="space-y-3">
                 {students.map((student) => (
                   <StudentRow
                     key={student.id}
@@ -910,17 +910,15 @@ export function TeacherDashboard() {
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
                   />
                 ))}
-              </ul>
+              </div>
             )}
           </div>
-        </section>
-
-        {students.length > 0 ? <FinanceSection students={students} /> : null}
+        </Panel>
 
         <CurriculumSection />
 
         <PendingRegistrations />
-      </main>
+      </div>
     </div>
   )
 }

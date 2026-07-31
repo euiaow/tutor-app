@@ -1,12 +1,12 @@
 import { useState } from "react"
-import { MessageCircle, MoreHorizontal, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Loader2, MessageCircle, MoreHorizontal } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
+import { Field, TeacherCancelBtn, TeacherModalFooter, TeacherSaveBtn, teacherInputCls } from "@/components/teacher/theme-ui"
 import { getContactUrl, isDefaultTelegramContact } from "@/lib/contact"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { updateStudentContactUrl } from "@/firebase/students"
@@ -29,27 +29,27 @@ function EditContactUrlForm({ student, onDone }) {
   }
 
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm">
-      <input
-        type="url"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        disabled={saving}
-        placeholder="https://t.me/username или https://vk.com/username"
-        className="h-10 rounded-lg border-2 border-border bg-secondary/40 px-3 text-sm font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
-      />
+    <div className="glass-tile mt-2 flex flex-col gap-2 rounded-[1.25rem] p-3">
+      <Field label="Ссылка для связи">
+        <input
+          type="url"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          disabled={saving}
+          placeholder="https://t.me/username или https://vk.com/username"
+          className={teacherInputCls}
+        />
+      </Field>
       <p className="text-xs text-muted-foreground">
         Ссылка откроется в мессенджере при клике. Используй t.me/username для Telegram или
         vk.com/im?sel=ID для ВКонтакте.
       </p>
-      <div className="flex gap-2">
-        <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onDone} disabled={saving}>
-          Отмена
-        </Button>
-        <Button type="button" size="sm" className="flex-1" onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
-        </Button>
-      </div>
+      <TeacherModalFooter className="pt-0">
+        <TeacherCancelBtn onClick={onDone} disabled={saving} />
+        <TeacherSaveBtn onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 className="mx-auto size-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
+        </TeacherSaveBtn>
+      </TeacherModalFooter>
     </div>
   )
 }
@@ -69,18 +69,18 @@ export function ContactButton({ student }) {
 
   return (
     <div className="flex flex-col">
-      <div className="flex h-9 items-stretch overflow-hidden rounded-lg border border-border bg-secondary">
+      <div className="glass-tile inline-flex items-center overflow-hidden rounded-full">
         {url ? (
           <button
             type="button"
             onClick={() => openExternalLink(url)}
-            className={`flex flex-1 items-center justify-center gap-1.5 px-3 text-sm font-semibold transition-colors ${
-              isDefaultTelegram
-                ? "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
-                : "text-secondary-foreground hover:bg-secondary/80"
-            }`}
+            title={isDefaultTelegram ? "Ссылка определена автоматически" : "Написать ученику"}
+            className={
+              "inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold transition " +
+              (isDefaultTelegram ? "text-[color:var(--balance-warn)]" : "text-foreground/80 hover:text-rose-deep")
+            }
           >
-            <MessageCircle className="size-4" aria-hidden="true" />
+            <MessageCircle className="size-3.5" aria-hidden="true" />
             Написать
           </button>
         ) : (
@@ -88,24 +88,37 @@ export function ContactButton({ student }) {
             type="button"
             disabled
             title="Ученик не подключил бота. Задайте ссылку вручную."
-            className="flex flex-1 items-center justify-center gap-1.5 px-3 text-sm font-semibold text-muted-foreground opacity-60"
+            className="inline-flex cursor-not-allowed items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-muted-foreground/50"
           >
-            <MessageCircle className="size-4" aria-hidden="true" />
+            <MessageCircle className="size-3.5" aria-hidden="true" />
             Связь не настроена
           </button>
         )}
 
+        <span className="h-5 w-px bg-glass-border" />
+
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="flex w-9 shrink-0 items-center justify-center border-l border-border text-secondary-foreground transition-colors hover:bg-secondary/80"
-            aria-label="Ещё"
+            className="grid size-8 place-items-center text-muted-foreground transition hover:text-rose-deep"
+            aria-label="Сменить ссылку для связи"
+            title="Сменить ссылку для связи"
           >
             <MoreHorizontal className="size-4" aria-hidden="true" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={() => setEditing(true)}>Изменить ссылку</DropdownMenuItem>
+          <DropdownMenuContent className="teacher-theme glass-panel rounded-[1.25rem] border-glass-border p-1.5">
+            <DropdownMenuItem
+              onClick={() => setEditing(true)}
+              className="rounded-[0.75rem] text-foreground/80 data-[highlighted]:bg-glass-strong data-[highlighted]:text-rose-deep"
+            >
+              Изменить ссылку
+            </DropdownMenuItem>
             {student.contactUrl ? (
-              <DropdownMenuItem onClick={handleReset}>Сбросить к исходной</DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleReset}
+                className="rounded-[0.75rem] text-foreground/80 data-[highlighted]:bg-glass-strong data-[highlighted]:text-rose-deep"
+              >
+                Сбросить к исходной
+              </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>

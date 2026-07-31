@@ -1,12 +1,17 @@
 import { useState } from "react"
-import { Plus, Loader2, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { AlertCircle, Plus } from "lucide-react"
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog"
+  Field,
+  SolidBtn,
+  TeacherCancelBtn,
+  TeacherDialog,
+  TeacherDialogContent,
+  TeacherDialogDescription,
+  TeacherDialogTitle,
+  TeacherModalFooter,
+  TeacherSaveBtn,
+  teacherInputCls,
+} from "@/components/teacher/theme-ui"
 import { createExtraLesson } from "@/firebase/lessons"
 
 function toDatetimeLocal(d) {
@@ -38,9 +43,7 @@ export function ExtraLessonDialog({ students }) {
 
   function handleOpenChange(nextOpen) {
     setOpen(nextOpen)
-    if (!nextOpen) {
-      reset()
-    }
+    if (!nextOpen) reset()
   }
 
   async function handleSubmit(e) {
@@ -63,26 +66,25 @@ export function ExtraLessonDialog({ students }) {
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        <Plus aria-hidden="true" />
+      <SolidBtn onClick={() => setOpen(true)}>
+        <Plus className="size-3.5" aria-hidden="true" />
         Доп. урок
-      </Button>
+      </SolidBtn>
 
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent>
-          <DialogTitle>Добавить внеплановый урок</DialogTitle>
-          <DialogDescription>
+      <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+        <TeacherDialogContent>
+          <TeacherDialogTitle>Добавить внеплановый урок</TeacherDialogTitle>
+          <TeacherDialogDescription>
             Урок будет создан вне расписания и добавлен в Google Calendar.
-          </DialogDescription>
+          </TeacherDialogDescription>
 
-          <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
-            <label className="flex flex-col gap-1.5 text-sm font-semibold text-foreground">
-              Ученик
+          <form className="mt-5 flex flex-col gap-4" onSubmit={handleSubmit}>
+            <Field label="Ученик">
               <select
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
                 disabled={loading}
-                className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+                className={teacherInputCls}
               >
                 <option value="" disabled>
                   Выберите ученика
@@ -93,53 +95,34 @@ export function ExtraLessonDialog({ students }) {
                   </option>
                 ))}
               </select>
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-1.5 text-sm font-semibold text-foreground">
-              Дата и время
+            <Field label="Дата и время">
               <input
                 type="datetime-local"
                 value={dateInput}
                 onChange={(e) => setDateInput(e.target.value)}
                 disabled={loading}
-                className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+                className={teacherInputCls}
               />
-            </label>
+            </Field>
 
-            <div
-              aria-live="polite"
-              className={`flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
-                error ? "opacity-100" : "pointer-events-none h-0 overflow-hidden py-0 opacity-0"
-              }`}
-            >
-              <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
-              <span>{error}</span>
-            </div>
+            {error ? (
+              <div className="flex items-center gap-2 rounded-[1rem] bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+                <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+                <span>{error}</span>
+              </div>
+            ) : null}
 
-            <div className="flex gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1"
-                disabled={loading}
-                onClick={() => handleOpenChange(false)}
-              >
-                Отмена
-              </Button>
-              <Button type="submit" className="flex-1" disabled={!studentId || !dateInput || loading}>
-                {loading ? (
-                  <>
-                    <Loader2 className="animate-spin" aria-hidden="true" />
-                    Создаём...
-                  </>
-                ) : (
-                  "Создать урок"
-                )}
-              </Button>
-            </div>
+            <TeacherModalFooter>
+              <TeacherCancelBtn type="button" onClick={() => handleOpenChange(false)} disabled={loading} />
+              <TeacherSaveBtn type="submit" disabled={!studentId || !dateInput || loading}>
+                {loading ? "Создаём..." : "Создать урок"}
+              </TeacherSaveBtn>
+            </TeacherModalFooter>
           </form>
-        </DialogContent>
-      </Dialog>
+        </TeacherDialogContent>
+      </TeacherDialog>
     </>
   )
 }

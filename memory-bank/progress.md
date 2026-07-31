@@ -152,6 +152,14 @@
   Telegram-side Menu Button still needs to be configured manually in
   BotFather before it's actually reachable from inside the bot — see
   [[activeContext]].
+- Student page fully migrated to the "redesign v2" warm-glass visual
+  system (session 7), then unified further in session 8: all student-page
+  modals (reschedule, cancel, "Все уведомления", "Все материалы") now
+  share one `GlassDialog` wrapper instead of copy-pasted classes, the
+  page background got a matching translucent glass overlay, and the
+  notifications list scrollbar is hidden. See [[systemPatterns]] for the
+  new `render`-prop pattern this uncovered and [[activeContext]] for the
+  still-unconfirmed `window.open()`→`<a>` bug fix.
 
 ## Known issues / open items
 
@@ -159,9 +167,13 @@
   `http://localhost:5173/teacher` with an explicit `pending` comment to
   replace it before production.
 - No automated test suite in the repo.
-- **Nothing described above is committed to git** — production runs off
-  uncommitted working-tree state; see [[activeContext]] for why this is
-  now flagged as the top risk.
+- **Resolved as of session 8**: most of the work described above (through
+  session 7 and most of session 8) is now committed and pushed
+  (`3e365a3`) — the "nothing is committed" risk flagged in every prior
+  update no longer applies to that history. `src/pages/PublicLanding.jsx`
+  was left uncommitted after the push (session 8's window.open→`<a>`
+  fix) — check whether that landed too, and whether committing continues
+  as a habit going forward.
 - Curriculum templates feature (session 7) is fully implemented (all 4
   phases) but **not manually verified end-to-end** at all yet — create/
   edit/delete a template, assign/replace it on a student, mark topics

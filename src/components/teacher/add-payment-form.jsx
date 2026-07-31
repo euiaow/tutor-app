@@ -1,6 +1,5 @@
 import { useState } from "react"
-import { Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Field, TeacherCancelBtn, TeacherModalFooter, TeacherSaveBtn, teacherInputCls } from "@/components/teacher/theme-ui"
 import { addPayment } from "@/firebase/finance"
 
 export function AddPaymentForm({ studentId, onDone }) {
@@ -27,49 +26,40 @@ export function AddPaymentForm({ studentId, onDone }) {
   }
 
   return (
-    <form
-      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm"
-      onSubmit={(e) => e.preventDefault()}
-    >
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-        Сколько занятий оплачено
+    <form className="flex flex-col gap-4" onSubmit={(e) => e.preventDefault()}>
+      <Field label="Сколько занятий оплачено">
         <input
           type="number"
           min="1"
           value={count}
           onChange={(e) => setCount(e.target.value)}
           disabled={saving}
-          className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+          className={teacherInputCls}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-        Заметка (необязательно)
+      </Field>
+      <Field label="Заметка (необязательно)">
         <input
           type="text"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           disabled={saving}
           placeholder="оплата за август"
-          className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+          className={teacherInputCls}
         />
-      </label>
+      </Field>
 
-      {error ? <p className="text-xs font-semibold text-destructive">{error}</p> : null}
+      {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
 
-      <div className="flex gap-2 pt-1">
-        <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onDone} disabled={saving}>
-          Отмена
-        </Button>
-        <Button
+      <TeacherModalFooter>
+        <TeacherCancelBtn type="button" onClick={onDone} disabled={saving} />
+        <TeacherSaveBtn
           type="button"
-          size="sm"
-          className="flex-1"
           onClick={handleSubmit}
           disabled={!count || Number(count) <= 0 || saving}
         >
-          {saving ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Добавить"}
-        </Button>
-      </div>
+          {saving ? "Добавляем..." : "Добавить"}
+        </TeacherSaveBtn>
+      </TeacherModalFooter>
     </form>
   )
 }

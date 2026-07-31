@@ -1,6 +1,5 @@
 import { GraduationCap } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { openExternalLink } from "@/lib/telegramWebApp"
 import { TELEGRAM_BOT_USERNAME, VK_GROUP } from "@/lib/registration-links"
 
 const SIGNUP_TELEGRAM_URL = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=signup`
@@ -29,20 +28,24 @@ export function PublicLanding() {
         </div>
 
         <div className="mt-8 flex flex-col gap-2 sm:flex-row">
+          {/* A real <a> (via base-ui's `render` prop, keeping the exact same
+              Button styling) instead of a window.open() click handler — a
+              scripted window.open() showed unreliable back-navigation
+              behavior after handing off to Telegram on desktop; a native
+              anchor is the browser's own trusted mechanism for opening a
+              link and doesn't carry that risk. */}
           <Button
-            type="button"
+            render={<a href={SIGNUP_TELEGRAM_URL} target="_blank" rel="noopener noreferrer" />}
             size="lg"
             className="h-12 flex-1"
-            onClick={() => openExternalLink(SIGNUP_TELEGRAM_URL)}
           >
             Записаться через Telegram
           </Button>
           <Button
-            type="button"
+            render={<a href={SIGNUP_VK_URL} target="_blank" rel="noopener noreferrer" />}
             variant="outline"
             size="lg"
             className="h-12 flex-1"
-            onClick={() => openExternalLink(SIGNUP_VK_URL)}
           >
             Записаться через VK
           </Button>

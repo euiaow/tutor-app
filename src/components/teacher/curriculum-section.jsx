@@ -1,8 +1,21 @@
 import { useEffect, useState } from "react"
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react"
 import { TAG_STYLES } from "@/components/student-tags"
+import {
+  Field,
+  GhostBtn,
+  Panel,
+  SolidBtn,
+  TeacherCancelBtn,
+  TeacherDialog,
+  TeacherDialogContent,
+  TeacherDialogDescription,
+  TeacherDialogTitle,
+  TeacherModalFooter,
+  TeacherSaveBtn,
+  Title,
+  teacherInputCls,
+} from "@/components/teacher/theme-ui"
 import {
   createCurriculumTemplate,
   deleteCurriculumTemplate,
@@ -51,37 +64,36 @@ function RowList({ label, rows, onChange, addLabel }) {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+    <Field label={label}>
+      <div className="space-y-2">
+        {rows.map((row, index) => (
+          <div key={row.id} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={row.title}
+              onChange={(e) => updateRow(index, e.target.value)}
+              className={teacherInputCls}
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(index)}
+              aria-label="Удалить строку"
+              className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive"
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+            </button>
+          </div>
+        ))}
 
-      {rows.map((row, index) => (
-        <div key={row.id} className="flex items-center gap-2">
-          <input
-            type="text"
-            value={row.title}
-            onChange={(e) => updateRow(index, e.target.value)}
-            className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => removeRow(index)}
-            aria-label="Удалить строку"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50"
-          >
-            <Trash2 className="size-4" aria-hidden="true" />
-          </button>
-        </div>
-      ))}
-
-      <button
-        type="button"
-        onClick={addRow}
-        className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted"
-      >
-        <Plus className="size-4" aria-hidden="true" />
-        {addLabel}
-      </button>
-    </div>
+        <button
+          type="button"
+          onClick={addRow}
+          className="w-full rounded-full border border-dashed border-glass-border px-4 py-2.5 text-sm font-semibold text-muted-foreground transition hover:text-rose-deep"
+        >
+          + {addLabel}
+        </button>
+      </div>
+    </Field>
   )
 }
 
@@ -136,30 +148,29 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogTitle>{template ? "Редактировать план" : "Новый учебный план"}</DialogTitle>
-        <DialogDescription>Темы и прототипы шаблона программы.</DialogDescription>
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>{template ? "Редактировать план" : "Новый учебный план"}</TeacherDialogTitle>
+        <TeacherDialogDescription>Темы и прототипы шаблона программы.</TeacherDialogDescription>
 
-        <div className="mt-4 flex flex-col gap-4">
-          <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-            Название
+        <div className="mt-5 space-y-4">
+          <Field label="Название">
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={saving}
-              className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+              placeholder="Например, Русский ЕГЭ"
+              className={teacherInputCls}
             />
-          </label>
+          </Field>
 
-          <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-            Тип
+          <Field label="Тип">
             <select
               value={examTarget}
               onChange={(e) => setExamTarget(e.target.value)}
               disabled={saving}
-              className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
+              className={teacherInputCls}
             >
               {EXAM_TARGET_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -167,37 +178,22 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
                 </option>
               ))}
             </select>
-          </label>
+          </Field>
 
           <RowList label="Темы" rows={topics} onChange={setTopics} addLabel="Добавить тему" />
           <RowList label="Прототипы" rows={prototypes} onChange={setPrototypes} addLabel="Добавить прототип" />
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
 
-          <div className="flex gap-2 pt-1">
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1"
-              onClick={() => handleOpenChange(false)}
-              disabled={saving}
-            >
-              Отмена
-            </Button>
-            <Button type="button" className="flex-1" onClick={handleSave} disabled={saving || !name.trim()}>
-              {saving ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Сохраняем...
-                </>
-              ) : (
-                "Сохранить"
-              )}
-            </Button>
-          </div>
+          <TeacherModalFooter>
+            <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={saving} />
+            <TeacherSaveBtn onClick={handleSave} disabled={saving || !name.trim()}>
+              {saving ? "Сохраняем..." : "Сохранить"}
+            </TeacherSaveBtn>
+          </TeacherModalFooter>
         </div>
-      </DialogContent>
-    </Dialog>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
@@ -219,24 +215,23 @@ function TemplateRow({ template, onEdit, onDeleted }) {
   }
 
   return (
-    <li className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="truncate text-sm font-semibold text-card-foreground">{template.name}</span>
-        <ExamTargetTag examTarget={template.examTarget} />
-        <span className="shrink-0 text-xs text-muted-foreground">{template.topics.length} тем</span>
-        <span className="shrink-0 text-xs text-muted-foreground">{template.prototypes.length} прототипов</span>
-      </div>
-      <div className="flex shrink-0 gap-1.5">
-        <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+    <li className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.5rem] px-4 py-3">
+      <BookOpen className="size-4 shrink-0 text-rose-deep" aria-hidden="true" />
+      <span className="truncate font-semibold text-ink">{template.name}</span>
+      <ExamTargetTag examTarget={template.examTarget} />
+      <span className="text-xs text-muted-foreground">{template.topics.length} тем</span>
+      <span className="text-xs text-muted-foreground">{template.prototypes.length} прототипов</span>
+      <div className="ml-auto flex items-center gap-2">
+        <GhostBtn onClick={onEdit} className="px-3.5 py-2">
           <Pencil className="size-3.5" aria-hidden="true" />
           Редактировать
-        </Button>
+        </GhostBtn>
         <button
           type="button"
           onClick={handleDelete}
           disabled={deleting}
           aria-label={`Удалить план ${template.name}`}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+          className="text-muted-foreground/70 transition hover:text-destructive disabled:opacity-50"
         >
           <Trash2 className="size-4" aria-hidden="true" />
         </button>
@@ -281,35 +276,35 @@ export function CurriculumSection() {
   }
 
   return (
-    <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-extrabold tracking-tight text-foreground">Учебные планы</h2>
-        <Button type="button" size="sm" onClick={handleCreate}>
-          <Plus className="size-4" aria-hidden="true" />
+    <Panel>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Title>Учебные планы</Title>
+        <SolidBtn onClick={handleCreate}>
+          <Plus className="size-3.5" aria-hidden="true" />
           Создать план
-        </Button>
+        </SolidBtn>
       </div>
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Загрузка...</p>
-      ) : error ? (
-        <p className="text-sm font-semibold text-destructive">{error}</p>
-      ) : templates.length === 0 ? (
-        <div className="rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
-          <p className="text-muted-foreground">Планов пока нет</p>
-        </div>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {templates.map((template) => (
-            <TemplateRow
-              key={template.id}
-              template={template}
-              onEdit={() => handleEdit(template)}
-              onDeleted={reload}
-            />
-          ))}
-        </ul>
-      )}
+      <div className="mt-4">
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Загрузка...</p>
+        ) : error ? (
+          <p className="text-sm font-semibold text-destructive">{error}</p>
+        ) : templates.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Планов пока нет</p>
+        ) : (
+          <ul className="space-y-3">
+            {templates.map((template) => (
+              <TemplateRow
+                key={template.id}
+                template={template}
+                onEdit={() => handleEdit(template)}
+                onDeleted={reload}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
 
       <CurriculumEditorDialog
         key={dialogOpen ? editingTemplate?.id ?? "new" : "closed"}
@@ -318,6 +313,6 @@ export function CurriculumSection() {
         onOpenChange={setDialogOpen}
         onSaved={reload}
       />
-    </section>
+    </Panel>
   )
 }

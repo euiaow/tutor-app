@@ -1,12 +1,6 @@
 import { useState } from "react"
-import { Plus, Loader2, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog"
+import { AlertCircle, Plus } from "lucide-react"
+import { Field, SolidBtn, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, teacherInputCls } from "@/components/teacher/theme-ui"
 import { CopyableLink } from "@/components/teacher/copyable-link"
 import { generateRegistrationLink } from "@/firebase/registration"
 import { buildRegistrationLinks } from "@/lib/registration-links"
@@ -30,9 +24,7 @@ export function RegistrationLinkDialog() {
 
   function handleOpenChange(nextOpen) {
     setOpen(nextOpen)
-    if (!nextOpen) {
-      reset()
-    }
+    if (!nextOpen) reset()
   }
 
   async function handleSubmit(e) {
@@ -55,27 +47,26 @@ export function RegistrationLinkDialog() {
 
   return (
     <>
-      <Button size="lg" onClick={() => setOpen(true)}>
-        <Plus aria-hidden="true" />
+      <SolidBtn onClick={() => setOpen(true)}>
+        <Plus className="size-3.5" aria-hidden="true" />
         Добавить ученика
-      </Button>
+      </SolidBtn>
 
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent>
-          <DialogTitle>Ссылка регистрации ученика</DialogTitle>
-          <DialogDescription>
+      <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+        <TeacherDialogContent>
+          <TeacherDialogTitle>Ссылка регистрации ученика</TeacherDialogTitle>
+          <TeacherDialogDescription>
             Создайте одноразовую ссылку и отправьте её ученику в Telegram или VK.
-          </DialogDescription>
+          </TeacherDialogDescription>
 
           {links ? (
-            <div className="mt-6 flex flex-col gap-4">
+            <div className="mt-5 flex flex-col gap-4">
               <CopyableLink label="Telegram" url={links.telegram} />
               <CopyableLink label="VK" url={links.vk} />
             </div>
           ) : (
-            <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
-              <label className="flex flex-col gap-1.5 text-sm font-semibold text-foreground">
-                Имя ученика
+            <form className="mt-5 flex flex-col gap-4" onSubmit={handleSubmit}>
+              <Field label="Имя ученика">
                 <input
                   type="text"
                   value={studentName}
@@ -83,39 +74,24 @@ export function RegistrationLinkDialog() {
                   disabled={loading}
                   placeholder="Мария Иванова"
                   autoFocus
-                  className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+                  className={teacherInputCls}
                 />
-              </label>
+              </Field>
 
-              <div
-                aria-live="polite"
-                className={`flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
-                  error ? "opacity-100" : "pointer-events-none h-0 overflow-hidden py-0 opacity-0"
-                }`}
-              >
-                <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
-                <span>{error}</span>
-              </div>
+              {error ? (
+                <div className="flex items-center gap-2 rounded-[1rem] bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+                  <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+                  <span>{error}</span>
+                </div>
+              ) : null}
 
-              <Button
-                type="submit"
-                size="lg"
-                disabled={!studentName.trim() || loading}
-                className="h-12"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="animate-spin" aria-hidden="true" />
-                    Создаём ссылку...
-                  </>
-                ) : (
-                  "Создать ссылку"
-                )}
-              </Button>
+              <SolidBtn type="submit" className="w-full justify-center py-3 text-sm" disabled={!studentName.trim() || loading}>
+                {loading ? "Создаём ссылку..." : "Создать ссылку"}
+              </SolidBtn>
             </form>
           )}
-        </DialogContent>
-      </Dialog>
+        </TeacherDialogContent>
+      </TeacherDialog>
     </>
   )
 }

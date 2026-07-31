@@ -1,41 +1,23 @@
 import { useEffect, useState } from "react"
-import { CalendarDays, CheckCircle2, XCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { CalendarDays, CheckCircle2, ChevronRight, XCircle } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { GlassDialog, GlassDialogContent, GlassDialogTitle } from "@/components/glass-dialog"
 import { MaterialLink } from "@/components/material-link"
+import { StatusBadge } from "@/components/status-badge"
 import { subscribeToLessons } from "@/firebase/lessons"
 
 const VISIBLE_COUNT = 3
 
 const ATTENDANCE_BADGES = {
-  on_time: {
-    label: "Вовремя",
-    className: "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400",
-  },
-  late: {
-    label: "Опоздал",
-    className: "bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
-  },
-  absent: {
-    label: "Не пришёл",
-    className: "bg-destructive/10 text-destructive dark:bg-destructive/20",
-  },
+  on_time: { label: "Вовремя", variant: "success" },
+  late: { label: "Опоздал", variant: "warning" },
+  absent: { label: "Не пришёл", variant: "danger" },
 }
 
 const RATING_BADGES = {
-  excellent: {
-    label: "Отлично",
-    className: "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400",
-  },
-  good: {
-    label: "Хорошо",
-    className: "bg-sky-500/15 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400",
-  },
-  needs_work: {
-    label: "Старайся лучше",
-    className: "bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
-  },
+  excellent: { label: "Отлично", variant: "success" },
+  good: { label: "Хорошо", variant: "primary" },
+  needs_work: { label: "Старайся лучше", variant: "warning" },
 }
 
 function formatDate(date) {
@@ -51,10 +33,23 @@ function formatDate(date) {
   })
 }
 
-function Badge({ label, className }) {
+// Distinct from StatusBadge's pastel pills on purpose — a light "surface"
+// plate (bg-card + shadow) for the positive state, a flat muted plate for
+// the negative one, so the two read as clearly different at a glance
+// rather than two similarly-weighted pastel tones.
+function HomeworkStatus({ done }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {label}
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+        done ? "bg-card text-foreground shadow-sm" : "bg-muted text-muted-foreground"
+      }`}
+    >
+      {done ? (
+        <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
+      ) : (
+        <XCircle className="size-3.5" aria-hidden="true" />
+      )}
+      {done ? "Домашка сделана" : "Домашка не сделана"}
     </span>
   )
 }
@@ -70,7 +65,7 @@ function LessonCard({ lesson }) {
           <CalendarDays className="size-3.5" aria-hidden="true" />
           {formatDate(lesson.date)}
         </div>
-        {attendance ? <Badge {...attendance} /> : null}
+        {attendance ? <StatusBadge variant={attendance.variant}>{attendance.label}</StatusBadge> : null}
       </div>
 
       <p className="font-display text-base text-foreground text-balance">
@@ -78,19 +73,8 @@ function LessonCard({ lesson }) {
       </p>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={`flex items-center gap-1.5 text-sm font-medium ${
-            lesson.homeworkDone ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
-          }`}
-        >
-          {lesson.homeworkDone ? (
-            <CheckCircle2 className="size-4" aria-hidden="true" />
-          ) : (
-            <XCircle className="size-4" aria-hidden="true" />
-          )}
-          {lesson.homeworkDone ? "Домашка сделана" : "Домашка не сделана"}
-        </span>
-        {rating ? <Badge {...rating} /> : null}
+        <HomeworkStatus done={lesson.homeworkDone} />
+        {rating ? <StatusBadge variant={rating.variant}>{rating.label}</StatusBadge> : null}
       </div>
 
       {lesson.materials && lesson.materials.length > 0 ? (
@@ -137,25 +121,27 @@ function LessonHistoryDialog({ studentId, open, onOpenChange }) {
   }, [open, studentId])
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogTitle>История уроков</DialogTitle>
+    <GlassDialog open={open} onOpenChange={onOpenChange}>
+      <GlassDialogContent className="max-w-2xl">
+        <GlassDialogTitle>История уроков</GlassDialogTitle>
 
-        {loading ? (
-          <Spinner label="Загрузка уроков..." />
-        ) : error ? (
-          <p className="mt-4 text-sm font-semibold text-destructive">{error}</p>
-        ) : lessons.length === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">Уроки пока не добавлены</p>
-        ) : (
-          <ul className="mt-4 flex flex-col gap-3">
-            {lessons.map((lesson) => (
-              <LessonCard key={lesson.id} lesson={lesson} />
-            ))}
-          </ul>
-        )}
-      </DialogContent>
-    </Dialog>
+        <div className="scrollbar-hidden mt-4 max-h-[70vh] overflow-y-auto pr-1">
+          {loading ? (
+            <Spinner label="Загрузка уроков..." />
+          ) : error ? (
+            <p className="text-sm font-semibold text-destructive">{error}</p>
+          ) : lessons.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Уроки пока не добавлены</p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {lessons.map((lesson) => (
+                <LessonCard key={lesson.id} lesson={lesson} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </GlassDialogContent>
+    </GlassDialog>
   )
 }
 
@@ -186,15 +172,14 @@ export function LessonHistory({ studentId, lessons, loading, error }) {
             ))}
           </ul>
           {lessons.length > VISIBLE_COUNT ? (
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
-              className="self-start"
               onClick={() => setIsHistoryOpen(true)}
+              className="inline-flex items-center gap-1 self-start text-sm font-medium text-primary"
             >
               Показать всю историю
-            </Button>
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </button>
           ) : null}
         </>
       )}

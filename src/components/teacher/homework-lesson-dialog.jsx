@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from "react"
-import { AlertCircle, Loader2, Paperclip, ExternalLink, Plus, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog"
+  AlertCircle,
+  BookOpen,
+  Check,
+  ExternalLink,
+  FileText,
+  ListChecks,
+  Loader2,
+  Paperclip,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
+import { GhostBtn, SolidBtn, teacherInputCls, teacherTextareaCls } from "@/components/teacher/theme-ui"
 import {
   addLessonMaterial,
   completeLesson,
@@ -38,9 +45,13 @@ function optionLabel(options, value) {
   return options.find((option) => option.value === value)?.label ?? "—"
 }
 
+// Same visual family as the mockup's LessonModal glass-tile sections, but
+// selectable (the mockup never draws this — it has no attendance/rating/
+// homework form at all) so it reuses the pill-toggle pattern from
+// StudentEditModal's subject picker instead of inventing a new one.
 function ToggleGroup({ options, value, onChange, disabled }) {
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
       {options.map((option) => {
         const selected = option.value === value
         return (
@@ -49,11 +60,11 @@ function ToggleGroup({ options, value, onChange, disabled }) {
             type="button"
             disabled={disabled}
             onClick={() => onChange(option.value)}
-            className={`flex-1 rounded-xl border-2 px-3 py-2.5 text-sm font-semibold transition-all disabled:opacity-50 ${
-              selected
-                ? "border-primary bg-primary text-primary-foreground shadow-sm"
-                : "border-border bg-secondary/40 text-foreground hover:bg-secondary/60"
-            }`}
+            className={
+              "flex-1 rounded-full px-3.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 " +
+              (selected ? "text-primary-foreground" : "glass-tile text-foreground/80 hover:text-rose-deep")
+            }
+            style={selected ? { background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" } : undefined}
           >
             {option.label}
           </button>
@@ -73,7 +84,7 @@ function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, a
   if (available.length === 0) {
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-semibold text-foreground">{label}</span>
+        <span className="text-sm font-semibold text-ink">{label}</span>
         <p className="text-sm text-muted-foreground">{allCoveredLabel}</p>
       </div>
     )
@@ -98,15 +109,11 @@ function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, a
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-sm font-semibold text-foreground">{label}</span>
+      <span className="text-sm font-semibold text-ink">{label}</span>
 
       {selections.map((value, index) => (
         <div key={index} className="flex items-center gap-2">
-          <select
-            value={value}
-            onChange={(e) => updateRow(index, e.target.value)}
-            className="h-9 flex-1 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none"
-          >
+          <select value={value} onChange={(e) => updateRow(index, e.target.value)} className={teacherInputCls}>
             <option value="">Выберите...</option>
             {optionsForRow(index).map((item) => (
               <option key={item.id} value={item.id}>
@@ -118,7 +125,7 @@ function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, a
             type="button"
             onClick={() => removeRow(index)}
             aria-label="Удалить строку"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50"
+            className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive"
           >
             <Trash2 className="size-4" aria-hidden="true" />
           </button>
@@ -128,11 +135,23 @@ function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, a
       <button
         type="button"
         onClick={addRow}
-        className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted"
+        className="flex items-center justify-center gap-1.5 rounded-full border border-dashed border-glass-border py-2 text-sm font-semibold text-muted-foreground transition hover:text-rose-deep"
       >
         <Plus className="size-4" aria-hidden="true" />
         {addLabel}
       </button>
+    </div>
+  )
+}
+
+function Section({ icon: Icon, label, children }) {
+  return (
+    <div className="glass-tile rounded-[1.25rem] p-4">
+      <p className="flex items-center gap-2 text-sm font-semibold text-ink">
+        <Icon className="size-4 text-rose-deep" aria-hidden="true" />
+        {label}
+      </p>
+      <div className="mt-2">{children}</div>
     </div>
   )
 }
@@ -398,340 +417,314 @@ export function HomeworkLessonDialog({
   const isEditableAssignment = mode === "upcoming" && !isCompleted
 
   return (
-    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden p-0 sm:max-h-[85vh]">
-        <div className="shrink-0 p-6 pb-0 sm:p-8 sm:pb-0">
-          <DialogTitle>{studentName}</DialogTitle>
-          <DialogDescription>
-            {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
-          </DialogDescription>
-        </div>
-
-        {preparing ? (
-          <div className="p-6 pt-6 sm:p-8 sm:pt-6">
-            <Spinner label="Готовим урок..." />
+    <DialogPrimitive.Root open={open} onOpenChange={handleDialogOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-50 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+        <DialogPrimitive.Popup className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]">
+          <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
+            <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">
+              {studentName}
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">
+              {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
+            </DialogPrimitive.Description>
           </div>
-        ) : prepareError ? (
-          <div className="p-6 pt-6 sm:p-8 sm:pt-6">
-            <div className="flex items-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
-              <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
-              <span>{prepareError}</span>
+
+          <DialogPrimitive.Close
+            className="absolute right-5 top-5 text-muted-foreground transition hover:text-rose-deep"
+            aria-label="Закрыть"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </DialogPrimitive.Close>
+
+          {preparing ? (
+            <div className="p-6 pt-6 sm:p-7 sm:pt-6">
+              <Spinner label="Готовим урок..." />
             </div>
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6 pt-6 sm:p-8 sm:pt-6">
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-foreground">Тема урока</span>
-
-              {isEditableAssignment ? (
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  disabled={saving}
-                  placeholder="Present Simple"
-                  className="h-11 rounded-xl border-2 border-border bg-secondary/40 px-3.5 text-base font-medium text-foreground outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
-                />
-              ) : (
-                <p className="rounded-xl bg-muted px-3.5 py-2.5 text-sm text-foreground">
-                  {topic || "Тема не указана"}
-                </p>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-foreground">Задание</span>
-
-              {isEditableAssignment ? (
-                <textarea
-                  value={assignmentText}
-                  onChange={(e) => setAssignmentText(e.target.value)}
-                  disabled={saving}
-                  placeholder="Напишите задание..."
-                  rows={4}
-                  className="rounded-xl border-2 border-border bg-secondary/40 px-3.5 py-2.5 text-sm text-foreground outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:bg-card focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
-                />
-              ) : assignmentText ? (
-                <p className="rounded-xl bg-muted px-3.5 py-2.5 text-sm text-foreground">
-                  {assignmentText}
-                </p>
-              ) : (
-                <p className="rounded-xl bg-muted px-3.5 py-2.5 text-sm text-muted-foreground">
-                  Задание не добавлено
-                </p>
-              )}
-
-              {isEditableAssignment ? (
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={handleFileChange}
-                  disabled={saving || uploading}
-                  className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
-                />
-              ) : null}
-
-              {uploading ? (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Загрузка файла...
-                </span>
-              ) : null}
-
-              {uploadError ? (
-                <span className="text-sm font-semibold text-destructive">{uploadError}</span>
-              ) : null}
-
-              {assignmentFiles.length > 0 ? (
-                <ul className="flex flex-col gap-1.5">
-                  {assignmentFiles.map((file, index) => (
-                    <li
-                      key={`${file.url}-${index}`}
-                      className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
-                    >
-                      <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-foreground">{file.title}</span>
-                      {isEditableAssignment ? (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFile(index)}
-                          disabled={saving}
-                          className="shrink-0 text-xs font-semibold text-destructive hover:underline disabled:opacity-50"
-                        >
-                          Удалить
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              {saveError ? (
-                <span className="text-sm font-semibold text-destructive">{saveError}</span>
-              ) : null}
-
-              {isEditableAssignment ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleSaveAssignment}
-                  disabled={saving || uploading}
-                  className="mt-1"
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                      Сохраняем...
-                    </>
-                  ) : (
-                    "Сохранить"
-                  )}
-                </Button>
-              ) : null}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold text-foreground">Ответ ученика</span>
-
-              {submissionFiles.length === 0 ? (
-                <p className="rounded-xl bg-muted px-3.5 py-2.5 text-sm text-muted-foreground">
-                  Ученик ещё не прислал домашнее задание
-                </p>
-              ) : (
-                <ul className="flex flex-col gap-1.5">
-                  {submissionFiles.map((file, index) => (
-                    <li
-                      key={`${file.url}-${index}`}
-                      className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                        {file.submittedAt
-                          ? formatLessonDateTime(file.submittedAt)
-                          : "Дата отправки неизвестна"}
-                      </span>
-                      <a
-                        href={file.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex shrink-0 items-center gap-1 text-xs font-semibold text-primary hover:underline"
-                      >
-                        Открыть
-                        <ExternalLink className="size-3.5" aria-hidden="true" />
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {isCompleted ? (
-              <div className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 p-4">
-                <span className="text-sm font-bold text-foreground">Итоги урока</span>
-                <p className="text-sm text-foreground">
-                  Посещение: {optionLabel(ATTENDANCE_OPTIONS, lesson.attendance)}
-                </p>
-                <p className="text-sm text-foreground">
-                  Домашка: {lesson.homeworkDone ? "Сделана" : "Не сделана"}
-                </p>
-                <p className="text-sm text-foreground">
-                  Оценка: {optionLabel(RATING_OPTIONS, lesson.rating)}
-                </p>
-                {lesson.coveredTopics.length > 0 ? (
-                  <p className="text-sm text-foreground">
-                    Пройдено (темы): {lesson.coveredTopics.map((topic) => topic.title).join(", ")}
-                  </p>
-                ) : null}
-                {lesson.coveredPrototypes.length > 0 ? (
-                  <p className="text-sm text-foreground">
-                    Пройдено (прототипы): {lesson.coveredPrototypes.map((p) => p.title).join(", ")}
-                  </p>
-                ) : null}
+          ) : prepareError ? (
+            <div className="p-6 pt-6 sm:p-7 sm:pt-6">
+              <div className="flex items-center gap-2 rounded-[1rem] bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive">
+                <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+                <span>{prepareError}</span>
               </div>
-            ) : mode === "upcoming" ? null : (
-              <div className="flex flex-col gap-5 rounded-2xl border border-border bg-muted/40 p-4">
-                <span className="text-sm font-bold text-foreground">Итоги урока</span>
-
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-sm font-semibold text-foreground">Посещение</span>
-                  <ToggleGroup
-                    options={ATTENDANCE_OPTIONS}
-                    value={attendance}
-                    onChange={setAttendance}
-                    disabled={completing}
-                  />
-                </div>
-
-                <label className="flex items-center gap-2.5 text-sm font-semibold text-foreground">
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-hidden p-6 pt-5 sm:p-7 sm:pt-5">
+              <Section icon={BookOpen} label="Тема урока">
+                {isEditableAssignment ? (
                   <input
-                    type="checkbox"
-                    checked={homeworkDone}
-                    onChange={(e) => setHomeworkDone(e.target.checked)}
-                    disabled={completing}
-                    className="size-5 rounded-md border-2 border-border accent-primary disabled:opacity-50"
+                    type="text"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    disabled={saving}
+                    placeholder="Present Simple"
+                    className={teacherInputCls}
                   />
-                  Домашка сделана
-                </label>
+                ) : (
+                  <p className="text-sm text-muted-foreground">{topic || "Тема не указана"}</p>
+                )}
+              </Section>
 
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-sm font-semibold text-foreground">Оценка</span>
-                  <ToggleGroup
-                    options={RATING_OPTIONS}
-                    value={rating}
-                    onChange={setRating}
-                    disabled={completing}
-                  />
-                </div>
-
-                {curriculumProgress ? (
-                  <div className="flex flex-col gap-4">
-                    <span className="text-sm font-bold text-foreground">Пройденный материал</span>
-                    <CoveredMaterialPicker
-                      label="Темы"
-                      items={curriculumProgress.topics}
-                      selections={topicSelections}
-                      onChange={setTopicSelections}
-                      addLabel="Добавить ещё"
-                      allCoveredLabel="Все темы программы пройдены"
+              <Section icon={ListChecks} label="Задание">
+                <div className="flex flex-col gap-2">
+                  {isEditableAssignment ? (
+                    <textarea
+                      value={assignmentText}
+                      onChange={(e) => setAssignmentText(e.target.value)}
+                      disabled={saving}
+                      placeholder="Напишите задание..."
+                      rows={4}
+                      className={teacherTextareaCls}
                     />
-                    <CoveredMaterialPicker
-                      label="Прототипы"
-                      items={curriculumProgress.prototypes}
-                      selections={prototypeSelections}
-                      onChange={setPrototypeSelections}
-                      addLabel="Добавить ещё"
-                      allCoveredLabel="Все прототипы программы пройдены"
+                  ) : assignmentText ? (
+                    <p className="text-sm text-muted-foreground">{assignmentText}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Задание не добавлено</p>
+                  )}
+
+                  {isEditableAssignment ? (
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileChange}
+                      disabled={saving || uploading}
+                      className="text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-glass-strong file:px-3 file:py-2 file:text-sm file:font-semibold file:text-foreground/80 file:transition hover:file:text-rose-deep disabled:opacity-50"
                     />
-                  </div>
-                ) : null}
-              </div>
-            )}
+                  ) : null}
 
-            {mode === "completing" || isCompleted ? (
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-semibold text-foreground">Дополнительные материалы</span>
+                  {uploading ? (
+                    <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      Загрузка файла...
+                    </span>
+                  ) : null}
 
-                <input
-                  ref={extraFileInputRef}
-                  type="file"
-                  onChange={handleAddExtraMaterial}
-                  disabled={uploadingExtra}
-                  className="text-sm text-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-secondary-foreground file:transition-colors hover:file:bg-secondary/80 disabled:opacity-50"
-                />
+                  {uploadError ? <span className="text-sm font-semibold text-destructive">{uploadError}</span> : null}
 
-                {uploadingExtra ? (
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Загрузка файла...
-                  </span>
-                ) : null}
-
-                {extraUploadError ? (
-                  <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
-                ) : null}
-
-                {lesson?.materials?.length > 0 ? (
-                  <ul className="flex flex-col gap-1.5">
-                    {lesson.materials.map((material, index) => (
-                      <li
-                        key={`${material.url}-${index}`}
-                        className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2 text-sm"
-                      >
-                        <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate text-foreground">{material.title}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveExtraMaterial(material)}
-                          disabled={removingMaterialUrl !== null}
-                          aria-label={`Удалить ${material.title}`}
-                          className="shrink-0 text-destructive transition-colors hover:text-destructive/80 disabled:opacity-50"
+                  {assignmentFiles.length > 0 ? (
+                    <ul className="flex flex-col gap-1.5">
+                      {assignmentFiles.map((file, index) => (
+                        <li
+                          key={`${file.url}-${index}`}
+                          className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm"
                         >
-                          {removingMaterialUrl === material.url ? (
-                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                          ) : (
-                            <Trash2 className="size-4" aria-hidden="true" />
-                          )}
-                        </button>
+                          <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          <span className="min-w-0 flex-1 truncate text-ink">{file.title}</span>
+                          {isEditableAssignment ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFile(index)}
+                              disabled={saving}
+                              className="shrink-0 text-xs font-semibold text-destructive hover:underline disabled:opacity-50"
+                            >
+                              Удалить
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {saveError ? <span className="text-sm font-semibold text-destructive">{saveError}</span> : null}
+
+                  {isEditableAssignment ? (
+                    <GhostBtn onClick={handleSaveAssignment} disabled={saving || uploading} className="mt-1 self-start px-4 py-2">
+                      {saving ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          Сохраняем...
+                        </>
+                      ) : (
+                        "Сохранить"
+                      )}
+                    </GhostBtn>
+                  ) : null}
+                </div>
+              </Section>
+
+              <Section icon={FileText} label="Ответ ученика">
+                {submissionFiles.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ученик ещё не прислал домашнее задание</p>
+                ) : (
+                  <ul className="flex flex-col gap-1.5">
+                    {submissionFiles.map((file, index) => (
+                      <li
+                        key={`${file.url}-${index}`}
+                        className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                          {file.submittedAt ? formatLessonDateTime(file.submittedAt) : "Дата отправки неизвестна"}
+                        </span>
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex shrink-0 items-center gap-1 text-xs font-semibold text-rose-deep hover:underline"
+                        >
+                          Открыть
+                          <ExternalLink className="size-3.5" aria-hidden="true" />
+                        </a>
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Материалов пока нет</p>
                 )}
-              </div>
-            ) : null}
-          </div>
-        )}
+              </Section>
 
-        {!preparing && !prepareError && !isCompleted ? (
-          <div className="sticky bottom-0 shrink-0 border-t border-border bg-card p-4 sm:px-8">
-            {mode === "completing" && completeError ? (
-              <p className="mb-2 text-sm font-semibold text-destructive">{completeError}</p>
-            ) : null}
-            <Button
-              type="button"
-              className="w-full"
-              onClick={mode === "upcoming" ? () => setMode("completing") : handleCompleteLesson}
-              disabled={mode === "completing" && completing}
-            >
-              {mode === "completing" ? (
-                completing ? (
-                  <>
-                    <Loader2 className="animate-spin" aria-hidden="true" />
-                    Сохраняем...
-                  </>
-                ) : (
-                  "Сохранить и завершить урок"
-                )
-              ) : (
-                "Урок прошёл"
+              {isCompleted ? (
+                <div className="glass-tile flex flex-col gap-2 rounded-[1.25rem] p-4">
+                  <span className="text-sm font-bold text-ink">Итоги урока</span>
+                  <p className="text-sm text-ink">Посещение: {optionLabel(ATTENDANCE_OPTIONS, lesson.attendance)}</p>
+                  <p className="text-sm text-ink">Домашка: {lesson.homeworkDone ? "Сделана" : "Не сделана"}</p>
+                  <p className="text-sm text-ink">Оценка: {optionLabel(RATING_OPTIONS, lesson.rating)}</p>
+                  {lesson.coveredTopics.length > 0 ? (
+                    <p className="text-sm text-ink">
+                      Пройдено (темы): {lesson.coveredTopics.map((topic) => topic.title).join(", ")}
+                    </p>
+                  ) : null}
+                  {lesson.coveredPrototypes.length > 0 ? (
+                    <p className="text-sm text-ink">
+                      Пройдено (прототипы): {lesson.coveredPrototypes.map((p) => p.title).join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : mode === "upcoming" ? null : (
+                <div className="glass-tile flex flex-col gap-5 rounded-[1.25rem] p-4">
+                  <span className="text-sm font-bold text-ink">Итоги урока</span>
+
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-sm font-semibold text-ink">Посещение</span>
+                    <ToggleGroup options={ATTENDANCE_OPTIONS} value={attendance} onChange={setAttendance} disabled={completing} />
+                  </div>
+
+                  <label className="flex items-center gap-2.5 text-sm font-semibold text-ink">
+                    <input
+                      type="checkbox"
+                      checked={homeworkDone}
+                      onChange={(e) => setHomeworkDone(e.target.checked)}
+                      disabled={completing}
+                      className="size-5 rounded-md border-2 border-glass-border accent-primary disabled:opacity-50"
+                    />
+                    Домашка сделана
+                  </label>
+
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-sm font-semibold text-ink">Оценка</span>
+                    <ToggleGroup options={RATING_OPTIONS} value={rating} onChange={setRating} disabled={completing} />
+                  </div>
+
+                  {curriculumProgress ? (
+                    <div className="flex flex-col gap-4">
+                      <span className="text-sm font-bold text-ink">Пройденный материал</span>
+                      <CoveredMaterialPicker
+                        label="Темы"
+                        items={curriculumProgress.topics}
+                        selections={topicSelections}
+                        onChange={setTopicSelections}
+                        addLabel="Добавить ещё"
+                        allCoveredLabel="Все темы программы пройдены"
+                      />
+                      <CoveredMaterialPicker
+                        label="Прототипы"
+                        items={curriculumProgress.prototypes}
+                        selections={prototypeSelections}
+                        onChange={setPrototypeSelections}
+                        addLabel="Добавить ещё"
+                        allCoveredLabel="Все прототипы программы пройдены"
+                      />
+                    </div>
+                  ) : null}
+                </div>
               )}
-            </Button>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+
+              {mode === "completing" || isCompleted ? (
+                <Section icon={Paperclip} label="Дополнительные материалы">
+                  <div className="flex flex-col gap-2">
+                    <input
+                      ref={extraFileInputRef}
+                      type="file"
+                      onChange={handleAddExtraMaterial}
+                      disabled={uploadingExtra}
+                      className="text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-glass-strong file:px-3 file:py-2 file:text-sm file:font-semibold file:text-foreground/80 file:transition hover:file:text-rose-deep disabled:opacity-50"
+                    />
+
+                    {uploadingExtra ? (
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        Загрузка файла...
+                      </span>
+                    ) : null}
+
+                    {extraUploadError ? (
+                      <span className="text-sm font-semibold text-destructive">{extraUploadError}</span>
+                    ) : null}
+
+                    {lesson?.materials?.length > 0 ? (
+                      <ul className="flex flex-col gap-1.5">
+                        {lesson.materials.map((material, index) => (
+                          <li
+                            key={`${material.url}-${index}`}
+                            className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm"
+                          >
+                            <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                            <span className="min-w-0 flex-1 truncate text-ink">{material.title}</span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveExtraMaterial(material)}
+                              disabled={removingMaterialUrl !== null}
+                              aria-label={`Удалить ${material.title}`}
+                              className="shrink-0 text-destructive transition hover:text-destructive/80 disabled:opacity-50"
+                            >
+                              {removingMaterialUrl === material.url ? (
+                                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Trash2 className="size-4" aria-hidden="true" />
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Материалов пока нет</p>
+                    )}
+                  </div>
+                </Section>
+              ) : null}
+            </div>
+          )}
+
+          {!preparing && !prepareError && !isCompleted ? (
+            <div className="shrink-0 border-t border-glass-border p-4 sm:px-7">
+              {mode === "completing" && completeError ? (
+                <p className="mb-2 text-sm font-semibold text-destructive">{completeError}</p>
+              ) : null}
+              <SolidBtn
+                className="w-full justify-center py-3 text-sm"
+                onClick={mode === "upcoming" ? () => setMode("completing") : handleCompleteLesson}
+                disabled={mode === "completing" && completing}
+              >
+                {mode === "completing" ? (
+                  completing ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                      Сохраняем...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="size-4" aria-hidden="true" />
+                      Сохранить и завершить урок
+                    </>
+                  )
+                ) : (
+                  "Урок прошёл"
+                )}
+              </SolidBtn>
+            </div>
+          ) : null}
+        </DialogPrimitive.Popup>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }

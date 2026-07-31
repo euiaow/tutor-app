@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
-import { Video, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
+import { Video } from "lucide-react"
+import { Field, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, TeacherModalFooter, TeacherSaveBtn, teacherInputCls } from "@/components/teacher/theme-ui"
 import { subscribeToVideoCallUrl, updateVideoCallUrl } from "@/firebase/videoCall"
 
 export function VideoCallSettings() {
@@ -19,9 +18,7 @@ export function VideoCallSettings() {
   }, [])
 
   function handleOpenChange(nextOpen) {
-    if (nextOpen) {
-      setValue(url)
-    }
+    if (nextOpen) setValue(url)
     setOpen(nextOpen)
   }
 
@@ -39,32 +36,41 @@ export function VideoCallSettings() {
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger
-        className="flex h-11 items-center gap-1.5 rounded-xl border border-border bg-background px-3 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <button
+        type="button"
+        onClick={() => handleOpenChange(true)}
         title="Ссылка на видеозвонок"
+        className="glass-tile grid size-10 place-items-center rounded-full text-foreground/70"
       >
         <Video className="size-4" aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent>
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold text-muted-foreground">Ссылка на видеозвонок</span>
-          <input
-            type="url"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            disabled={saving}
-            placeholder="https://telemost.yandex.ru/..."
-            className="h-9 rounded-lg border border-border bg-background px-2 text-sm text-foreground outline-none disabled:opacity-50"
-          />
-          <p className="text-xs text-muted-foreground">
-            Одна постоянная ссылка для всех уроков — покажется рядом с ближайшими уроками.
-          </p>
-          <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
-          </Button>
+      </button>
+
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Ссылка на видеозвонок</TeacherDialogTitle>
+        <TeacherDialogDescription>
+          Одна постоянная ссылка для всех уроков — покажется рядом с ближайшими уроками.
+        </TeacherDialogDescription>
+
+        <div className="mt-5 flex flex-col gap-4">
+          <Field label="Ссылка">
+            <input
+              type="url"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              disabled={saving}
+              placeholder="https://telemost.yandex.ru/..."
+              className={teacherInputCls}
+            />
+          </Field>
+
+          <TeacherModalFooter className="grid-cols-1">
+            <TeacherSaveBtn onClick={handleSave} disabled={saving}>
+              {saving ? "Сохраняем..." : "Сохранить"}
+            </TeacherSaveBtn>
+          </TeacherModalFooter>
         </div>
-      </PopoverContent>
-    </Popover>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }

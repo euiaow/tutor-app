@@ -43,6 +43,11 @@
   --color-ink-foreground: var(--ink-foreground);
   --shadow-soft: var(--shadow-soft);
   --shadow-glass: var(--shadow-glass);
+  --color-glass: var(--glass);
+  --color-glass-strong: var(--glass-strong);
+  --color-glass-border: var(--glass-border);
+  --color-rose-deep: var(--rose-deep);
+  --color-rose-soft: var(--rose-soft);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -261,4 +266,126 @@
   &::-webkit-scrollbar {
     display: none;
   }
+}
+
+/*
+ * Teacher panel theme — rose/pink palette from "redesign teacher v1"
+ * (rosy-reflections-main), a genuinely different hue family from the
+ * amber/orange student palette above. Scoped entirely under
+ * `.teacher-theme` (wraps TeacherDashboard's root) via CSS custom-property
+ * shadowing: every shared token below (--primary, --background, --card,
+ * --border, --radius, --shadow-*, etc.) is only overridden for descendants
+ * of `.teacher-theme` — the root `:root` tokens used by the student page
+ * are untouched. glass-panel/glass-tile are new utility names (not
+ * glass/glass-soft/glass-inset) per explicit instruction that unifying the
+ * two themes' utility names isn't needed.
+ */
+.teacher-theme {
+  --radius: 1.5rem;
+  --background: oklch(0.975 0.012 350);
+  --foreground: oklch(0.24 0.045 350);
+  --ink: oklch(0.22 0.04 350);
+  --ink-foreground: oklch(0.99 0.005 350);
+  --card: oklch(0.995 0.008 350 / 55%);
+  --card-foreground: oklch(0.24 0.045 350);
+  --popover: oklch(0.99 0.008 350);
+  --popover-foreground: oklch(0.24 0.045 350);
+  --primary: oklch(0.66 0.185 5);
+  --primary-foreground: oklch(0.99 0.005 350);
+  --secondary: oklch(0.94 0.03 350 / 60%);
+  --secondary-foreground: oklch(0.35 0.08 355);
+  --muted: oklch(0.95 0.02 350 / 55%);
+  --muted-foreground: oklch(0.55 0.05 350);
+  --accent: oklch(0.9 0.06 350 / 70%);
+  --accent-foreground: oklch(0.32 0.09 355);
+  --destructive: oklch(0.6 0.2 20);
+  --destructive-foreground: oklch(0.99 0.005 350);
+  --border: oklch(1 0 0 / 55%);
+  --input: oklch(1 0 0 / 60%);
+  --ring: oklch(0.72 0.14 355);
+  --glass: oklch(1 0 0 / 30%);
+  --glass-strong: oklch(1 0 0 / 42%);
+  --glass-border: oklch(1 0 0 / 70%);
+  --rose-deep: oklch(0.58 0.19 5);
+  --rose-soft: oklch(0.86 0.09 350);
+  --balance-ok: oklch(0.58 0.09 155);
+  --balance-warn: oklch(0.66 0.11 75);
+  --balance-danger: oklch(0.58 0.15 20);
+  --gradient-page: radial-gradient(
+      1200px 700px at 10% -5%,
+      oklch(0.92 0.09 350 / 90%),
+      transparent 60%
+    ),
+    radial-gradient(900px 600px at 95% 10%, oklch(0.88 0.12 355 / 85%), transparent 60%),
+    radial-gradient(1000px 800px at 60% 100%, oklch(0.93 0.07 340 / 80%), transparent 65%),
+    linear-gradient(180deg, oklch(0.98 0.012 350), oklch(0.96 0.02 345));
+  --gradient-orb: radial-gradient(circle at 32% 28%, oklch(0.84 0.15 350), oklch(0.62 0.2 8));
+  --shadow-glass: 0 24px 60px -28px oklch(0.5 0.16 355 / 45%);
+  --shadow-soft: 0 10px 30px -18px oklch(0.5 0.16 355 / 55%);
+  position: relative;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+@utility glass-panel {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(18px) saturate(135%);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility glass-tile {
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px) saturate(125%);
+}
+
+@utility bg-grain-blobs {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+@utility blob-a {
+  position: absolute;
+  left: -12%;
+  top: -18%;
+  width: 62vw;
+  height: 62vw;
+  border-radius: 58% 42% 61% 39% / 45% 55% 45% 55%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    oklch(0.86 0.14 350 / 90%),
+    oklch(0.7 0.19 8 / 55%) 55%,
+    transparent 75%
+  );
+  filter: blur(90px);
+  opacity: 0.55;
+}
+
+@utility blob-b {
+  position: absolute;
+  right: -16%;
+  bottom: -22%;
+  width: 56vw;
+  height: 56vw;
+  border-radius: 44% 56% 38% 62% / 60% 38% 62% 40%;
+  background: radial-gradient(
+    circle at 60% 55%,
+    oklch(0.9 0.1 340 / 85%),
+    oklch(0.74 0.16 355 / 45%) 60%,
+    transparent 78%
+  );
+  filter: blur(95px);
+  opacity: 0.5;
+}
+
+@utility grain-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0.55;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
 }

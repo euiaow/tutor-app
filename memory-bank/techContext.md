@@ -31,6 +31,13 @@
 - `eslint.config.js` (flat config) + `npm run lint` for the frontend.
 - `.firebase/hosting.*.cache` is a Firebase CLI artifact that shows as
   modified in git — not meaningful source, ignore when reviewing diffs.
+- **As of session 8, the project has an actual git history again** — the
+  user committed and pushed everything up through session 7 plus most of
+  session 8 in one commit (`3e365a3`, 2026-07-30), ending a streak of
+  eight-plus sessions of deploy-only uncommitted work. Don't assume
+  `git status`/`git log` are still meaningless the way earlier memory
+  entries describe — check them fresh each session; this may or may not
+  continue as a habit.
 
 ## Technical constraints
 
