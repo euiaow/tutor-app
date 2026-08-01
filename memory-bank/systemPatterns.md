@@ -384,6 +384,56 @@ src/
   top-level document field (e.g. `assignedAt`, `updatedAt`,
   `createdAt` elsewhere in this codebase all sit directly on the
   document, not inside an array).
+- **CSS rules declared outside any `@layer` always beat every layered rule,
+  regardless of layer order or source position — this is real CSS cascade
+  behavior, not a Tailwind quirk, and it silently broke the teacher panel's
+  modals for a whole session (2026-08-01) before being found.**
+  `.teacher-theme` (`index.css`) declares its own `background`/`color`
+  directly on itself so portaled dialog elements (which need the class
+  applied straight to them, since Base UI's `Portal` moves them out of the
+  `.teacher-theme` DOM subtree entirely) can resolve its CSS variables. It
+  was written as a bare, unlayered rule; Tailwind v4's `@utility` directive
+  (used for `glass-panel`, `glass-tile`, and every core Tailwind class)
+  puts its output inside `@layer utilities` — so on any element carrying
+  both `teacher-theme` and a utility touching the same property (`bg-ink/25`
+  on the dialog Backdrop, `glass-panel`'s own `background` on the Popup),
+  the unlayered rule always won regardless of which class came later in the
+  `className` string. Fixed by wrapping `.teacher-theme` in `@layer base`.
+  **Any future "apply a theme-scoping class directly onto portaled/escaped
+  elements to carry CSS variables past the Portal boundary" pattern must
+  live inside a named `@layer`, never bare** — otherwise it'll silently
+  fight (and always beat) every Tailwind utility applied alongside it.
+- **A `position:relative`, `z-index:auto` element's own background paints
+  *after* its own negative-`z-index` descendants resolve — painting a page
+  background on the same element that's the direct parent of a
+  `position:fixed`/`z-index:-N` decorative layer will dim or hide that
+  layer, not sit behind it.** Per CSS2.1 Appendix E's painting order,
+  negative-z-index descendants of a stacking context paint before that
+  context's own "stack level 0" content — and a positioned element with
+  `z-index:auto` (like `.teacher-theme`, `position:relative` with no
+  explicit z-index) counts as stack-level-0 content of whatever ancestor
+  context it's actually resolved in, painted *after* negative-z siblings/
+  descendants of that same context. Confirmed by moving the teacher panel's
+  background gradient off `.teacher-theme` (direct parent of its
+  `bg-grain-blobs`/`blob-a`/`blob-b` decorative layer, `z-index:-10`) onto
+  `body:has(.teacher-theme)` instead — matching the "redesign teacher v1"
+  mockup's own mechanism, where the equivalent gradient lives on real
+  `<body>`, an ancestor *outside* the position:relative wrapper, never
+  competing with the fixed layer for paint order. **Rule of thumb for any
+  future "background behind a fixed decorative layer" work: the background
+  must live on an ancestor that is not that layer's own positioned parent.**
+- **`--card-opaque`** (`index.css`, root `:root`) exists for screens that
+  render straight on root design tokens with no decorative background
+  layer of their own — `PublicLanding.jsx`, `TeacherLogin.jsx`,
+  `SelfServiceSignup.jsx` all swap `bg-card` → `bg-[var(--card-opaque)]`
+  rather than using the (as of the "redesign student v3" migration)
+  translucent `--card`, which would blend into a flat page with nothing
+  behind it. `LoginScreen.jsx` used this too until `StudentGrainBackground`
+  was added directly to it, at which point it switched to the real
+  translucent `glass` utility class instead — **the moment a screen gains
+  its own decorative background, revisit whether `--card-opaque` is still
+  needed for it**, don't assume the point-fix must stay forever once
+  applied.
 
 ## Component relationships
 

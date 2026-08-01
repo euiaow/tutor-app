@@ -26,6 +26,7 @@ const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
 const cancelRescheduleCallable = httpsCallable(functions, "cancelReschedule")
 const proposeCancellationCallable = httpsCallable(functions, "proposeCancellation")
 const confirmCancellationCallable = httpsCallable(functions, "confirmCancellation")
+const cancelLessonDirectlyCallable = httpsCallable(functions, "cancelLessonDirectly")
 const rejectCancellationCallable = httpsCallable(functions, "rejectCancellation")
 
 function mapLessonDoc(id, studentId, data) {
@@ -56,6 +57,7 @@ function mapLessonDoc(id, studentId, data) {
         submittedAt: data.homework?.submission?.submittedAt?.toDate?.() ?? null,
       },
     },
+    durationMinutes: data.durationMinutes ?? 60,
     rescheduled: Boolean(data.rescheduled),
     rescheduledDate: data.rescheduledDate?.toDate?.() ?? null,
     rescheduleStatus: data.rescheduleStatus ?? null,
@@ -126,6 +128,12 @@ export async function rejectCancellation(studentId, lessonId) {
   await rejectCancellationCallable({ studentId, lessonId })
 }
 
+// Teacher-only one-way cancellation — no confirmedBy/role param, always
+// requires a signed-in teacher session (see index.js's cancelLessonDirectly).
+export async function cancelLessonDirectly(studentId, lessonId) {
+  await cancelLessonDirectlyCallable({ studentId, lessonId })
+}
+
 // A callable (not a direct client write like updateLessonTopic below)
 // because attaching a material also needs to trigger a "material_added"
 // notification to the student — see core/lessons.js.
@@ -175,19 +183,64 @@ export function subscribeToLesson(studentId, lessonId, onData, onError) {
   )
 }
 
+const UPCOMING_GRACE_MINUTES = 45
+
+// A lesson stays status "upcoming" server-side until the teacher completes
+// or cancels it, so a no-show or a lesson the teacher hasn't gotten to yet
+// can sit well past its effective date. On the student side only, once it's
+// more than UPCOMING_GRACE_MINUTES past due it should stop counting as the
+// "next" lesson — display-only, never writes to the doc, so it's still
+// there (and completable) in the teacher's own unfiltered
+// subscribeToUpcomingLessons below.
+function isStillRelevant(lesson) {
+  const effectiveDate = lesson.rescheduledDate ?? lesson.date
+  return Boolean(effectiveDate) && effectiveDate.getTime() + UPCOMING_GRACE_MINUTES * 60000 > Date.now()
+}
+
 export function subscribeToUpcomingLesson(studentId, onData, onError) {
   const ref = collection(db, "students", studentId, "lessons")
-  const upcomingQuery = query(ref, where("status", "==", "upcoming"), orderBy("date", "asc"), limit(1))
+  // No server-side limit(1) here: the single soonest-by-date doc could be
+  // exactly the one the grace-period filter drops while another slot's
+  // draft is still relevant, so every upcoming doc has to be fetched and
+  // filtered before picking the nearest one.
+  const upcomingQuery = query(ref, where("status", "==", "upcoming"), orderBy("date", "asc"))
 
   return onSnapshot(
     upcomingQuery,
     (snapshot) => {
-      if (snapshot.empty) {
+      const relevant = snapshot.docs
+        .map((document) => mapLessonDoc(document.id, studentId, document.data()))
+        .filter(isStillRelevant)
+
+      if (relevant.length === 0) {
         onData(null)
         return
       }
-      const document = snapshot.docs[0]
-      onData(mapLessonDoc(document.id, studentId, document.data()))
+
+      const nearest = relevant.reduce((soonest, lesson) =>
+        (lesson.rescheduledDate ?? lesson.date) < (soonest.rescheduledDate ?? soonest.date) ? lesson : soonest,
+      )
+      onData(nearest)
+    },
+    onError,
+  )
+}
+
+// Same query as subscribeToUpcomingLesson but without the limit(1) —
+// powers "Мои уроки" (StudentDashboard.jsx), the one place that needs
+// every upcoming draft across all of a student's schedule slots at once,
+// not just the single soonest one. Same grace-period filter applies.
+export function subscribeToAllUpcomingLessons(studentId, onData, onError) {
+  const ref = collection(db, "students", studentId, "lessons")
+  const upcomingQuery = query(ref, where("status", "==", "upcoming"), orderBy("date", "asc"))
+
+  return onSnapshot(
+    upcomingQuery,
+    (snapshot) => {
+      const lessons = snapshot.docs
+        .map((document) => mapLessonDoc(document.id, studentId, document.data()))
+        .filter(isStillRelevant)
+      onData(lessons)
     },
     onError,
   )
@@ -233,6 +286,35 @@ export function subscribeToCompletedLessons(onData, onError, maxResults = 25) {
 
   return onSnapshot(
     completedQuery,
+    (snapshot) => {
+      const lessons = snapshot.docs.map((document) => {
+        const studentId = document.ref.parent.parent.id
+        return mapLessonDoc(document.id, studentId, document.data())
+      })
+      onData(lessons)
+    },
+    onError,
+  )
+}
+
+// Powers the teacher dashboard's "Доход за неделю" row — spans both
+// "upcoming" and "completed" (a lesson shouldn't drop out of this week's
+// income the moment it's marked done) and, unlike the two feeds above, isn't
+// capped since every matching lesson has to be seen to sum correctly. Reuses
+// the same (status, date) composite index as subscribeToUpcomingLessons —
+// Firestore serves an `in` filter off the same index as `==`. Filtering down
+// to "this week" happens client-side (see finance-section.jsx) because the
+// week has to be evaluated against the *effective* date (rescheduledDate ??
+// date), which Firestore can't query on directly.
+export function subscribeToIncomeLessons(onData, onError) {
+  const incomeQuery = query(
+    collectionGroup(db, "lessons"),
+    where("status", "in", ["upcoming", "completed"]),
+    orderBy("date", "asc"),
+  )
+
+  return onSnapshot(
+    incomeQuery,
     (snapshot) => {
       const lessons = snapshot.docs.map((document) => {
         const studentId = document.ref.parent.parent.id

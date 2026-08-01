@@ -20,6 +20,8 @@ const CURRICULUM_PROGRESS_DOC_ID = "main"
 
 const assignCurriculumTemplateCallable = httpsCallable(functions, "assignCurriculumTemplate")
 const markTopicsCoveredCallable = httpsCallable(functions, "markTopicsCovered")
+const addPersonalTopicCallable = httpsCallable(functions, "addPersonalTopic")
+const removePersonalTopicCallable = httpsCallable(functions, "removePersonalTopic")
 
 function mapTemplateDoc(id, data) {
   return {
@@ -87,6 +89,17 @@ export async function markTopicsCovered(studentId, lessonId, { topicIds, prototy
   await markTopicsCoveredCallable({ studentId, lessonId, topicIds, prototypeIds, rating })
 }
 
+// Edits a student's own curriculumProgress directly — independent of
+// whatever template it came from. type is "topic" | "prototype".
+export async function addPersonalTopic(studentId, { title, minScoreRequired, type }) {
+  const result = await addPersonalTopicCallable({ studentId, title, minScoreRequired, type })
+  return result.data
+}
+
+export async function removePersonalTopic(studentId, { itemId, type }) {
+  await removePersonalTopicCallable({ studentId, itemId, type })
+}
+
 export function subscribeToCurriculumProgress(studentId, onData, onError) {
   const ref = doc(db, "students", studentId, CURRICULUM_PROGRESS_SUBCOLLECTION, CURRICULUM_PROGRESS_DOC_ID)
 
@@ -101,6 +114,9 @@ export function subscribeToCurriculumProgress(studentId, onData, onError) {
       onData({
         topics: Array.isArray(data.topics) ? data.topics : [],
         prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
+        // Exam Radar Phase 3 needs this for computeRadarMetrics' pace
+        // window — wasn't exposed here before since nothing read it.
+        assignedAt: data.assignedAt ?? null,
       })
     },
     onError,

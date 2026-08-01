@@ -3,6 +3,7 @@ import { FileText } from "lucide-react"
 import { AddPaymentForm } from "@/components/teacher/add-payment-form"
 import { StudentTags } from "@/components/student-tags"
 import { subscribeToBalanceLedger } from "@/firebase/finance"
+import { subscribeToIncomeLessons } from "@/firebase/lessons"
 import {
   GhostBtn,
   Panel,
@@ -22,6 +23,46 @@ function balanceColor(balance, lowBalanceThreshold) {
   if (balance <= 0) return "var(--balance-danger)"
   if (balance <= lowBalanceThreshold) return "var(--balance-warn)"
   return "var(--balance-ok)"
+}
+
+const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// Moscow has been fixed at UTC+3 with no DST since 2014, so the week
+// (Monday 00:00 – Sunday 23:59:59.999, Moscow time) can be derived with
+// plain UTC-getter arithmetic instead of a timezone library: shifting the
+// instant by the fixed offset before reading UTC fields yields Moscow's
+// wall-clock date, and shifting back after zeroing to Monday midnight
+// recovers the real UTC instant that boundary falls on.
+function getMoscowWeekBounds(reference = new Date()) {
+  const shifted = new Date(reference.getTime() + MOSCOW_OFFSET_MS)
+  const daysSinceMonday = (shifted.getUTCDay() + 6) % 7
+  const mondayWallMs = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate() - daysSinceMonday)
+
+  const weekStart = new Date(mondayWallMs - MOSCOW_OFFSET_MS)
+  const weekEnd = new Date(weekStart.getTime() + 7 * DAY_MS - 1)
+  return { weekStart, weekEnd }
+}
+
+// income lessons already come pre-filtered to status upcoming/completed
+// (see subscribeToIncomeLessons) — this only has to narrow that down to the
+// current Moscow week (by *effective* date, since a reschedule can move a
+// lesson in or out of it) and skip students with no hourlyRate set.
+function computeWeeklyIncome(incomeLessons, students) {
+  const { weekStart, weekEnd } = getMoscowWeekBounds()
+  const rateByStudentId = new Map(students.map((student) => [student.id, student.hourlyRate]))
+
+  let total = 0
+  for (const lesson of incomeLessons) {
+    const rate = rateByStudentId.get(lesson.studentId)
+    if (!(rate > 0)) continue
+
+    const effectiveDate = lesson.rescheduledDate ?? lesson.date
+    if (!effectiveDate || effectiveDate < weekStart || effectiveDate > weekEnd) continue
+
+    total += rate * (lesson.durationMinutes / 60)
+  }
+  return total
 }
 
 function AddPaymentDialog({ studentId, open, onOpenChange }) {
@@ -119,10 +160,20 @@ function StudentLedgerDialog({ student, open, onOpenChange }) {
 export function FinanceSection({ students }) {
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [payingStudentId, setPayingStudentId] = useState(null)
+  const [incomeLessons, setIncomeLessons] = useState([])
+
+  useEffect(() => {
+    const unsub = subscribeToIncomeLessons(setIncomeLessons, (error) => {
+      console.error("Failed to load income lessons:", error)
+    })
+
+    return () => unsub()
+  }, [])
 
   const sortedStudents = [...students].sort(
     (a, b) => (a.paidLessonsBalance ?? 0) - (b.paidLessonsBalance ?? 0),
   )
+  const weeklyIncome = computeWeeklyIncome(incomeLessons, students)
 
   return (
     <Panel>
@@ -184,6 +235,13 @@ export function FinanceSection({ students }) {
           </ul>
         </>
       )}
+
+      <div className="mt-4 flex items-center justify-between border-t border-glass-border pt-3">
+        <span className="font-display text-sm text-muted-foreground">Доход за неделю</span>
+        <span className="glass-tile rounded-full px-4 py-1.5 font-display text-base text-ink">
+          {Math.round(weeklyIncome)} ₽
+        </span>
+      </div>
 
       <StudentLedgerDialog
         student={selectedStudent}

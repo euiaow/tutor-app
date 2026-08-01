@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CalendarPlus,
   Check,
+  ChevronRight,
   CircleSlash,
   Clock,
   FileText,
@@ -58,6 +59,7 @@ import {
   cancelReschedule,
   proposeCancellation,
   confirmCancellation,
+  cancelLessonDirectly,
   rejectCancellation,
 } from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
@@ -197,10 +199,14 @@ function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange
 function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+  const [cancelDirectly, setCancelDirectly] = useState(false)
 
   function handleOpenChange(nextOpen) {
     onOpenChange(nextOpen)
-    if (!nextOpen) setError("")
+    if (!nextOpen) {
+      setError("")
+      setCancelDirectly(false)
+    }
   }
 
   async function handleConfirm() {
@@ -208,11 +214,15 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
     setSubmitting(true)
     setError("")
     try {
-      await proposeCancellation(studentId, lessonId)
+      if (cancelDirectly) {
+        await cancelLessonDirectly(studentId, lessonId)
+      } else {
+        await proposeCancellation(studentId, lessonId)
+      }
       handleOpenChange(false)
     } catch (err) {
-      console.error("Failed to propose cancellation:", err)
-      setError(err?.message || "Не удалось отправить запрос на отмену")
+      console.error("Failed to cancel lesson:", err)
+      setError(err?.message || "Не удалось отменить урок")
     } finally {
       setSubmitting(false)
     }
@@ -223,8 +233,21 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
       <TeacherDialogContent>
         <TeacherDialogTitle>Отменить урок</TeacherDialogTitle>
         <TeacherDialogDescription>
-          Вы уверены, что хотите предложить отменить урок{lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""}?
+          {cancelDirectly
+            ? `Урок${lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""} будет отменён сразу, без запроса подтверждения у ученика.`
+            : `Вы уверены, что хотите предложить отменить урок${lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""}?`}
         </TeacherDialogDescription>
+
+        <label className="mt-4 flex items-start gap-2.5 text-sm text-ink">
+          <input
+            type="checkbox"
+            checked={cancelDirectly}
+            onChange={(e) => setCancelDirectly(e.target.checked)}
+            disabled={submitting}
+            className="mt-0.5 size-5 shrink-0 rounded-md border-2 border-glass-border accent-primary disabled:opacity-50"
+          />
+          Отменить сразу, без подтверждения ученика
+        </label>
 
         {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
 
@@ -238,7 +261,7 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
             disabled={submitting}
             className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Отправляем..." : "Да, отменить"}
+            {submitting ? "Отменяем..." : "Да, отменить"}
           </button>
         </div>
       </TeacherDialogContent>
@@ -636,7 +659,7 @@ export function TeacherDashboard() {
   const embedLoading = googleCalendarConnected === true && !embedUrl && !embedError
   const [upcomingLessons, setUpcomingLessons] = useState([])
   const [completedLessons, setCompletedLessons] = useState([])
-  const [completedVisibleCount] = useState(2)
+  const [completedVisibleCount] = useState(5)
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
@@ -900,35 +923,6 @@ export function TeacherDashboard() {
           </Panel>
         ) : null}
 
-        <div className="grid gap-5 lg:grid-cols-[2fr_3fr]">
-          {completedLessons.length > 0 ? (
-            <Panel>
-              <div className="flex items-center justify-between">
-                <Title>Прошедшие уроки</Title>
-              </div>
-              <ul className="mt-4 divide-y divide-glass-border">
-                {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
-                  <PastLessonCard
-                    key={lesson.id}
-                    lesson={lesson}
-                    studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
-                    student={students.find((s) => s.id === lesson.studentId)}
-                  />
-                ))}
-              </ul>
-              {completedLessons.length > completedVisibleCount ? (
-                <GhostBtn onClick={() => setIsAllPastLessonsOpen(true)} className="mt-3 self-start px-4 py-2">
-                  Показать все прошедшие уроки
-                </GhostBtn>
-              ) : null}
-            </Panel>
-          ) : null}
-
-          {students.length > 0 ? <FinanceSection students={students} /> : null}
-        </div>
-
-        <AllPastLessonsDialog open={isAllPastLessonsOpen} onOpenChange={setIsAllPastLessonsOpen} students={students} />
-
         <Panel>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Title>Ученики</Title>
@@ -956,6 +950,40 @@ export function TeacherDashboard() {
             )}
           </div>
         </Panel>
+
+        <div className="grid gap-5 lg:grid-cols-[2fr_3fr]">
+          {completedLessons.length > 0 ? (
+            <Panel>
+              <div className="flex items-center justify-between">
+                <Title>Прошедшие уроки</Title>
+              </div>
+              <ul className="mt-4 divide-y divide-glass-border">
+                {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
+                  <PastLessonCard
+                    key={lesson.id}
+                    lesson={lesson}
+                    studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
+                    student={students.find((s) => s.id === lesson.studentId)}
+                  />
+                ))}
+              </ul>
+              {completedLessons.length > completedVisibleCount ? (
+                <button
+                  type="button"
+                  onClick={() => setIsAllPastLessonsOpen(true)}
+                  className="mt-3 inline-flex shrink-0 items-center gap-1 self-start text-sm font-medium text-muted-foreground"
+                >
+                  Показать все прошедшие уроки
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
+            </Panel>
+          ) : null}
+
+          {students.length > 0 ? <FinanceSection students={students} /> : null}
+        </div>
+
+        <AllPastLessonsDialog open={isAllPastLessonsOpen} onOpenChange={setIsAllPastLessonsOpen} students={students} />
 
         <CurriculumSection />
 

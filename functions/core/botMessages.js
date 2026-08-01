@@ -200,6 +200,13 @@ function CANCELLATION_CONFIRMED(lessonDate) {
   return `❌ Урок ${formatMoscowDateTime(lessonDate)} отменён`
 }
 
+// One-way teacher cancellation (cancelLessonDirectly) — a plain
+// announcement, not a proposal, so unlike CANCELLATION_PROPOSED_TO_STUDENT
+// this never gets a reply keyboard attached.
+function LESSON_CANCELLED_BY_TEACHER(lessonDate) {
+  return `❌ Урок ${formatMoscowDateTime(lessonDate)} отменён репетитором.`
+}
+
 function CANCELLATION_REJECTED() {
   return "↩️ Отмена урока отклонена. Урок остаётся в силе."
 }
@@ -325,6 +332,10 @@ function buildPreLessonMessage(lessonDate, homeworkText) {
   )
 }
 
+function buildTenMinuteReminderMessage(homeworkText) {
+  return "🔔 Урок через 10 минут!" + (homeworkText ? "\nНе забудь домашку, если ещё не отправил(а)." : "")
+}
+
 module.exports = {
   WELCOME_NO_TOKEN,
   WELCOME_WITH_TOKEN,
@@ -346,6 +357,7 @@ module.exports = {
   REGISTRATION_FAILED,
   REMINDER_MIDDAY_SUMMARY,
   buildPreLessonMessage,
+  buildTenMinuteReminderMessage,
   RESCHEDULE_PROPOSED_TO_STUDENT,
   RESCHEDULE_PROPOSED_TO_TEACHER,
   RESCHEDULE_CONFIRMED,
@@ -359,6 +371,7 @@ module.exports = {
   CANCELLATION_PROPOSED_TO_STUDENT,
   CANCELLATION_PROPOSED_TO_TEACHER,
   CANCELLATION_CONFIRMED,
+  LESSON_CANCELLED_BY_TEACHER,
   CANCELLATION_REJECTED,
   CANCELLATION_CALLBACK_FAILED,
   CANCELLATION_KEYBOARDS,

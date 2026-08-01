@@ -24,11 +24,16 @@ function emptyHomework() {
   }
 }
 
-function createUpcomingDraft(studentId, slotIndex, date) {
+// durationMinutes is written directly onto the lesson doc (not just read
+// live off scheduleSlots at income-calculation time) so a later schedule
+// edit can't retroactively change what a past/current week's income
+// calculation sees for an already-created draft.
+function createUpcomingDraft(studentId, slotIndex, date, durationMinutes) {
   return lessonsRef(studentId).add({
     status: "upcoming",
     date: Timestamp.fromDate(date),
     slotIndex,
+    durationMinutes: durationMinutes ?? 60,
     topic: "",
     homework: emptyHomework(),
     rescheduled: false,
@@ -90,7 +95,12 @@ async function ensureUpcomingLesson(studentId) {
     if (idsBySlot.has(occurrence.slotIndex)) {
       continue
     }
-    const draft = await createUpcomingDraft(studentId, occurrence.slotIndex, occurrence.date)
+    const draft = await createUpcomingDraft(
+      studentId,
+      occurrence.slotIndex,
+      occurrence.date,
+      scheduleSlots[occurrence.slotIndex]?.durationMinutes,
+    )
     idsBySlot.set(occurrence.slotIndex, draft.id)
     logger.info("ensureUpcomingLesson: created upcoming lesson draft", {
       studentId,
@@ -170,7 +180,12 @@ async function syncUpcomingLessonToSchedule(studentId) {
     const existingDoc = bySlot.get(occurrence.slotIndex)
 
     if (!existingDoc) {
-      const draft = await createUpcomingDraft(studentId, occurrence.slotIndex, occurrence.date)
+      const draft = await createUpcomingDraft(
+        studentId,
+        occurrence.slotIndex,
+        occurrence.date,
+        scheduleSlots[occurrence.slotIndex]?.durationMinutes,
+      )
       idsBySlot.set(occurrence.slotIndex, draft.id)
       logger.info("syncUpcomingLessonToSchedule: created draft for new slot", {
         studentId,
@@ -341,6 +356,7 @@ async function createExtraLesson(studentId, date) {
     date: Timestamp.fromDate(date),
     isExtraLesson: true,
     slotIndex: null,
+    durationMinutes: 60,
     homework: emptyHomework(),
     remindersSent: { preLessonSent: false },
     createdAt: FieldValue.serverTimestamp(),
@@ -725,6 +741,60 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
   await createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: message, lessonId })
 }
 
+// One-way cancellation — teacher cancels outright, no cancellationStatus/
+// cancellationInitiator pending step at all (those fields stay untouched,
+// unused by this path). Unlike confirmCancellation, the lesson doc is kept
+// (status: "cancelled") rather than deleted, so it still shows up in
+// lesson history; also doesn't call ensureUpcomingLesson for the same
+// reason confirmCancellation doesn't — the slot's next occurrence gets its
+// own draft lazily, not forced here.
+async function cancelLessonDirectly(studentId, lessonId) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!lessonId || typeof lessonId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+  }
+
+  const lessonRef = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await lessonRef.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+  const lesson = snapshot.data()
+
+  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+  const student = studentSnapshot.exists ? studentSnapshot.data() : null
+
+  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
+  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+
+  if (eventId) {
+    try {
+      await deleteLessonEvent(eventId)
+    } catch (error) {
+      logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
+        studentId,
+        lessonId,
+        error,
+      })
+    }
+  }
+
+  await lessonRef.update({ status: "cancelled" })
+
+  logger.info("cancelLessonDirectly: lesson cancelled directly by teacher", { studentId, lessonId })
+
+  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
+  await createNotification({
+    target: "student",
+    studentId,
+    type: "lesson_cancelled_by_teacher",
+    text: botMessages.LESSON_CANCELLED_BY_TEACHER(lessonDate),
+    lessonId,
+  })
+}
+
 async function rejectCancellation(studentId, lessonId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -862,6 +932,7 @@ module.exports = {
   cancelReschedule,
   proposeCancellation,
   confirmCancellation,
+  cancelLessonDirectly,
   rejectCancellation,
   findStudentIdByChatIdentity,
   uploadHomeworkFile,

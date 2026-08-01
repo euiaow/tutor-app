@@ -36,13 +36,20 @@ const {
   cancelReschedule,
   proposeCancellation,
   confirmCancellation,
+  cancelLessonDirectly,
   rejectCancellation,
   recordHomeworkSubmission,
 } = require("./core/lessons")
-const { dailyReminderMidday, dailyReminderPreLesson } = require("./reminders")
+const { dailyReminderMidday, dailyReminderPreLesson, dailyReminderTenMin } = require("./reminders")
 const { deleteStudent } = require("./core/students")
 const { addPayment } = require("./core/finance")
-const { assignCurriculumTemplate, markTopicsCovered } = require("./core/curriculum")
+const {
+  assignCurriculumTemplate,
+  setStudentGoal,
+  addPersonalTopic,
+  removePersonalTopic,
+  markTopicsCovered,
+} = require("./core/curriculum")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -256,6 +263,63 @@ exports.assignCurriculumTemplate = onCall(async (request) => {
 
     logger.error("Failed to assign curriculum template", error)
     throw new HttpsError("internal", "Не удалось назначить программу")
+  }
+})
+
+// Student-facing, no request.auth check — same trust model (studentId
+// knowledge) as the rest of the Student Dashboard's callables.
+exports.setStudentGoal = onCall(async (request) => {
+  const { studentId, targetScore, examDate } = request.data ?? {}
+
+  try {
+    return await setStudentGoal(studentId, targetScore, examDate)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to set student goal", error)
+    throw new HttpsError("internal", "Не удалось сохранить цель")
+  }
+})
+
+// Teacher-only (unlike setStudentGoal above) — editing a student's program
+// is a teacher action, not a student one.
+exports.addPersonalTopic = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, title, minScoreRequired, type } = request.data ?? {}
+
+  try {
+    return await addPersonalTopic(studentId, { title, minScoreRequired, type })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to add personal topic", error)
+    throw new HttpsError("internal", "Не удалось добавить тему")
+  }
+})
+
+exports.removePersonalTopic = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, itemId, type } = request.data ?? {}
+
+  try {
+    return await removePersonalTopic(studentId, { itemId, type })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to remove personal topic", error)
+    throw new HttpsError("internal", "Не удалось удалить тему")
   }
 })
 
@@ -486,6 +550,32 @@ exports.confirmCancellation = onCall(
   },
 )
 
+// Teacher-web-only (always request.auth-gated, no dual-actor role param —
+// there's no "student initiates a direct cancellation" concept, this is a
+// one-way teacher action by design).
+exports.cancelLessonDirectly = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { studentId, lessonId } = request.data ?? {}
+
+    try {
+      await cancelLessonDirectly(studentId, lessonId)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to cancel lesson directly", error)
+      throw new HttpsError("internal", "Не удалось отменить урок")
+    }
+  },
+)
+
 // Same both-dashboards reasoning as confirmCancellation — reject carries no
 // role param (mirrors cancelReschedule), so it isn't gated by request.auth
 // at all; either side may decline a cancellation proposal.
@@ -528,6 +618,16 @@ exports.dailyReminderPreLesson = onSchedule(
   { schedule: "0 * * * *", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async () => {
     await dailyReminderPreLesson()
+  },
+)
+
+// Every 5 minutes — reminds students whose lesson starts within the next 15
+// minutes (see dailyReminderTenMin's own comment for why 15, not 10). A
+// third, independent reminder tier alongside the two above.
+exports.dailyReminderTenMin = onSchedule(
+  { schedule: "*/5 * * * *", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  async () => {
+    await dailyReminderTenMin()
   },
 )
 

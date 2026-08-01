@@ -29,6 +29,36 @@ const EXAM_TARGET_OPTIONS = [
   { value: "school", label: "Школьная программа" },
 ]
 
+// Drives both the row layout (score field shown or not, its range) and the
+// section subtitles for CurriculumEditorDialog — keyed by the same
+// examTarget the "Тип" select already writes to state, so switching it
+// mid-edit re-renders this immediately with no save/reopen needed.
+const EXAM_TARGET_FIELD_CONFIG = {
+  ege: {
+    showScore: true,
+    scoreMin: 0,
+    scoreMax: 100,
+    scorePlaceholder: "0",
+    scoreTitle: "Минимальный балл, с которого тема актуальна",
+    topicsLabel: "Тема и целевое количество баллов, для которого актуальна",
+    prototypesLabel: "Прототип и целевое количество баллов, для которого актуален",
+  },
+  oge: {
+    showScore: true,
+    scoreMin: 2,
+    scoreMax: 5,
+    scorePlaceholder: "3",
+    scoreTitle: "Минимальная оценка, с которой тема актуальна",
+    topicsLabel: "Тема и минимальная оценка, для которой актуальна",
+    prototypesLabel: "Прототип и минимальная оценка, для которой актуален",
+  },
+  school: {
+    showScore: false,
+    topicsLabel: "Темы",
+    prototypesLabel: "Прототипы",
+  },
+}
+
 // Short random id for a topic/prototype row — only needs to be unique within
 // one template's own arrays, not globally, so no crypto/uuid dependency.
 function shortId() {
@@ -36,7 +66,7 @@ function shortId() {
 }
 
 function emptyRow() {
-  return { id: shortId(), title: "" }
+  return { id: shortId(), title: "", minScoreRequired: 0 }
 }
 
 function ExamTargetTag({ examTarget }) {
@@ -50,9 +80,9 @@ function ExamTargetTag({ examTarget }) {
   )
 }
 
-function RowList({ label, rows, onChange, addLabel }) {
-  function updateRow(index, title) {
-    onChange(rows.map((row, i) => (i === index ? { ...row, title } : row)))
+function RowList({ label, rows, onChange, addLabel, showScore, scoreMin, scoreMax, scorePlaceholder, scoreTitle }) {
+  function updateRow(index, field, value) {
+    onChange(rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)))
   }
 
   function removeRow(index) {
@@ -71,9 +101,21 @@ function RowList({ label, rows, onChange, addLabel }) {
             <input
               type="text"
               value={row.title}
-              onChange={(e) => updateRow(index, e.target.value)}
-              className={teacherInputCls}
+              onChange={(e) => updateRow(index, "title", e.target.value)}
+              className={`${teacherInputCls} min-w-0 flex-1`}
             />
+            {showScore ? (
+              <input
+                type="number"
+                min={scoreMin}
+                max={scoreMax}
+                value={row.minScoreRequired ?? 0}
+                onChange={(e) => updateRow(index, "minScoreRequired", Number(e.target.value) || 0)}
+                placeholder={scorePlaceholder}
+                title={scoreTitle}
+                className={`${teacherInputCls} w-14! shrink-0 px-2! text-center`}
+              />
+            ) : null}
             <button
               type="button"
               onClick={() => removeRow(index)}
@@ -104,6 +146,7 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
   const [prototypes, setPrototypes] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const fieldConfig = EXAM_TARGET_FIELD_CONFIG[examTarget]
 
   useEffect(() => {
     if (!open) return
@@ -125,11 +168,20 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
     setSaving(true)
     setError("")
     try {
+      // School templates show no score field at all, but every row still
+      // needs minScoreRequired: 0 written so the document shape stays
+      // uniform across template types — Exam Radar and the
+      // curriculumProgress copy-on-assign both key off this field existing.
+      const normalizeRow = (row) => ({
+        ...row,
+        minScoreRequired: examTarget === "school" ? 0 : row.minScoreRequired,
+      })
+
       const payload = {
         name: name.trim(),
         examTarget,
-        topics: topics.filter((row) => row.title.trim() !== ""),
-        prototypes: prototypes.filter((row) => row.title.trim() !== ""),
+        topics: topics.filter((row) => row.title.trim() !== "").map(normalizeRow),
+        prototypes: prototypes.filter((row) => row.title.trim() !== "").map(normalizeRow),
       }
 
       if (template) {
@@ -180,8 +232,28 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
             </select>
           </Field>
 
-          <RowList label="Темы" rows={topics} onChange={setTopics} addLabel="Добавить тему" />
-          <RowList label="Прототипы" rows={prototypes} onChange={setPrototypes} addLabel="Добавить прототип" />
+          <RowList
+            label={fieldConfig.topicsLabel}
+            rows={topics}
+            onChange={setTopics}
+            addLabel="Добавить тему"
+            showScore={fieldConfig.showScore}
+            scoreMin={fieldConfig.scoreMin}
+            scoreMax={fieldConfig.scoreMax}
+            scorePlaceholder={fieldConfig.scorePlaceholder}
+            scoreTitle={fieldConfig.scoreTitle}
+          />
+          <RowList
+            label={fieldConfig.prototypesLabel}
+            rows={prototypes}
+            onChange={setPrototypes}
+            addLabel="Добавить прототип"
+            showScore={fieldConfig.showScore}
+            scoreMin={fieldConfig.scoreMin}
+            scoreMax={fieldConfig.scoreMax}
+            scorePlaceholder={fieldConfig.scorePlaceholder}
+            scoreTitle={fieldConfig.scoreTitle}
+          />
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
 

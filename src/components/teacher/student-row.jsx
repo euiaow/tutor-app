@@ -41,6 +41,8 @@ import {
   setCurriculumItemCovered,
   getCurriculumTemplates,
   assignCurriculumTemplate,
+  addPersonalTopic,
+  removePersonalTopic,
 } from "@/firebase/curriculum"
 import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
 import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatExamTarget, formatSubjects } from "@/lib/student-profile"
@@ -113,6 +115,153 @@ function DeleteStudentDialog({ studentId, studentName, open, onOpenChange }) {
   )
 }
 
+// One list + its own add-row form, for either topics or prototypes.
+// itemType is the literal "topic"/"prototype" string the backend expects;
+// progressField is which key on the curriculumProgress doc this reads from.
+function PersonalProgramSection({ label, itemType, items, studentId, removingId, onRemove }) {
+  const [title, setTitle] = useState("")
+  const [minScore, setMinScore] = useState(0)
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState("")
+
+  async function handleAdd() {
+    if (adding || !title.trim()) return
+    setAdding(true)
+    setError("")
+    try {
+      await addPersonalTopic(studentId, { title: title.trim(), minScoreRequired: minScore, type: itemType })
+      setTitle("")
+      setMinScore(0)
+    } catch (err) {
+      console.error("Failed to add personal topic:", err)
+      setError(err?.message || "Не удалось добавить тему")
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <div className="glass-tile rounded-[1.25rem] p-4">
+      <p className="text-sm font-semibold text-ink">{label}</p>
+
+      {items.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-1">
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 rounded-[0.75rem] px-2 py-1.5 text-sm text-ink"
+            >
+              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              <button
+                type="button"
+                onClick={() => onRemove(itemType, item.id)}
+                disabled={removingId === item.id}
+                aria-label={`Удалить ${item.title}`}
+                className="shrink-0 text-muted-foreground transition hover:text-destructive disabled:opacity-50"
+              >
+                {removingId === item.id ? (
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="size-3.5" aria-hidden="true" />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">Пусто</p>
+      )}
+
+      <div className="mt-3 flex items-center gap-2 border-t border-glass-border pt-3">
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          disabled={adding}
+          placeholder="Название темы"
+          className={teacherInputCls}
+        />
+        <input
+          type="number"
+          min="0"
+          max="100"
+          value={minScore}
+          onChange={(e) => setMinScore(Number(e.target.value) || 0)}
+          disabled={adding}
+          placeholder="0"
+          title="Минимальный балл, с которого тема актуальна"
+          className={`${teacherInputCls} w-16 shrink-0 px-2 text-center`}
+        />
+        <GhostBtn onClick={handleAdd} disabled={adding || !title.trim()} className="shrink-0 px-4 py-2.5">
+          {adding ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Добавить"}
+        </GhostBtn>
+      </div>
+      {error ? <p className="mt-2 text-xs font-semibold text-destructive">{error}</p> : null}
+    </div>
+  )
+}
+
+// Direct editing of a student's own curriculumProgress — add/remove
+// topics/prototypes independent of whatever template it was assigned
+// from. Deliberately doesn't distinguish template-copied items from
+// personally-added ones anywhere in this list: once copied, they're all
+// just "this student's program," per explicit instruction not to split
+// them into "native"/"personal" visually.
+function PersonalProgramDialog({ studentId, open, onOpenChange }) {
+  const [progress, setProgress] = useState(null)
+  const [removingId, setRemovingId] = useState(null)
+
+  useEffect(() => {
+    if (!open) return
+    const unsubscribe = subscribeToCurriculumProgress(studentId, setProgress, (error) =>
+      console.error("Failed to load curriculum progress:", error),
+    )
+    return () => unsubscribe()
+  }, [open, studentId])
+
+  async function handleRemove(itemType, itemId) {
+    if (removingId) return
+    setRemovingId(itemId)
+    try {
+      await removePersonalTopic(studentId, { itemId, type: itemType })
+    } catch (error) {
+      console.error("Failed to remove personal topic:", error)
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={onOpenChange}>
+      <TeacherDialogContent wide>
+        <TeacherDialogTitle>Программа ученика</TeacherDialogTitle>
+        <TeacherDialogDescription>
+          Темы и прототипы, добавленные напрямую в программу — не меняет общий шаблон.
+        </TeacherDialogDescription>
+
+        <div className="mt-5 space-y-4">
+          <PersonalProgramSection
+            label="Темы"
+            itemType="topic"
+            items={progress?.topics ?? []}
+            studentId={studentId}
+            removingId={removingId}
+            onRemove={handleRemove}
+          />
+          <PersonalProgramSection
+            label="Прототипы"
+            itemType="prototype"
+            items={progress?.prototypes ?? []}
+            studentId={studentId}
+            removingId={removingId}
+            onRemove={handleRemove}
+          />
+        </div>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
+
 // The 13th modal — schedule editing moved here from the old inline
 // ScheduleBlock per the requested layout change; profile fields (subject/
 // exam target/rate/auto-remind/curriculum plan) live in the same modal,
@@ -127,6 +276,7 @@ function StudentEditModal({ student, open, onOpenChange }) {
   const [templateId, setTemplateId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [isProgramEditorOpen, setIsProgramEditorOpen] = useState(false)
   const initializedRef = useRef(false)
 
   useEffect(() => {
@@ -323,21 +473,40 @@ function StudentEditModal({ student, open, onOpenChange }) {
               </button>
             </div>
 
-            <Field label="Учебный план">
-              <select
-                value={templateId}
-                onChange={(e) => setTemplateId(e.target.value)}
-                disabled={saving}
-                className={teacherInputCls}
-              >
-                <option value="">Не назначен</option>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <label className="block">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsProgramEditorOpen(true)}
+                  className="flex items-center gap-1 text-xs font-semibold text-rose-deep"
+                >
+                  <Pencil className="size-3" aria-hidden="true" />
+                  Редактировать программу ученика
+                </button>
+                <span className="text-xs font-semibold text-muted-foreground">Учебный план</span>
+              </div>
+              <div className="mt-1.5">
+                <select
+                  value={templateId}
+                  onChange={(e) => setTemplateId(e.target.value)}
+                  disabled={saving}
+                  className={teacherInputCls}
+                >
+                  <option value="">Не назначен</option>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </label>
+
+            <PersonalProgramDialog
+              studentId={student.id}
+              open={isProgramEditorOpen}
+              onOpenChange={setIsProgramEditorOpen}
+            />
           </div>
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}

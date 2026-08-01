@@ -74,6 +74,24 @@
 
 ## Dependencies worth knowing about
 
+- **Two separate teacher-panel mockup source folders exist in the repo
+  root**: `redesign teacher v1/rosy-reflections-main/` (the pink/rose
+  teacher theme actually in use). **Three** separate student-page ones:
+  `redesign v2` (session 7's migration, still the base of most of the
+  current student page), and `redesign student v3/
+  luminous-learn-dashboard-main/` (session 9's migration on top of it —
+  new page background, `ExamRadar`, redesigned progress lists, redesigned
+  lesson-history tags, login screen). When a task references "the mockup"
+  for the student page, check *which* folder it means before assuming —
+  v2 and v3 genuinely differ (e.g. v3's `--card`/`--border`/etc. are
+  translucent where v2's port had deliberately kept them solid).
+- No browser/DevTools automation tool exists in this environment — every
+  visual bug diagnosis in this project has depended on the user manually
+  running DevTools steps (Elements/Computed/Console) and pasting back the
+  literal output. Don't guess or apply speculative CSS/JS fixes without
+  that — see [[systemPatterns]]'s `@layer` and background-paint-order
+  entries for a case where three guessed fixes were wrong before the real
+  causes were found this way.
 - `functions/scripts/migrateSchedule.js` is tracked in git (confirmed via
   `git ls-files` — no longer untracked, unlike earlier session notes) but
   still a manual one-off (`node functions/scripts/migrateSchedule.js`),

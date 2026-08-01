@@ -198,4 +198,64 @@ async function dailyReminderPreLesson() {
   logger.info("dailyReminderPreLesson: finished")
 }
 
-module.exports = { dailyReminderMidday, dailyReminderPreLesson }
+// dailyReminderTenMin: runs every 5 minutes. A third, independent tier on
+// top of dailyReminderMidday and dailyReminderPreLesson — reminds a student
+// about each upcoming lesson starting within the next 15 minutes (wider than
+// the "10 minutes" in the message text itself, as a buffer against the 5-min
+// cron cadence) and is gated purely by its own per-lesson flag, so it never
+// interferes with (or gets throttled by) the 2-hour pre-lesson reminder.
+async function dailyReminderTenMin() {
+  logger.info("dailyReminderTenMin: starting")
+
+  const now = new Date()
+  const windowEnd = new Date(now.getTime() + 15 * 60 * 1000)
+
+  const studentsSnapshot = await db.collection(STUDENTS_COLLECTION).get()
+
+  for (const studentDoc of studentsSnapshot.docs) {
+    const studentId = studentDoc.id
+    const student = studentDoc.data()
+
+    if (normalizeScheduleSlots(student).length === 0) {
+      continue
+    }
+
+    try {
+      const upcomingDocs = await getUpcomingLessons(studentId)
+
+      for (const lessonDoc of upcomingDocs) {
+        const lesson = lessonDoc.data()
+        const date = effectiveLessonDate(lesson)
+        if (!date || date < now || date >= windowEnd) {
+          continue
+        }
+
+        if (lesson.remindersSent?.tenMinSent) {
+          continue
+        }
+
+        const assignmentText = lesson.homework?.assignment?.text ?? ""
+        const message = botMessages.buildTenMinuteReminderMessage(assignmentText)
+
+        const { delivered } = await createNotification({
+          target: "student",
+          studentId,
+          type: "lesson_soon",
+          text: message,
+          lessonId: lessonDoc.id,
+        })
+
+        if (delivered) {
+          await lessonDoc.ref.update({ "remindersSent.tenMinSent": true })
+          logger.info("dailyReminderTenMin: reminder sent", { studentId, lessonId: lessonDoc.id })
+        }
+      }
+    } catch (error) {
+      logger.error("dailyReminderTenMin: failed to send reminder", { studentId, error })
+    }
+  }
+
+  logger.info("dailyReminderTenMin: finished")
+}
+
+module.exports = { dailyReminderMidday, dailyReminderPreLesson, dailyReminderTenMin }

@@ -17,6 +17,7 @@ import { normalizeScheduleSlots } from "@/lib/schedule"
 const STUDENTS_COLLECTION = "students"
 
 const deleteStudentCallable = httpsCallable(functions, "deleteStudent")
+const setStudentGoalCallable = httpsCallable(functions, "setStudentGoal")
 
 export function mapStudentDoc(id, data) {
   return {
@@ -38,6 +39,8 @@ export function mapStudentDoc(id, data) {
     vkPeerId: data.vkPeerId ?? null,
     contactUrl: data.contactUrl ?? null,
     curriculumSourceTemplateId: data.curriculumSourceTemplateId ?? null,
+    targetScore: data.targetScore ?? null,
+    examDate: data.examDate ?? null,
   }
 }
 
@@ -108,6 +111,21 @@ export async function updateStudentContactUrl(studentId, contactUrl) {
 export async function updateStudentProfile(studentId, { subject, examTarget, hourlyRate, autoRemindLowBalance }) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
   await updateDoc(ref, { subject, examTarget, hourlyRate, autoRemindLowBalance })
+}
+
+// A callable (not a direct client write like updateStudentProfile above)
+// per explicit spec — examDate needs server-side Timestamp construction
+// from the ISO string a plain <input type="date"> value produces, and
+// student-facing writes to students/{id} otherwise never go direct except
+// where called out. `examDate` is a JS Date or null; serialized to ISO
+// before crossing the callable boundary since Date doesn't survive
+// httpsCallable's JSON serialization.
+export async function setStudentGoal(studentId, targetScore, examDate) {
+  await setStudentGoalCallable({
+    studentId,
+    targetScore: targetScore === "" || targetScore === null ? null : Number(targetScore),
+    examDate: examDate ? examDate.toISOString() : null,
+  })
 }
 
 // Backend does the real work (Google Calendar event, lessons subcollection

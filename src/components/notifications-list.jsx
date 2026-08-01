@@ -1,23 +1,54 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { formatRelativeTime } from "@/lib/notifications"
 import { markNotificationRead } from "@/firebase/notifications"
-import { confirmReschedule, cancelReschedule, confirmCancellation, rejectCancellation } from "@/firebase/lessons"
+import {
+  confirmReschedule,
+  cancelReschedule,
+  confirmCancellation,
+  rejectCancellation,
+  subscribeToLesson,
+} from "@/firebase/lessons"
 
-const PROPOSAL_TYPES = ["reschedule_proposed", "cancellation_proposed"]
+// Real values the backend actually writes (functions/core/lessons.js
+// proposeReschedule/proposeCancellation, initiator === "teacher" branch) —
+// NOT the plain "reschedule_proposed"/"cancellation_proposed" this constant
+// held before, which never matched anything (a guessed name, never checked
+// against the backend). The "_to_teacher" siblings exist too but are
+// target:"teacher", so they'd never reach the student's own notification
+// feed regardless.
+const PROPOSAL_TYPES = ["reschedule_proposed_to_student", "cancellation_proposed_to_student"]
 
 // Site-side duplicate of the bot's inline confirm/decline keyboard — student
-// only, for reschedule_proposed/cancellation_proposed (teacher-initiated
-// proposals the student needs to act on). `state` starts idle (buttons
-// shown) rather than reflecting live lesson status: if the student already
-// answered via the bot, clicking here just makes the callable reject with
-// its own "not pending anymore" validation error (confirmReschedule/
-// confirmCancellation already guard on current status), which is caught
-// below and rendered as "already handled" instead of a raw error — this is
-// the actual desync guard, not a pre-check.
+// only, for reschedule_proposed_to_student/cancellation_proposed_to_student
+// (teacher-initiated proposals the student needs to act on).
+//
+// Two independent signals decide what's shown: `state` (this click's own
+// optimistic result — "confirming"/"confirmed"/etc.) and a live
+// subscribeToLesson on the notification's own lessonId, which is what makes
+// the buttons disappear here the moment the SAME proposal is resolved from
+// anywhere else — the "Следующий урок" banner's own buttons, the bot's
+// inline keyboard, or another open tab — not just after this row's own
+// click. Before this, a resolved-elsewhere proposal only got caught
+// reactively on click (confirmReschedule/confirmCancellation's own
+// "not pending anymore" failed-precondition error, still relied on below
+// as the actual authority/guard against a genuine double-submit race, not
+// removed) — buttons stayed visible and clickable until then.
 function ProposalActions({ notification }) {
   const [state, setState] = useState(null) // null | "confirming" | "rejecting" | "confirmed" | "rejected" | "resolved"
+  const [lesson, setLesson] = useState(undefined) // undefined = not loaded yet
+
+  useEffect(() => {
+    if (!notification.studentId || !notification.lessonId) {
+      setLesson(null)
+      return
+    }
+    const unsubscribe = subscribeToLesson(notification.studentId, notification.lessonId, setLesson, (error) => {
+      console.error("Failed to subscribe to lesson for notification actions:", error)
+      setLesson(null)
+    })
+    return unsubscribe
+  }, [notification.studentId, notification.lessonId])
 
   async function finish(action, nextState) {
     if (state) return
@@ -40,7 +71,7 @@ function ProposalActions({ notification }) {
   function handleConfirm() {
     finish(
       () =>
-        notification.type === "reschedule_proposed"
+        notification.type === "reschedule_proposed_to_student"
           ? confirmReschedule(notification.studentId, notification.lessonId, "student")
           : confirmCancellation(notification.studentId, notification.lessonId, "student"),
       "confirmed",
@@ -50,7 +81,7 @@ function ProposalActions({ notification }) {
   function handleReject() {
     finish(
       () =>
-        notification.type === "reschedule_proposed"
+        notification.type === "reschedule_proposed_to_student"
           ? cancelReschedule(notification.studentId, notification.lessonId)
           : rejectCancellation(notification.studentId, notification.lessonId),
       "rejected",
@@ -61,18 +92,39 @@ function ProposalActions({ notification }) {
   if (state === "rejected") return <p className="mt-1 text-xs font-semibold text-muted-foreground">Отклонено</p>
   if (state === "resolved") return <p className="mt-1 text-xs font-semibold text-muted-foreground">Уже обработано</p>
 
+  if (lesson !== undefined) {
+    const stillPending =
+      notification.type === "reschedule_proposed_to_student"
+        ? lesson?.rescheduleStatus === "pending_student"
+        : lesson?.status !== "cancelled" && lesson?.cancellationStatus === "pending_student"
+    if (!stillPending) {
+      return <p className="mt-1 text-xs font-semibold text-muted-foreground">Уже обработано</p>
+    }
+  }
+
   const busy = state === "confirming" || state === "rejecting"
 
   return (
     <div className="mt-1.5 flex gap-2" onClick={(e) => e.stopPropagation()}>
-      <Button type="button" size="sm" onClick={handleConfirm} disabled={busy}>
+      <button
+        type="button"
+        onClick={handleConfirm}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:scale-100"
+        style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+      >
         {state === "confirming" ? <Loader2 className="size-3 animate-spin" aria-hidden="true" /> : null}
         Подтвердить
-      </Button>
-      <Button type="button" size="sm" variant="outline" onClick={handleReject} disabled={busy}>
+      </button>
+      <button
+        type="button"
+        onClick={handleReject}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-full border border-white/60 bg-white/45 px-4 py-1.5 text-xs font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-55"
+      >
         {state === "rejecting" ? <Loader2 className="size-3 animate-spin" aria-hidden="true" /> : null}
         Отклонить
-      </Button>
+      </button>
     </div>
   )
 }

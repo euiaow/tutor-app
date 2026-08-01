@@ -160,6 +160,37 @@
   notifications list scrollbar is hidden. See [[systemPatterns]] for the
   new `render`-prop pattern this uncovered and [[activeContext]] for the
   still-unconfirmed `window.open()`→`<a>` bug fix.
+- Teacher panel's modals (homework dialog, reschedule, cancel, curriculum
+  editor, notifications) were completely broken (no visible content, no
+  backdrop) — fixed via three separate root causes (React duplicate-key
+  collision, an unlayered `.teacher-theme` CSS rule beating every Tailwind
+  utility, and a background-vs-fixed-decorative-layer paint-order bug).
+  See [[systemPatterns]] for the technical detail — this is reusable CSS
+  knowledge, not just a one-off fix.
+- Homework dialog's "Пройденный материал" (completing mode) is checkboxes,
+  not the old multi-row selects — multi-select, only uncovered items,
+  prototypes hidden when none exist. Teacher's `StudentRow` curriculum
+  tiles are now direct click-to-toggle (no separate edit modal).
+- Reschedule proposals now show old time struck through → arrow → new time
+  bold, on both the teacher's upcoming-lesson row and the student's
+  next-lesson banners (both directions). Student's own notification panel
+  can now confirm/reject `reschedule_proposed`/`cancellation_proposed`
+  directly (duplicating what the bot already offers), reusing the
+  backend's existing status-mismatch validation to detect if the bot
+  already handled it.
+- Student page migrated a second time to "redesign student v3"
+  (`luminous-learn-dashboard-main`, a *different* mockup source folder
+  than session 7's "redesign v2" — check which one before assuming a
+  future v3-vs-v2 mismatch is a bug): near-white page background +
+  translucent card/border/muted tokens (new `--card-opaque` fallback for
+  screens with no decorative backdrop), new `StudentGrainBackground`
+  component (replaces the old `bg-glass.jpg` photo), new static `ExamRadar`
+  block (mock data only, no real logic), `CurriculumItemGroups` redesigned
+  to the mockup's stacked Пройдено/Осталось layout, lesson-history tags
+  redesigned to a local 3-tone glass `Badge` (deliberately not merged with
+  the teacher's `StatusBadge`), login screen (`LoginScreen`/`PinInput`)
+  fully migrated over two passes. See [[activeContext]] session 9 for the
+  full list and what got missed on the first pass.
 
 ## Known issues / open items
 
@@ -167,13 +198,13 @@
   `http://localhost:5173/teacher` with an explicit `pending` comment to
   replace it before production.
 - No automated test suite in the repo.
-- **Resolved as of session 8**: most of the work described above (through
-  session 7 and most of session 8) is now committed and pushed
-  (`3e365a3`) — the "nothing is committed" risk flagged in every prior
-  update no longer applies to that history. `src/pages/PublicLanding.jsx`
-  was left uncommitted after the push (session 8's window.open→`<a>`
-  fix) — check whether that landed too, and whether committing continues
-  as a habit going forward.
+- **Resolved as of session 8, regressed again in session 9**: session 8's
+  work was committed and pushed (`3e365a3`), plus one more commit
+  (`e01c493`, "редизайн учителя без фикса багов") since. **Everything from
+  session 9 (teacher freeze fix, curriculum checkboxes, student v3
+  migration, login screen) is uncommitted working-tree changes only** —
+  the "nothing is committed" risk is back. Confirm next session whether
+  this gets committed or stays a running uncommitted pile.
 - Curriculum templates feature (session 7) is fully implemented (all 4
   phases) but **not manually verified end-to-end** at all yet — create/
   edit/delete a template, assign/replace it on a student, mark topics

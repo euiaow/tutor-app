@@ -21,12 +21,19 @@ function lessonRef(studentId, lessonId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION).doc(lessonId)
 }
 
+// Mirrors curriculum-section.jsx's own shortId() — only needs to be unique
+// within one student's topics/prototypes array, not globally.
+function shortId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
 function withProgressDefaults(items) {
   return (Array.isArray(items) ? items : []).map((item) => ({
     id: item.id,
     title: item.title,
     covered: false,
     coveredAt: null,
+    minScoreRequired: typeof item.minScoreRequired === "number" ? item.minScoreRequired : 0,
   }))
 }
 
@@ -62,6 +69,127 @@ async function assignCurriculumTemplate(studentId, templateId) {
   await studentRef.update({ curriculumSourceTemplateId: templateId })
 
   logger.info("assignCurriculumTemplate: template assigned", { studentId, templateId })
+
+  return { success: true }
+}
+
+// Student's own exam-prep goal (Exam Radar Phase 1) — lives here rather
+// than core/students.js since it's conceptually part of the same
+// curriculum/exam-tracking domain as assignCurriculumTemplate/
+// markTopicsCovered, not general profile data. No request.auth check: this
+// is a student-facing action, reachable from the unauthenticated Student
+// Dashboard, same trust model (studentId knowledge) as the rest of the
+// student-facing surface.
+async function setStudentGoal(studentId, targetScore, examDate) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+
+  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
+  const studentSnapshot = await studentRef.get()
+  if (!studentSnapshot.exists) {
+    throw new HttpsError("not-found", "Ученик не найден")
+  }
+
+  const normalizedScore =
+    targetScore === null || targetScore === undefined || targetScore === ""
+      ? null
+      : Math.max(0, Math.min(100, Number(targetScore)))
+  const normalizedExamDate = examDate ? Timestamp.fromDate(new Date(examDate)) : null
+
+  await studentRef.update({ targetScore: normalizedScore, examDate: normalizedExamDate })
+
+  logger.info("setStudentGoal: goal updated", { studentId, targetScore: normalizedScore })
+
+  return { success: true }
+}
+
+// Adds one topic/prototype directly to a student's own curriculumProgress,
+// independent of whatever template it was originally assigned from —
+// doesn't touch curriculumTemplates at all. minScoreRequired defaults to 0
+// (the common case — a personal addition the teacher wants regardless of
+// the student's target score) but still respects an explicit value from
+// the same compact "Мин. балл" input the template editor uses, clamped
+// 0-100 the same way setStudentGoal clamps targetScore. Creates
+// curriculumProgress/main on the fly (via .set, not .update) if the
+// student has no program assigned yet at all — this is a valid way to
+// start a fully custom program without ever assigning a template.
+async function addPersonalTopic(studentId, { title, minScoreRequired, type } = {}) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!title || typeof title !== "string" || !title.trim()) {
+    throw new HttpsError("invalid-argument", "Не указано название темы")
+  }
+  if (type !== "topic" && type !== "prototype") {
+    throw new HttpsError("invalid-argument", "Некорректный тип элемента")
+  }
+
+  const field = type === "prototype" ? "prototypes" : "topics"
+  const score =
+    minScoreRequired === null || minScoreRequired === undefined || minScoreRequired === ""
+      ? 0
+      : Math.max(0, Math.min(100, Number(minScoreRequired) || 0))
+
+  const newItem = {
+    id: shortId(),
+    title: title.trim(),
+    minScoreRequired: score,
+    covered: false,
+    coveredAt: null,
+  }
+
+  const ref = progressRef(studentId)
+  const snapshot = await ref.get()
+
+  if (!snapshot.exists) {
+    await ref.set({
+      topics: field === "topics" ? [newItem] : [],
+      prototypes: field === "prototypes" ? [newItem] : [],
+      assignedAt: FieldValue.serverTimestamp(),
+    })
+  } else {
+    await ref.update({ [field]: FieldValue.arrayUnion(newItem) })
+  }
+
+  logger.info("addPersonalTopic: item added", { studentId, type, id: newItem.id })
+
+  return { success: true, id: newItem.id }
+}
+
+// Removes one item by id — arrayRemove doesn't work here since the element
+// isn't a primitive/exact-match value (its own covered/coveredAt could
+// differ from what the client last saw), so this reads the array, filters
+// out the matching id, and writes the whole array back. Deliberately never
+// touches any lesson doc's coveredTopics/coveredPrototypes — those are
+// historical records of what was actually covered in a past lesson, and
+// removing an item from the *current* program must not rewrite that
+// history.
+async function removePersonalTopic(studentId, { itemId, type } = {}) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!itemId || typeof itemId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор темы")
+  }
+  if (type !== "topic" && type !== "prototype") {
+    throw new HttpsError("invalid-argument", "Некорректный тип элемента")
+  }
+
+  const field = type === "prototype" ? "prototypes" : "topics"
+  const ref = progressRef(studentId)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Программа ученика не найдена")
+  }
+
+  const data = snapshot.data()
+  const items = Array.isArray(data[field]) ? data[field] : []
+  const nextItems = items.filter((item) => item.id !== itemId)
+
+  await ref.update({ [field]: nextItems })
+
+  logger.info("removePersonalTopic: item removed", { studentId, type, itemId })
 
   return { success: true }
 }
@@ -122,4 +250,10 @@ async function markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, 
   return { success: true }
 }
 
-module.exports = { assignCurriculumTemplate, markTopicsCovered }
+module.exports = {
+  assignCurriculumTemplate,
+  setStudentGoal,
+  addPersonalTopic,
+  removePersonalTopic,
+  markTopicsCovered,
+}

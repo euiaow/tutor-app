@@ -1,23 +1,222 @@
 # Active Context
 
-_Last updated: 2026-07-30 (session 8, student-page glass redesign +
-localStorage bug investigation)_
+_Last updated: 2026-08-01 (session 9, teacher-panel modal-freeze root-cause
+fix + student page "redesign v3" migration)_
 
 ## Current work focus
 
-**Milestone: the user committed and pushed for the first time in this
-project's history.** Commit `3e365a3` ("эпп, редизайн ученика, учебный
-план, прогресс") landed on `main`, `git status` confirms the branch is up
-to date with `origin/main` (0 ahead/0 behind) — everything from session 7
-(the curriculum-templates feature, the `/app` entry point, the student-page
-"redesign v2" glass migration, and the first chunk of session 8's own
-glass-dialog work) is now actually saved in git, not just deployed. The
-"nothing is committed" risk that every prior session flagged is **resolved
-for everything up to that commit**. As of this update, only
-`src/pages/PublicLanding.jsx` is uncommitted (session 8's last edit, made
-after the user's commit — see below) — confirm in the next session whether
-that got committed too, and whether commits are continuing as a habit or
-this was a one-off.
+**Nothing from session 9 is committed.** `git log` still shows `e01c493`
+("редизайн учителя без фикса багов") as the tip — the entire session below
+(teacher freeze fix, curriculum checkboxes, student v3 migration, login
+screen) is uncommitted working-tree changes only. Hosting was deployed
+(`firebase deploy --only hosting`, build verified clean first) at the end
+of the session; no Cloud Functions changed at all this session (confirmed
+via `git diff --stat -- functions/` against the last commit — empty), so no
+functions deploy was needed. **Next session: commit this, or confirm
+whether the user intends to keep working uncommitted for a while longer.**
+
+### Session 9 — teacher-panel modal freeze (real root cause, not the first three guesses), then student page "redesign v3" migration
+
+**Part A — the teacher dashboard's modals (homework dialog, reschedule,
+cancel, curriculum editor, notifications) were completely broken**: opened
+with no visible content and no backdrop dimming, page felt "frozen" until
+clicking elsewhere. No browser/DevTools tool exists in this environment, so
+every round of diagnosis depended on the user manually running the
+DevTools steps and pasting back the literal output — **three plausible-
+sounding hypotheses from the user turned out wrong before the real causes
+surfaced**, worth remembering as a pattern: don't apply speculative CSS/JS
+fixes (`onOpenAutoFocus` overrides, fabricated `[data-open]` CSS rules,
+`document.body.classList` theme hacks) just because they sound plausible —
+verify each one against the actual library source / actual DOM before
+touching code. The three real, confirmed causes, in the order they were
+found:
+
+1. **React duplicate-key collision breaking sibling dialog reconciliation.**
+   Console showed `"Encountered two children with the same key, `closed`"`.
+   Root cause: `UpcomingLessonCard` (`TeacherDashboard.jsx`) rendered
+   `RescheduleDialog` and `CancelLessonDialog` as JSX siblings, each keyed
+   `key={open ? "open" : "closed"}` — when both are closed (the default,
+   true whenever *any* dialog in that row is interacted with), both
+   resolve to the literal key `"closed"`. Duplicate keys among siblings
+   break React's keyed reconciliation for the whole children array,
+   corrupting the Portal-based dialog lifecycle for the group. Fixed by
+   suffixing each dialog's key (`"open-reschedule"`/`"closed-reschedule"`,
+   `"open-cancel"`/`"closed-cancel"`) — `StudentDashboard.jsx`'s equivalent
+   pair already had this right (`"open-cancel"`/`"closed-cancel"`), only
+   the teacher-side rewrite missed it. **If a future session sees dialogs
+   keyed by open/closed state as siblings, always suffix with something
+   identifying which dialog, never just `"open"`/`"closed"`.**
+2. **`.teacher-theme` declared outside any `@layer`, so it silently beat
+   every Tailwind utility regardless of source order.** Fixing #1 didn't
+   fully fix the freeze — modals still rendered with no glass fill and no
+   backdrop dimming. Root cause, confirmed by reading raw Computed-panel
+   values the user pasted (backdrop `background-color` was literally
+   `--background`'s value, not `--glass`'s): **CSS rules outside any
+   `@layer` always out-prioritize every layered rule, regardless of layer
+   order or source position** — a real, easy-to-forget CSS-cascade
+   fact. Tailwind v4's `@utility` directive (used for `glass-panel`,
+   `glass-tile`, and every core Tailwind class like `bg-ink/25`) puts its
+   output inside `@layer utilities`; `.teacher-theme` in `index.css` was a
+   plain, unlayered rule declaring its own `background`/`color` — so on any
+   element carrying both `teacher-theme` and a utility touching
+   `background`/`color` (exactly the pattern used on the portaled
+   Backdrop/Popup, which need the `teacher-theme` class directly to resolve
+   CSS variables since Portal content escapes the DOM tree), the unlayered
+   `.teacher-theme` rule always won. Fixed by wrapping `.teacher-theme` in
+   `@layer base` — same layer Tailwind's own base styles use, so utilities
+   correctly out-prioritize it. **Any future `.teacher-theme`-style
+   "apply a class directly to portaled elements to get CSS vars" pattern
+   must live inside `@layer base` (or any named layer), never bare.**
+3. **A `position:relative`/`z-index:auto` element's own background paints
+   *after* its own negative-`z-index` descendants — so painting the page
+   background on `.teacher-theme` dimmed the decorative blob layer sitting
+   "beneath" it instead of showing it.** Once #1 and #2 were fixed, the
+   modals worked but the user asked for a byte-for-byte background-gradient
+   match against the "redesign teacher v1" mockup; a literal token diff
+   found the gradient was on `.teacher-theme`, not real `<body>`. Moving it
+   to `.teacher-theme` (the position:relative wrapper *and* direct parent
+   of the `position:fixed, z-index:-10` blob layer) made the gradient paint
+   over the blobs per CSS Appendix E's stacking order (positioned,
+   z-index:auto content paints at "stack level 0", *after* negative-z
+   descendants of the same context resolve). Fixed by moving the gradient
+   to `body:has(.teacher-theme)` instead — matches the mockup's own
+   mechanism exactly (gradient lives on real `<body>`, an ancestor outside
+   the position:relative wrapper, never competing with the fixed blob layer
+   for paint order) and doesn't touch the student page's shared `body {
+   bg-background }` rule. **Lesson for any future "put a background behind
+   a position:fixed decorative layer" task: the background must live on an
+   ancestor that is NOT the fixed layer's own positioned parent, or it will
+   paint over the decoration instead of under it.**
+
+A later request asked to also make the teacher panel's decorative blobs
+larger on tablet/desktop (`@media (min-width: 768px)` bumping `blob-a`/
+`blob-b` from 62vw/56vw to 100vw/90vw) — **this was reverted in the same
+session** (user's own mistake, meant it for the student page). `blob-a`/
+`blob-b` are back to their original single fixed size (62vw/56vw, no media
+query) — don't reapply this without a fresh explicit request.
+
+**Part B — feature work done alongside the freeze fix, teacher side:**
+
+- **`CoveredMaterialChecklist`** (`homework-lesson-dialog.jsx`, completing
+  mode) — replaced the old multi-row `<select>` "Пройденный материал"
+  picker (from session 7) with actual checkboxes: only `covered:false`
+  items listed, multi-select, "Все темы/прототипы пройдены ✓" fallback,
+  prototypes block hidden entirely when the student has none. Wiring into
+  `markTopicsCovered`/`completeLesson` on save is unchanged. **Re-verified
+  later in the same session (user suspected it wasn't actually done) — it
+  was; read the literal code both times, no drift.**
+- **`StudentRow`'s curriculum tiles are now directly click-to-toggle**
+  (`setCurriculumItemCovered`) — removed the separate `CurriculumToggleModal`
+  and "Редактировать" indirection entirely; each topic/prototype row is now
+  its own button with a per-row spinner and `line-through` once covered.
+- **Reschedule old→new time comparison** — `line-through` old time → arrow →
+  bold new time, added to `UpcomingLessonCard` (teacher) and both
+  `pending_student`/`pending_teacher` banners on the student page.
+- **Confirm/reject buttons duplicated into the student's own notification
+  panel** for `reschedule_proposed`/`cancellation_proposed` types
+  (`notifications-list.jsx`'s new `ProposalActions`, gated by an
+  `enableProposalActions` prop only `StudentDashboard.jsx`'s
+  `AllNotificationsDialog` passes — teacher's bell untouched). Bot/site
+  desync is handled by just letting the existing backend
+  `failed-precondition` check (already present in `confirmReschedule`/
+  `confirmCancellation`) fail and catching that as "already handled" —
+  no separate live-status pre-check needed.
+- **`StudentDot`** (`theme-ui.jsx`) replaces the old initials-circle
+  `Avatar` everywhere a student row showed one (4 call sites) — `Avatar`
+  itself deleted, zero remaining callers.
+- Audited every large teacher panel block (Расписание/Ближайшие уроки/
+  Ученики/Учебные планы/Прошедшие уроки/Финансы/Ожидают регистрации) for
+  glass-panel consistency — **all of them already used it**, nothing to
+  fix. Worth remembering: not every "check X" task has a bug to find.
+
+**Part C — student page "redesign student v3" migration**
+(`redesign student v3/luminous-learn-dashboard-main/`, a new mockup source
+folder distinct from session 7's "redesign v2"):
+
+- **Root tokens flipped to match v3**: `--background`
+  (`oklch(0.69...)` → `oklch(0.955...)`, near-white), `--card`/
+  `--secondary`/`--muted`/`--border`/`--input` all went from solid to
+  translucent (`oklch(1 0 0 / N%)`) — reversing an earlier session's
+  deliberate "keep opaque" decision, now safe because the teacher panel has
+  its own `.teacher-theme` scope and doesn't read these root tokens at all
+  (confirmed via `git diff` before touching anything — `.teacher-theme`'s
+  own `--card`/etc. were untouched, always translucent on its own terms).
+  Added `--status-good/warn/bad` (for `ExamRadar`) and a **new
+  `--card-opaque` token** (`oklch(0.99 0.005 70)`, the old solid `--card`
+  value) for the handful of screens that render straight on root tokens
+  with no decorative backdrop of their own.
+- **`--card-opaque` point-fix, 4 screens**: `LoginScreen`, `PublicLanding`,
+  `TeacherLogin`, and `SelfServiceSignup` (found via a full-repo `bg-card`
+  grep after fixing the first three — same unwrapped-`<main
+  className="bg-background">` pattern in all four) swapped `bg-card` →
+  `bg-[var(--card-opaque)]` rather than reverting the token migration
+  globally. **This was later itself point-fixed again**: once
+  `StudentGrainBackground` was added to `LoginScreen` too (see below), the
+  original reason for `--card-opaque` (no decorative backdrop) stopped
+  applying to that one screen, and the user asked to switch it back to the
+  mockup's real translucent `glass` class — `PublicLanding`/`TeacherLogin`/
+  `SelfServiceSignup` still use `--card-opaque` (they have no
+  `StudentGrainBackground` of their own).
+- **New `src/components/student-grain-background.jsx`** (`StudentGrainBackground`)
+  — white base + two blurred orange radial-gradient circles + SVG grain
+  texture (new `@utility grain` in `index.css`, distinct from the teacher's
+  own `grain-layer`), replacing the old `bg-glass.jpg` photo + `bg-white/22
+  backdrop-blur-2xl` overlay mechanism on `StudentDashboard.jsx`'s
+  `StudentGate`. Also added to `LoginScreen` (was previously a flat
+  `bg-background` page with no decorative layer at all).
+- **New `src/components/student/exam-radar.jsx`** (`ExamRadar`) — static,
+  mock-data-only port of v3's radar card (days-to-exam, target score,
+  topics-done progress bar, pace-now-vs-needed comparison, colored status
+  plate, "на этой неделе" plan list). Deliberately no real logic wired up
+  (no `examDate`/`targetScore` Firestore fields exist yet) — hardcoded to
+  the mockup's own "good" example data, inserted between
+  `StudentNotifications` and `CurriculumProgressCard`.
+- **`CurriculumItemGroups` (`StudentDashboard.jsx`) redesigned to match
+  v3's `Column`/`TopicList`** — this was *missed* on the first migration
+  pass and caught by the user on a follow-up ("проверь ещё раз, ты мог
+  пропустить"): the real mockup layout stacks "Пройдено"/"Осталось"
+  vertically (divider between) with a header icon+count row, not the
+  side-by-side two-column grid the first pass shipped. Stayed read-only
+  (no click-to-toggle) — matches both the mockup itself (plain `<li>`, no
+  onClick) and the existing architecture (students have no write path to
+  their own `curriculumProgress`; that's teacher-only via
+  `setCurriculumItemCovered`/`markTopicsCovered`). **If a future request
+  asks for student-side click-to-toggle here, that's a genuine
+  product/permissions decision, not a visual port — flag it, don't
+  silently add write access.**
+- **`lesson-history.jsx` tags redesigned** — new local 3-tone `Badge`
+  (`neutral`/`warm`/`muted`, glass-based) replacing `StatusBadge`'s 5-color
+  pastel palette, **deliberately not shared with `StatusBadge`** — that
+  component's multi-hue signal is a working tool for the teacher scanning
+  many students, not appropriate to collapse for a student's own read-only
+  history. Two components, two different jobs, correctly not unified.
+- **Video-call button restyled + repositioned** to match v3's "Видеовстреча"
+  card (label + subtitle + gradient-warm `Video`-icon button), moved from
+  among the reschedule/cancel buttons to right before "Задание" —
+  `videoCallUrl` conditional logic unchanged.
+- **Decorative circle next to "Следующий урок"'s date removed** — the user
+  asked for this regardless of whether v3 still drew it (it does; the
+  removal was an explicit deviation from the mockup, called out and
+  confirmed, not something silently invented).
+- **Login screen (`LoginScreen`/`PinInput`) migration took two follow-up
+  rounds** — first pass under-transferred it (kept the old plain `bg-card`
+  page, no `StudentGrainBackground`, heading missing the `font-display`
+  class every other heading in this codebase carries explicitly since
+  there's no global `h1,h2,h3{font-family:var(--font-display)}` base rule
+  here unlike the mockup, and an old `shadow-xl` instead of the
+  `--shadow-glass` token). Second pass added all three plus removed the
+  `placeholder="•"` gray dots from empty PIN cells and switched from
+  `--card-opaque` to the real translucent `glass` class now that
+  `StudentGrainBackground` sits behind it (see above). Digit cells
+  (`autoFocus` on the first one, `glass-inset` styling) and the shorter
+  card height (icon removed) were correct from the very first pass and
+  never touched again. **Same missing-`font-display` bug found and fixed
+  in `ExamRadar`'s own `<h3>` while investigating this** — worth grepping
+  for `<h1`/`<h2`/`<h3` without `font-display` if more v3 components get
+  ported later.
+
+Deployed at the end via `firebase deploy --only hosting` only (confirmed no
+`functions/` files changed all session). Nothing committed.
 
 ### Session 8 — student-page glass-dialog consistency + a real bug investigation
 

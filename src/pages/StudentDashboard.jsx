@@ -12,21 +12,24 @@ import {
   BookOpen,
   Layers,
   Flame,
-  RotateCcw,
   ChevronUp,
   ChevronDown,
   ArrowRight,
   Video,
+  ChevronRight,
+  CalendarDays,
+  Target,
+  Pencil,
 } from "lucide-react"
 import { StudentGrainBackground } from "@/components/student-grain-background"
 import { ExamRadar } from "@/components/student/exam-radar"
+import { CurriculumItemGroups } from "@/components/student/curriculum-item-groups"
 import { MaterialsLibrary } from "@/components/materials-library"
 import { LessonHistory } from "@/components/lesson-history"
 import { NotificationsList } from "@/components/notifications-list"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { formatRelativeTime } from "@/lib/notifications"
 import { Spinner } from "@/components/ui/spinner"
-import { Button } from "@/components/ui/button"
 import {
   GlassDialog,
   GlassDialogContent,
@@ -34,7 +37,7 @@ import {
   GlassDialogDescription,
 } from "@/components/glass-dialog"
 import { LoginScreen } from "@/components/auth/login-screen"
-import { subscribeToStudent, getStudentTelegramChatId } from "@/firebase/students"
+import { subscribeToStudent, getStudentTelegramChatId, setStudentGoal } from "@/firebase/students"
 import {
   subscribeToStudentNotifications,
   markNotificationRead,
@@ -42,6 +45,7 @@ import {
 import {
   subscribeToLessons,
   subscribeToUpcomingLesson,
+  subscribeToAllUpcomingLessons,
   subscribeToLesson,
   proposeReschedule,
   confirmReschedule,
@@ -54,8 +58,8 @@ import {
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { subscribeToCurriculumProgress } from "@/firebase/curriculum"
-import { TruncatedList } from "@/components/truncated-list"
 import { openExternalLink } from "@/lib/telegramWebApp"
+import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
 
 // datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
 // timezone, not UTC — offsetting by getTimezoneOffset() before calling
@@ -209,24 +213,326 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
   )
 }
 
-// Visual container migrated to the "redesign v2" mockup's glass card
-// (glass/glass-inset utilities, see index.css) — every state below keeps
-// its exact original logic/handlers. States the mockup didn't draw at all
-// (reschedule/cancellation banners, cancelled/no-schedule headings, the
-// video-call button, upload errors) previously relied on
-// text-primary-foreground/bg-primary-foreground assuming a solid
-// bg-primary backdrop; now that the plate itself is a light glass card
-// (per the mockup), those were mechanically remapped to their light-glass
-// equivalents (border-border/text-foreground/bg-muted, text-destructive
-// instead of text-red-200, etc.) purely so they stay legible — not
-// redrawn or restyled beyond that. See the migration report for the full
-// list of these remaps.
+// Reschedule/cancellation status plates — same tinted-glass-card language
+// as ExamRadar's own status plate (color-mix'd background/border off a
+// semantic token, a solid dot with a soft ring, sm text). `tone` picks
+// which of the --status-* tokens (index.css) to tint with: "warn" (amber)
+// for a pending reschedule, "bad" (red) for a pending/confirmed
+// cancellation, "good" (green) for a confirmed reschedule.
+function StatusPlate({ tone, title, children }) {
+  const color = `var(--status-${tone})`
+  return (
+    <div
+      className="rounded-3xl border p-4"
+      style={{
+        background: `color-mix(in oklab, ${color} 12%, transparent)`,
+        borderColor: `color-mix(in oklab, ${color} 32%, transparent)`,
+      }}
+    >
+      <p className="flex items-center gap-2.5 text-sm font-semibold text-foreground">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: color, boxShadow: `0 0 0 4px color-mix(in oklab, ${color} 20%, transparent)` }}
+        />
+        {title}
+      </p>
+      {children}
+    </div>
+  )
+}
+
+// Same primary/neutral button pair already used everywhere else on this
+// page (video-call "Подключиться", "Перенести урок"/"Отменить урок") —
+// confirm always gets the project's one accent gradient regardless of
+// tone, reject stays neutral glass; only the StatusPlate wrapper itself
+// carries the reschedule-vs-cancellation color semantics.
+function StatusPlateActions({ onConfirm, confirmLabel, onReject, rejectLabel, disabled }) {
+  return (
+    <div className="mt-3 flex gap-2">
+      <button
+        type="button"
+        onClick={onConfirm}
+        disabled={disabled}
+        className="flex-1 inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.01] disabled:opacity-55 disabled:hover:scale-100"
+        style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+      >
+        {confirmLabel}
+      </button>
+      <button
+        type="button"
+        onClick={onReject}
+        disabled={disabled}
+        className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2.5 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:opacity-55"
+      >
+        {rejectLabel}
+      </button>
+    </div>
+  )
+}
+
+// Compact, single-line version of StatusPlate's color language — used per
+// row inside "Мои уроки" where a full tinted card per lesson would be too
+// heavy for a scrollable list.
+function CompactStatusBadge({ tone, children }) {
+  const color = `var(--status-${tone})`
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+      style={{ background: `color-mix(in oklab, ${color} 15%, transparent)`, color }}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} aria-hidden="true" />
+      {children}
+    </span>
+  )
+}
+
+// Read-only — no confirm/reject/reschedule affordances here on purpose,
+// those live on the main "Следующий урок" card; this is just an overview
+// of every upcoming draft across all of a student's schedule slots.
+function UpcomingLessonRow({ lesson }) {
+  return (
+    <li className="glass-inset flex flex-col gap-1.5 rounded-2xl px-4 py-3">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <CalendarDays className="size-3.5" aria-hidden="true" />
+        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+      </div>
+      <p className="text-sm text-secondary-foreground">
+        {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
+      </p>
+
+      {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
+        <div className="mt-0.5 flex flex-wrap items-center gap-2">
+          <CompactStatusBadge tone="warn">
+            {lesson.rescheduleStatus === "pending_student" ? "Ожидает вашего ответа" : "Перенос предложен"}
+          </CompactStatusBadge>
+          <span className="flex items-center gap-1.5 text-xs">
+            <span className="text-muted-foreground line-through">
+              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+            </span>
+            <ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />
+            <span className="font-semibold text-foreground">
+              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+            </span>
+          </span>
+        </div>
+      ) : lesson.rescheduleStatus === "confirmed" ? (
+        <CompactStatusBadge tone="good">Перенос подтверждён</CompactStatusBadge>
+      ) : null}
+
+      {lesson.cancellationStatus === "pending_student" || lesson.cancellationStatus === "pending_teacher" ? (
+        <CompactStatusBadge tone="bad">
+          {lesson.cancellationStatus === "pending_student" ? "Ожидает вашего ответа (отмена)" : "Отмена предложена"}
+        </CompactStatusBadge>
+      ) : null}
+    </li>
+  )
+}
+
+function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
+  const [lessons, setLessons] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+
+    setLoading(true)
+    const unsub = subscribeToAllUpcomingLessons(
+      studentId,
+      (data) => {
+        setLessons(data)
+        setLoading(false)
+      },
+      (error) => {
+        console.error("Failed to load all upcoming lessons:", error)
+        setLoading(false)
+      },
+    )
+    return () => unsub()
+  }, [open, studentId])
+
+  return (
+    <GlassDialog open={open} onOpenChange={onOpenChange}>
+      <GlassDialogContent>
+        <GlassDialogTitle>Мои уроки</GlassDialogTitle>
+        <GlassDialogDescription>Все предстоящие занятия по расписанию</GlassDialogDescription>
+
+        <div className="scrollbar-hidden mt-4 max-h-[65vh] overflow-y-auto pr-1">
+          {loading ? (
+            <Spinner label="Загрузка..." />
+          ) : lessons.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Пока нет запланированных уроков</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {lessons.map((lesson) => (
+                <UpcomingLessonRow key={lesson.id} lesson={lesson} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </GlassDialogContent>
+    </GlassDialog>
+  )
+}
+
+// Exam Radar Phase 1 — only the goal itself (targetScore/examDate) is
+// saved here; nothing about pace/status is computed or shown yet (that's
+// Phase 2+). Only rendered when a curriculum program is assigned
+// (student.curriculumSourceTemplateId set) AND the student is actually
+// exam-prepping (examTarget "ege"/"oge") — a plain school-program student
+// has no exam to set a target score against.
+function MyGoalCard({ studentId, student }) {
+  const [editing, setEditing] = useState(false)
+  const [targetScore, setTargetScore] = useState("")
+  const [examDate, setExamDate] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const hasGoal = student.targetScore != null && student.examDate != null
+
+  function startEditing() {
+    setTargetScore(student.targetScore != null ? String(student.targetScore) : "")
+    setExamDate(student.examDate ? toDateInputValue(student.examDate) : "")
+    setError("")
+    setEditing(true)
+  }
+
+  async function handleSave() {
+    if (saving) return
+    setSaving(true)
+    setError("")
+    try {
+      const dateValue = examDate ? new Date(`${examDate}T12:00:00`) : null
+      await setStudentGoal(studentId, targetScore, dateValue)
+      setEditing(false)
+    } catch (err) {
+      console.error("Failed to save student goal:", err)
+      setError(err?.message || "Не удалось сохранить цель")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <section className="glass-soft rounded-4xl p-6">
+        <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <label className="flex-1">
+            <span className="text-xs text-muted-foreground">Целевой балл</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={targetScore}
+              onChange={(e) => setTargetScore(e.target.value)}
+              disabled={saving}
+              placeholder="80"
+              className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
+            />
+          </label>
+          <label className="flex-1">
+            <span className="text-xs text-muted-foreground">Дата экзамена</span>
+            <input
+              type="date"
+              value={examDate}
+              onChange={(e) => setExamDate(e.target.value)}
+              disabled={saving}
+              className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
+            />
+          </label>
+        </div>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+            className="rounded-full border border-white/60 bg-white/45 px-5 py-2.5 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !targetScore || !examDate}
+            className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+            style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  if (!hasGoal) {
+    return (
+      <section className="glass-soft flex flex-wrap items-center gap-4 rounded-4xl p-6">
+        <span
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
+          style={{ background: "var(--gradient-warm)" }}
+        >
+          <Target className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-[14rem] flex-1">
+          <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+          <p className="mt-1 text-sm text-secondary-foreground">Укажи цель, чтобы видеть свой прогресс к экзамену</p>
+        </div>
+        <button
+          type="button"
+          onClick={startEditing}
+          className="rounded-full px-5 py-2.5 text-sm font-medium text-primary-foreground"
+          style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+        >
+          Заполнить
+        </button>
+      </section>
+    )
+  }
+
+  return (
+    <section className="glass-soft rounded-4xl p-6">
+      <div className="flex items-center gap-3">
+        <span
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
+          style={{ background: "var(--gradient-warm)" }}
+        >
+          <Target className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+        <button
+          type="button"
+          onClick={startEditing}
+          aria-label="Изменить цель"
+          className="ml-auto text-muted-foreground transition hover:text-primary"
+        >
+          <Pencil className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-3">
+        <div className="glass-inset flex-1 rounded-3xl p-4">
+          <p className="text-xs text-muted-foreground">Целевой балл</p>
+          <p className="mt-1 font-display text-2xl text-primary">{student.targetScore}</p>
+        </div>
+        <div className="glass-inset flex-1 rounded-3xl p-4">
+          <p className="text-xs text-muted-foreground">Дата экзамена</p>
+          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(student.examDate)}</p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function NextLessonPlate({ studentId, hasSchedule }) {
   const [lesson, setLesson] = useState(null)
   const [cancelledLesson, setCancelledLesson] = useState(null)
   const [actionPending, setActionPending] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [allLessonsOpen, setAllLessonsOpen] = useState(false)
   const [uploadingHomework, setUploadingHomework] = useState(false)
   const [uploadHomeworkError, setUploadHomeworkError] = useState("")
   const homeworkFileInputRef = useRef(null)
@@ -364,7 +670,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
 
   return (
     <section aria-labelledby="next-lesson-title" className="glass rounded-4xl p-6 sm:p-8">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
             Следующий урок
@@ -382,13 +688,24 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
           </h2>
         </div>
+        {hasSchedule ? (
+          <button
+            type="button"
+            onClick={() => setAllLessonsOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground"
+          >
+            Посмотреть все уроки
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
+
+      <AllUpcomingLessonsDialog studentId={studentId} open={allLessonsOpen} onOpenChange={setAllLessonsOpen} />
 
       <div className="mt-5 flex flex-col gap-5">
         {lesson?.rescheduleStatus === "pending_student" ? (
-          <div className="glass-inset rounded-3xl p-4">
-            <p className="text-sm font-semibold text-secondary-foreground">📅 Репетитор предлагает перенос</p>
-            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+          <StatusPlate tone="warn" title="Репетитор предлагает перенос">
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
                 {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
               </span>
@@ -397,34 +714,19 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
               </span>
             </p>
-            <div className="mt-3 flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1 bg-yellow-500 text-yellow-950 hover:bg-yellow-400"
-                onClick={handleConfirmReschedule}
-                disabled={actionPending}
-              >
-                ✅ Подтвердить
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1 border-border bg-transparent text-foreground hover:bg-muted"
-                onClick={handleRejectReschedule}
-                disabled={actionPending}
-              >
-                ❌ Отклонить
-              </Button>
-            </div>
-          </div>
+            <StatusPlateActions
+              onConfirm={handleConfirmReschedule}
+              confirmLabel="Подтвердить"
+              onReject={handleRejectReschedule}
+              rejectLabel="Отклонить"
+              disabled={actionPending}
+            />
+          </StatusPlate>
         ) : null}
 
         {lesson?.rescheduleStatus === "pending_teacher" ? (
-          <div className="rounded-3xl bg-yellow-500/20 p-4">
-            <p className="text-sm font-semibold text-foreground">🕐 Запрос на перенос отправлен</p>
-            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+          <StatusPlate tone="warn" title="Запрос на перенос отправлен">
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
                 {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
               </span>
@@ -433,46 +735,27 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
               </span>
             </p>
-          </div>
+          </StatusPlate>
         ) : null}
 
         {lesson?.rescheduleStatus === "confirmed" ? (
-          <div className="rounded-3xl bg-green-500/20 p-4">
-            <p className="text-sm font-semibold text-foreground">✅ Перенос подтверждён</p>
-          </div>
+          <StatusPlate tone="good" title="Перенос подтверждён" />
         ) : null}
 
         {lesson?.cancellationStatus === "pending_student" ? (
-          <div className="rounded-3xl bg-red-500/20 p-4">
-            <p className="text-sm font-semibold text-foreground">Репетитор предлагает отменить этот урок.</p>
-            <div className="mt-3 flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1 bg-red-600 text-white hover:bg-red-700"
-                onClick={handleConfirmCancellation}
-                disabled={actionPending}
-              >
-                Подтвердить отмену
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1 border-border bg-transparent text-foreground hover:bg-muted"
-                onClick={handleRejectCancellation}
-                disabled={actionPending}
-              >
-                Отклонить
-              </Button>
-            </div>
-          </div>
+          <StatusPlate tone="bad" title="Репетитор предлагает отменить этот урок">
+            <StatusPlateActions
+              onConfirm={handleConfirmCancellation}
+              confirmLabel="Подтвердить отмену"
+              onReject={handleRejectCancellation}
+              rejectLabel="Отклонить"
+              disabled={actionPending}
+            />
+          </StatusPlate>
         ) : null}
 
         {lesson?.cancellationStatus === "pending_teacher" ? (
-          <div className="rounded-3xl bg-red-500/20 p-4">
-            <p className="text-sm font-semibold text-foreground">🔴 Запрос на отмену отправлен</p>
-          </div>
+          <StatusPlate tone="bad" title="Запрос на отмену отправлен" />
         ) : null}
 
         {lesson ? (
@@ -664,6 +947,19 @@ function formatShortDate(value) {
   return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
 }
 
+// Local (not UTC) YYYY-MM-DD for a controlled <input type="date"> value —
+// toISOString() would shift the date by a day for some timezones since it
+// normalizes to UTC first, which a plain calendar date (exam day, no
+// meaningful time component) should never do.
+function toDateInputValue(value) {
+  const date = toJsDate(value)
+  if (!date) return ""
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 function pluralizeTopics(n) {
   const mod10 = n % 10
   const mod100 = n % 100
@@ -691,76 +987,6 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
   )
 }
 
-// Matches "redesign student v3"'s Column/TopicList exactly: header row with
-// icon + done/total count, "Пройдено" and "Осталось" stacked vertically
-// (divider between, not side-by-side columns like the earlier port had),
-// "Осталось" dimmed to text-muted-foreground, and an "Все темы пройдены 🎉"
-// fallback when nothing's left. Read-only in the mockup (plain <li>, no
-// onClick) and stays read-only here too — this is the student's own view,
-// distinct from the teacher's click-to-toggle CurriculumTile on the
-// student-row detail (teacher-only write path via setCurriculumItemCovered).
-function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) {
-  const total = covered.length + remaining.length
-
-  return (
-    <section className="glass-inset rounded-3xl p-5">
-      <div className="flex items-center gap-2.5">
-        <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
-        <p className="font-display text-[0.7rem] font-medium">{title}</p>
-        <span className="ml-auto text-sm">
-          <b className="font-display">{covered.length}</b>
-          <span className="text-muted-foreground"> / {total}</span>
-        </span>
-      </div>
-
-      {covered.length > 0 ? (
-        <div className="mt-4">
-          <p className="mb-2.5 text-xs text-muted-foreground">Пройдено · {covered.length}</p>
-          <TruncatedList
-            items={covered}
-            emptyLabel={null}
-            className="space-y-1.5"
-            renderItem={(item) => (
-              <li
-                key={item.id}
-                className="flex items-center justify-between gap-3 text-sm text-secondary-foreground"
-              >
-                <span className="flex min-w-0 flex-1 items-center gap-2">
-                  {item.needsReview ? (
-                    <RotateCcw className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-                  ) : null}
-                  <span className={`truncate ${item.needsReview ? "text-primary" : ""}`}>{item.title}</span>
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatShortDate(item.coveredAt)}</span>
-              </li>
-            )}
-          />
-        </div>
-      ) : null}
-
-      {remaining.length > 0 ? (
-        <div className={covered.length > 0 ? "mt-5 border-t border-white/50 pt-4" : "mt-4"}>
-          <p className="mb-2.5 text-xs text-muted-foreground">Осталось · {remaining.length}</p>
-          <TruncatedList
-            items={remaining}
-            emptyLabel={null}
-            className="space-y-1.5"
-            renderItem={(item) => (
-              <li key={item.id} className="truncate text-sm text-muted-foreground">
-                {item.title}
-              </li>
-            )}
-          />
-        </div>
-      ) : (
-        <p className="mt-5 border-t border-white/50 pt-4 text-xs text-muted-foreground">
-          Все темы пройдены 🎉
-        </p>
-      )}
-    </section>
-  )
-}
-
 // Pure display of already-accumulated progress — no write path here (that's
 // the teacher marking topics covered during lesson completion). Hidden
 // entirely for students with no program assigned (no curriculumProgress
@@ -769,16 +995,13 @@ function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) {
 // "paceMultiplier" stat this app has no logic for, so per instruction that
 // slot instead holds this app's own existing "на этой неделе" line/logic,
 // unchanged.
-function CurriculumProgressCard({ studentId }) {
-  const [progress, setProgress] = useState(null)
+// progress is now lifted to StudentDashboardContent (Phase 3) — ExamRadar
+// needs the exact same curriculumProgress subscription to decide which of
+// the two cards to render at all, so a second independent listener here
+// would be redundant. `null` while the parent's own subscription hasn't
+// resolved yet, same as before.
+function CurriculumProgressCard({ progress }) {
   const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    const unsubscribe = subscribeToCurriculumProgress(studentId, setProgress, (error) =>
-      console.error("Failed to load curriculum progress:", error),
-    )
-    return () => unsubscribe()
-  }, [studentId])
 
   if (!progress) return null
 
@@ -849,7 +1072,7 @@ function CurriculumProgressCard({ studentId }) {
       ) : null}
 
       {expanded ? (
-        <div className="mt-4 space-y-3">
+        <div className={`mt-4 grid gap-6 ${totalPrototypes > 0 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
           <CurriculumItemGroups icon={BookOpen} title="Темы" covered={coveredTopics} remaining={remainingTopics} />
           {totalPrototypes > 0 ? (
             <CurriculumItemGroups
@@ -1018,6 +1241,20 @@ function StudentDashboardContent({ studentId }) {
     return () => unsub()
   }, [studentId])
 
+  // Lifted from CurriculumProgressCard (Phase 3) — ExamRadar needs the same
+  // topics/prototypes/assignedAt to compute metrics, and the toggle
+  // decision (ExamRadar vs CurriculumProgressCard) needs this resolved
+  // before it can render either, so one subscription up here replaces what
+  // used to be CurriculumProgressCard's own private one.
+  const [curriculumProgress, setCurriculumProgress] = useState(null)
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCurriculumProgress(studentId, setCurriculumProgress, (error) =>
+      console.error("Failed to load curriculum progress:", error),
+    )
+    return () => unsubscribe()
+  }, [studentId])
+
   if (loading) {
     return <Spinner label="Загрузка данных ученика..." />
   }
@@ -1056,6 +1293,30 @@ function StudentDashboardContent({ studentId }) {
 
   const allMaterials = [...dedupedMaterials, ...LOCKED_MATERIALS]
 
+  // Phase 3 toggle: ExamRadar once a goal is set, the plain progress card
+  // otherwise. requiredTopics/requiredPrototypes and the metrics are only
+  // computed once curriculumProgress has actually loaded — hasGoal alone
+  // isn't enough, there's a brief window where the goal fields are known
+  // but the progress subscription hasn't resolved yet.
+  const hasGoal = student.targetScore != null && student.examDate != null
+  const radarMetrics =
+    hasGoal && curriculumProgress
+      ? computeRadarMetrics({
+          examDate: student.examDate,
+          targetScore: student.targetScore,
+          topics: curriculumProgress.topics,
+          prototypes: curriculumProgress.prototypes,
+          assignedAt: curriculumProgress.assignedAt,
+        })
+      : null
+  const requiredTopics = curriculumProgress ? requiredItems(curriculumProgress.topics, student.targetScore) : []
+  const requiredPrototypes = curriculumProgress
+    ? requiredItems(curriculumProgress.prototypes, student.targetScore)
+    : []
+  const staleDays = curriculumProgress
+    ? daysSinceLastUpdate(curriculumProgress.topics, curriculumProgress.prototypes)
+    : null
+
   return (
     <div className="relative mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-10 sm:py-14">
       <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
@@ -1074,9 +1335,23 @@ function StudentDashboardContent({ studentId }) {
 
       <StudentNotifications studentId={studentId} />
 
-      <ExamRadar />
+      {student.curriculumSourceTemplateId && (student.examTarget === "ege" || student.examTarget === "oge") ? (
+        <MyGoalCard studentId={studentId} student={student} />
+      ) : null}
 
-      <CurriculumProgressCard studentId={studentId} />
+      {hasGoal && radarMetrics ? (
+        <ExamRadar
+          subject={student.subject}
+          examTarget={student.examTarget}
+          targetScore={student.targetScore}
+          metrics={radarMetrics}
+          requiredTopics={requiredTopics}
+          requiredPrototypes={requiredPrototypes}
+          staleDays={staleDays}
+        />
+      ) : (
+        <CurriculumProgressCard progress={curriculumProgress} />
+      )}
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
 
