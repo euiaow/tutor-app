@@ -15,8 +15,11 @@ import {
   RotateCcw,
   ChevronUp,
   ChevronDown,
+  ArrowRight,
+  Video,
 } from "lucide-react"
-import bgGlass from "@/assets/bg-glass.jpg"
+import { StudentGrainBackground } from "@/components/student-grain-background"
+import { ExamRadar } from "@/components/student/exam-radar"
 import { MaterialsLibrary } from "@/components/materials-library"
 import { LessonHistory } from "@/components/lesson-history"
 import { NotificationsList } from "@/components/notifications-list"
@@ -379,19 +382,20 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
           </h2>
         </div>
-        <span
-          aria-hidden="true"
-          className="hidden h-16 w-16 shrink-0 rounded-full sm:block"
-          style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
-        />
       </div>
 
       <div className="mt-5 flex flex-col gap-5">
         {lesson?.rescheduleStatus === "pending_student" ? (
           <div className="glass-inset rounded-3xl p-4">
-            <p className="text-sm font-semibold text-secondary-foreground">
-              📅 Репетитор предлагает перенос на{" "}
-              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+            <p className="text-sm font-semibold text-secondary-foreground">📅 Репетитор предлагает перенос</p>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground line-through">
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+              </span>
+              <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span className="font-semibold text-foreground">
+                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+              </span>
             </p>
             <div className="mt-3 flex gap-2">
               <Button
@@ -420,6 +424,15 @@ function NextLessonPlate({ studentId, hasSchedule }) {
         {lesson?.rescheduleStatus === "pending_teacher" ? (
           <div className="rounded-3xl bg-yellow-500/20 p-4">
             <p className="text-sm font-semibold text-foreground">🕐 Запрос на перенос отправлен</p>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground line-through">
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+              </span>
+              <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span className="font-semibold text-foreground">
+                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+              </span>
+            </p>
           </div>
         ) : null}
 
@@ -464,6 +477,28 @@ function NextLessonPlate({ studentId, hasSchedule }) {
 
         {lesson ? (
           <>
+            {videoCallUrl ? (
+              <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
+                <div className="min-w-0">
+                  <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
+                    Видеовстреча
+                  </p>
+                  <p className="mt-1 truncate text-sm text-secondary-foreground">
+                    Ссылка активна за 10 минут до начала
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openExternalLink(videoCallUrl)}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02]"
+                  style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+                >
+                  <Video className="h-4 w-4" aria-hidden="true" />
+                  Подключиться
+                </button>
+              </div>
+            ) : null}
+
             <div className="glass-inset rounded-3xl p-5">
               <span className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
                 Задание
@@ -563,16 +598,6 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               <p className="mt-3 text-xs text-muted-foreground">Или отправить в бот в ТГ/ВК</p>
             </div>
 
-            {videoCallUrl ? (
-              <button
-                type="button"
-                onClick={() => openExternalLink(videoCallUrl)}
-                className="inline-flex items-center justify-center gap-2 self-start rounded-full border border-white/60 bg-white/45 px-5 py-3 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
-              >
-                🎥 Подключиться
-              </button>
-            ) : null}
-
             {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 {lesson.rescheduleStatus !== "pending_teacher" ? (
@@ -666,12 +691,30 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
   )
 }
 
-function CurriculumItemGroups({ title, covered, remaining }) {
+// Matches "redesign student v3"'s Column/TopicList exactly: header row with
+// icon + done/total count, "Пройдено" and "Осталось" stacked vertically
+// (divider between, not side-by-side columns like the earlier port had),
+// "Осталось" dimmed to text-muted-foreground, and an "Все темы пройдены 🎉"
+// fallback when nothing's left. Read-only in the mockup (plain <li>, no
+// onClick) and stays read-only here too — this is the student's own view,
+// distinct from the teacher's click-to-toggle CurriculumTile on the
+// student-row detail (teacher-only write path via setCurriculumItemCovered).
+function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) {
+  const total = covered.length + remaining.length
+
   return (
     <section className="glass-inset rounded-3xl p-5">
-      <p className="font-display text-[0.7rem] font-medium text-muted-foreground">{title}</p>
-      <div className="mt-4 grid gap-8 sm:grid-cols-2">
-        <div>
+      <div className="flex items-center gap-2.5">
+        <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+        <p className="font-display text-[0.7rem] font-medium">{title}</p>
+        <span className="ml-auto text-sm">
+          <b className="font-display">{covered.length}</b>
+          <span className="text-muted-foreground"> / {total}</span>
+        </span>
+      </div>
+
+      {covered.length > 0 ? (
+        <div className="mt-4">
           <p className="mb-2.5 text-xs text-muted-foreground">Пройдено · {covered.length}</p>
           <TruncatedList
             items={covered}
@@ -693,21 +736,27 @@ function CurriculumItemGroups({ title, covered, remaining }) {
             )}
           />
         </div>
+      ) : null}
 
-        <div>
+      {remaining.length > 0 ? (
+        <div className={covered.length > 0 ? "mt-5 border-t border-white/50 pt-4" : "mt-4"}>
           <p className="mb-2.5 text-xs text-muted-foreground">Осталось · {remaining.length}</p>
           <TruncatedList
             items={remaining}
             emptyLabel={null}
             className="space-y-1.5"
             renderItem={(item) => (
-              <li key={item.id} className="truncate text-sm text-secondary-foreground">
+              <li key={item.id} className="truncate text-sm text-muted-foreground">
                 {item.title}
               </li>
             )}
           />
         </div>
-      </div>
+      ) : (
+        <p className="mt-5 border-t border-white/50 pt-4 text-xs text-muted-foreground">
+          Все темы пройдены 🎉
+        </p>
+      )}
     </section>
   )
 }
@@ -736,11 +785,14 @@ function CurriculumProgressCard({ studentId }) {
   const coveredTopics = progress.topics.filter((topic) => topic.covered)
   const remainingTopics = progress.topics.filter((topic) => !topic.covered)
   const totalTopics = progress.topics.length
-  const topicsPercent = totalTopics > 0 ? Math.round((coveredTopics.length / totalTopics) * 100) : 0
 
   const coveredPrototypes = progress.prototypes.filter((prototype) => prototype.covered)
   const remainingPrototypes = progress.prototypes.filter((prototype) => !prototype.covered)
   const totalPrototypes = progress.prototypes.length
+
+  const totalProgressItems = totalTopics + totalPrototypes
+  const coveredProgressItems = coveredTopics.length + coveredPrototypes.length
+  const overallPercent = totalProgressItems > 0 ? Math.round((coveredProgressItems / totalProgressItems) * 100) : 0
 
   const needsReviewItems = [...coveredTopics, ...coveredPrototypes].filter((item) => item.needsReview)
 
@@ -760,7 +812,7 @@ function CurriculumProgressCard({ studentId }) {
           <TrendingUp className="h-5 w-5" aria-hidden="true" />
         </span>
         <h3 className="font-display text-lg text-foreground">Прогресс подготовки</h3>
-        <span className="ml-auto font-display text-2xl text-primary">{topicsPercent}%</span>
+        <span className="ml-auto font-display text-2xl text-primary">{overallPercent}%</span>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -798,9 +850,14 @@ function CurriculumProgressCard({ studentId }) {
 
       {expanded ? (
         <div className="mt-4 space-y-3">
-          <CurriculumItemGroups title="Темы" covered={coveredTopics} remaining={remainingTopics} />
+          <CurriculumItemGroups icon={BookOpen} title="Темы" covered={coveredTopics} remaining={remainingTopics} />
           {totalPrototypes > 0 ? (
-            <CurriculumItemGroups title="Прототипы" covered={coveredPrototypes} remaining={remainingPrototypes} />
+            <CurriculumItemGroups
+              icon={Layers}
+              title="Прототипы"
+              covered={coveredPrototypes}
+              remaining={remainingPrototypes}
+            />
           ) : null}
         </div>
       ) : null}
@@ -825,7 +882,12 @@ function AllNotificationsDialog({ notifications, open, onOpenChange, onNotificat
         <GlassDialogDescription>Последние {notifications.length} уведомлений</GlassDialogDescription>
 
         <div className="scrollbar-hidden mt-6 max-h-[60vh] overflow-y-auto">
-          <NotificationsList notifications={notifications} onNotificationClick={onNotificationClick} glass />
+          <NotificationsList
+            notifications={notifications}
+            onNotificationClick={onNotificationClick}
+            glass
+            enableProposalActions
+          />
         </div>
       </GlassDialogContent>
     </GlassDialog>
@@ -1012,6 +1074,8 @@ function StudentDashboardContent({ studentId }) {
 
       <StudentNotifications studentId={studentId} />
 
+      <ExamRadar />
+
       <CurriculumProgressCard studentId={studentId} />
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
@@ -1092,20 +1156,7 @@ function StudentGate({ studentId }) {
 
   return (
     <main className="relative min-h-screen overflow-hidden">
-      <img
-        src={bgGlass}
-        alt=""
-        aria-hidden="true"
-        width={1920}
-        height={1280}
-        className="pointer-events-none fixed inset-0 h-full w-full object-cover"
-      />
-      {/* Same grey-glass mechanism as GlassDialogContent (white translucency
-          + backdrop-blur), applied to the page itself instead of a popup —
-          kept a step more transparent than the glass/glass-soft/glass-inset
-          card surfaces (30/43/28%) so cards still read as the foreground
-          layer rather than blending into the page. */}
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0 bg-white/22 backdrop-blur-2xl" />
+      <StudentGrainBackground />
       <StudentDashboardContent studentId={studentId} />
     </main>
   )

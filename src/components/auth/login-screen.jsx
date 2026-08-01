@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { GraduationCap, LoaderCircle, LogIn, AlertCircle } from "lucide-react"
+import { LoaderCircle, LogIn, AlertCircle } from "lucide-react"
 import { PinInput } from "@/components/auth/pin-input"
-import { Button } from "@/components/ui/button"
+import { StudentGrainBackground } from "@/components/student-grain-background"
 import { verifyStudentAccessCode } from "@/firebase/students"
 
 export function LoginScreen({ studentId, onSuccess }) {
@@ -39,29 +39,25 @@ export function LoginScreen({ studentId, onSuccess }) {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-md rounded-3xl border border-border bg-card p-8 shadow-xl shadow-primary/5 sm:p-10">
-        <div className="flex flex-col items-center text-center">
-          <div className="flex size-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-            <GraduationCap className="size-8" aria-hidden="true" />
-          </div>
+    <main className="relative grid min-h-dvh place-items-center overflow-hidden px-5 py-14">
+      <StudentGrainBackground />
 
-          <h1 className="mt-6 text-2xl font-extrabold tracking-tight text-foreground text-balance">
-            Вход в ученический портал
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground text-pretty">
-            Введите персональный код доступа, чтобы продолжить
-          </p>
-        </div>
+      {/* Now that StudentGrainBackground sits behind this screen too, the
+          earlier --card-opaque point-fix (needed only because there was no
+          decorative backdrop) no longer applies — switched to the mockup's
+          own translucent `glass` utility, explicitly requested. */}
+      <section className="glass relative w-full max-w-sm rounded-4xl p-7 sm:p-9">
+        <h1 className="font-display text-3xl leading-tight text-foreground">Вход в ученический портал</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Введите персональный код доступа, чтобы продолжить</p>
 
         {success ? (
-          <div className="mt-8 rounded-2xl bg-chart-3/10 p-6 text-center" role="status">
+          <div className="mt-7 rounded-3xl bg-chart-3/10 p-6 text-center" role="status">
             <p className="text-base font-bold text-foreground">Код принят!</p>
             <p className="mt-1 text-sm text-muted-foreground">Добро пожаловать обратно.</p>
           </div>
         ) : (
           <form
-            className="mt-8 flex flex-col gap-6"
+            className="mt-7"
             onSubmit={(e) => {
               e.preventDefault()
               handleSubmit()
@@ -82,7 +78,7 @@ export function LoginScreen({ studentId, onSuccess }) {
 
             <div
               aria-live="polite"
-              className={`flex items-center justify-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
+              className={`mt-4 flex items-center justify-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
                 error ? "opacity-100" : "pointer-events-none h-0 overflow-hidden py-0 opacity-0"
               }`}
             >
@@ -90,28 +86,28 @@ export function LoginScreen({ studentId, onSuccess }) {
               <span>{error}</span>
             </div>
 
-            <Button
+            <button
               type="submit"
-              size="lg"
               disabled={!isComplete || loading}
-              className="h-14 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-transform active:scale-[0.98]"
+              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full px-5 py-4 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.01] disabled:opacity-55 disabled:hover:scale-100"
+              style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
             >
               {loading ? (
                 <>
-                  <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
                   Проверяем...
                 </>
               ) : (
                 <>
-                  <LogIn className="size-5" aria-hidden="true" />
+                  <LogIn className="h-4 w-4" aria-hidden="true" />
                   Войти
                 </>
               )}
-            </Button>
+            </button>
           </form>
         )}
 
-        <p className="mt-6 text-center text-xs text-muted-foreground">
+        <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
           Код доступа можно узнать у преподавателя.
         </p>
       </section>

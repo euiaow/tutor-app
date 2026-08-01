@@ -3,11 +3,10 @@ import { FileText } from "lucide-react"
 import { AddPaymentForm } from "@/components/teacher/add-payment-form"
 import { StudentTags } from "@/components/student-tags"
 import { subscribeToBalanceLedger } from "@/firebase/finance"
-import { pluralizeLessons } from "@/lib/student-profile"
 import {
-  Avatar,
   GhostBtn,
   Panel,
+  StudentDot,
   Title,
   TeacherDialog,
   TeacherDialogContent,
@@ -135,51 +134,55 @@ export function FinanceSection({ students }) {
       {sortedStudents.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">Учеников пока нет</p>
       ) : (
-        <ul className="mt-3 divide-y divide-glass-border">
-          {sortedStudents.map((student) => {
-            const balance = student.paidLessonsBalance ?? 0
-            const initials = student.name
-              .split(" ")
-              .map((part) => part[0])
-              .slice(0, 2)
-              .join("")
-              .toUpperCase()
+        <>
+          <div className="mt-4 hidden items-center gap-4 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:flex">
+            <span className="flex-1">Ученик</span>
+            <div className="flex items-center gap-6">
+              <span className="w-14 text-right">Оплачено</span>
+              <span className="w-16 text-right">Ставка</span>
+              <span className="w-24 shrink-0" />
+            </div>
+          </div>
 
-            return (
-              <li key={student.id} className="flex flex-wrap items-center gap-3 py-3">
-                <button
-                  type="button"
-                  onClick={() => setSelectedStudent(student)}
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                >
-                  <Avatar initials={initials} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate font-semibold text-ink">{student.name}</span>
-                      <StudentTags student={student} />
+          <ul className="mt-2 flex flex-col gap-1">
+            {sortedStudents.map((student) => {
+              const balance = student.paidLessonsBalance ?? 0
+
+              return (
+                <li key={student.id} className="flex flex-wrap items-center gap-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStudent(student)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StudentDot />
+                        <span className="truncate font-semibold text-ink">{student.name}</span>
+                        <StudentTags student={student} />
+                      </div>
                     </div>
+                  </button>
+
+                  <div className="flex items-center gap-6">
+                    <span
+                      className="w-14 shrink-0 text-right text-sm font-semibold"
+                      style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
+                    >
+                      {balance}
+                    </span>
+                    <span className="w-16 shrink-0 text-right text-base text-muted-foreground">
+                      {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
+                    </span>
+                    <GhostBtn onClick={() => setPayingStudentId(student.id)} className="w-24 shrink-0 justify-center py-2 text-sm">
+                      Оплата
+                    </GhostBtn>
                   </div>
-                </button>
-                <span
-                  className="shrink-0 text-right text-xs font-semibold"
-                  style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
-                >
-                  {balance} {pluralizeLessons(balance)}
-                </span>
-                <span className="shrink-0 text-right text-xs text-muted-foreground">
-                  {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPayingStudentId(student.id)}
-                  className="shrink-0 text-xs font-semibold text-rose-deep"
-                >
-                  Оплата
-                </button>
-              </li>
-            )
-          })}
-        </ul>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       )}
 
       <StudentLedgerDialog

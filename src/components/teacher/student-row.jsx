@@ -21,11 +21,10 @@ import { StudentTags } from "@/components/student-tags"
 import { TruncatedList } from "@/components/truncated-list"
 import { Spinner } from "@/components/ui/spinner"
 import {
-  Avatar,
   Field,
   GhostBtn,
   ProgressBar,
-  SolidBtn,
+  StudentDot,
   TeacherCancelBtn,
   TeacherDialog,
   TeacherDialogContent,
@@ -44,7 +43,7 @@ import {
   assignCurriculumTemplate,
 } from "@/firebase/curriculum"
 import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
-import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatExamTarget } from "@/lib/student-profile"
+import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatExamTarget, formatSubjects } from "@/lib/student-profile"
 
 const MAX_SCHEDULE_SLOTS = 7
 const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
@@ -355,72 +354,6 @@ function StudentEditModal({ student, open, onOpenChange }) {
   )
 }
 
-// New 13th modal (Шаг 2/уточнение 2): keeps the manual covered-toggle
-// ability that used to live inline in the expanded row, now reached via
-// each tile's own "Редактировать" button. Same click-to-toggle logic as
-// before (setCurriculumItemCovered), just relocated into a dialog.
-function CurriculumToggleModal({ studentId, kind, label, progress, open, onOpenChange }) {
-  const [updatingId, setUpdatingId] = useState(null)
-  const items = kind === "topics" ? progress?.topics ?? [] : progress?.prototypes ?? []
-
-  async function handleToggle(item) {
-    if (updatingId) return
-    setUpdatingId(item.id)
-    try {
-      await setCurriculumItemCovered(studentId, kind, item.id, !item.covered)
-    } catch (error) {
-      console.error("Failed to update curriculum item:", error)
-    } finally {
-      setUpdatingId(null)
-    }
-  }
-
-  return (
-    <TeacherDialog open={open} onOpenChange={onOpenChange}>
-      <TeacherDialogContent>
-        <TeacherDialogTitle>{label}</TeacherDialogTitle>
-        <TeacherDialogDescription>Отметьте пройденные пункты вручную</TeacherDialogDescription>
-
-        <ul className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto scrollbar-hidden pr-1 text-sm">
-          {items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Пусто</p>
-          ) : (
-            items.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => handleToggle(item)}
-                  disabled={updatingId === item.id}
-                  className="glass-tile flex w-full items-center gap-2 rounded-[1rem] px-3 py-2 text-left transition disabled:opacity-50"
-                >
-                  {updatingId === item.id ? (
-                    <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
-                  ) : (
-                    <span
-                      className={
-                        "grid size-4 shrink-0 place-items-center rounded-full " +
-                        (item.covered ? "bg-primary/20 text-rose-deep" : "bg-glass-strong")
-                      }
-                    >
-                      {item.covered ? <Check className="size-3" /> : <X className="size-2.5" />}
-                    </span>
-                  )}
-                  <span className={item.covered ? "text-ink" : "text-muted-foreground"}>{item.title}</span>
-                  {item.covered && item.coveredAt ? (
-                    <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-                      {formatLessonDateTime(item.coveredAt.toDate?.() ?? item.coveredAt)}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      </TeacherDialogContent>
-    </TeacherDialog>
-  )
-}
-
 // "История уроков" per student — no current-code equivalent (the existing
 // AllPastLessonsDialog is all-students, not per-student), added to fill the
 // bottom-row button the requested layout asks for. Reuses the same
@@ -494,8 +427,27 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
   )
 }
 
-function CurriculumTile({ label, icon: Icon, items, onEdit }) {
+// Every row is directly clickable — toggles covered:true/false right away
+// via setCurriculumItemCovered (read-modify-write on the array, see
+// firebase/curriculum.js), no separate edit modal. `updatingId` is scoped
+// to this one tile so a click only shows a spinner on the row that was
+// actually clicked, not the whole list.
+function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
+  const [updatingId, setUpdatingId] = useState(null)
   const covered = items.filter((item) => item.covered).length
+
+  async function handleToggle(item) {
+    if (updatingId) return
+    setUpdatingId(item.id)
+    try {
+      await setCurriculumItemCovered(studentId, kind, item.id, !item.covered)
+    } catch (error) {
+      console.error("Failed to update curriculum item:", error)
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
   return (
     <div className="glass-tile rounded-[1.25rem] p-4">
       <p className="flex items-center justify-between text-sm font-semibold text-ink">
@@ -510,45 +462,47 @@ function CurriculumTile({ label, icon: Icon, items, onEdit }) {
       <TruncatedList
         items={items}
         emptyLabel="Пусто"
-        className="mt-3 space-y-2 text-sm"
+        className="mt-3 space-y-1.5 text-sm"
         renderItem={(item) => (
-          <li key={item.id} className="flex items-center gap-2">
-            <span
-              className={
-                "grid size-4 shrink-0 place-items-center rounded-full " +
-                (item.covered ? "bg-primary/20 text-rose-deep" : "bg-glass-strong")
-              }
+          <li key={item.id}>
+            <button
+              type="button"
+              onClick={() => handleToggle(item)}
+              disabled={updatingId === item.id}
+              className="flex w-full items-center gap-2 rounded-[0.75rem] px-2 py-1.5 text-left transition hover:bg-glass-strong/50 disabled:cursor-not-allowed"
             >
-              {item.covered ? <Check className="size-3" /> : <X className="size-2.5" />}
-            </span>
-            <span className={item.covered ? "text-ink" : "text-muted-foreground"}>{item.title}</span>
-            {item.covered && item.coveredAt ? (
-              <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-                {formatLessonDateTime(item.coveredAt.toDate?.() ?? item.coveredAt)}
-              </span>
-            ) : null}
+              {updatingId === item.id ? (
+                <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <span
+                  className={
+                    "grid size-4 shrink-0 place-items-center rounded-full " +
+                    (item.covered ? "bg-primary/20 text-rose-deep" : "bg-glass-strong")
+                  }
+                >
+                  {item.covered ? <Check className="size-3" /> : <X className="size-2.5" />}
+                </span>
+              )}
+              <span className={item.covered ? "text-ink line-through" : "text-muted-foreground"}>{item.title}</span>
+              {item.covered && item.coveredAt ? (
+                <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                  {formatLessonDateTime(item.coveredAt.toDate?.() ?? item.coveredAt)}
+                </span>
+              ) : null}
+            </button>
           </li>
         )}
       />
-      <button
-        type="button"
-        onClick={onEdit}
-        className="mt-3 flex items-center gap-1 text-xs font-semibold text-rose-deep"
-      >
-        <Pencil className="size-3" aria-hidden="true" />
-        Редактировать
-      </button>
     </div>
   )
 }
 
-export function StudentRow({ student, progressSummary }) {
+export function StudentRow({ student, progressSummary, curriculumTemplates = [] }) {
   const [expanded, setExpanded] = useState(false)
   const [isHomeworkDialogOpen, setIsHomeworkDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
-  const [curriculumModalKind, setCurriculumModalKind] = useState(null)
   const [liveProgress, setLiveProgress] = useState(null)
 
   useEffect(() => {
@@ -562,23 +516,31 @@ export function StudentRow({ student, progressSummary }) {
     return () => unsubscribe()
   }, [expanded, student.id])
 
-  const initials = student.name
-    .split(" ")
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase()
-
-  const totalTopics = progressSummary?.topics.length ?? 0
-  const coveredTopics = progressSummary?.topics.filter((topic) => topic.covered).length ?? 0
-  const percent = totalTopics > 0 ? Math.round((coveredTopics / totalTopics) * 100) : null
+  // Prefer the live subscription (active while this row is expanded) over
+  // the one-time batch snapshot the parent loaded on mount — otherwise the
+  // header percent stayed stuck at whatever it was when the page loaded,
+  // even though the expanded tile below it (which already used
+  // liveProgress) updated in real time via markTopicsCovered/
+  // setCurriculumItemCovered.
+  const progressForPercent = liveProgress ?? progressSummary
+  const totalTopics = progressForPercent?.topics.length ?? 0
+  const coveredTopics = progressForPercent?.topics.filter((topic) => topic.covered).length ?? 0
+  const totalPrototypes = progressForPercent?.prototypes.length ?? 0
+  const coveredPrototypes = progressForPercent?.prototypes.filter((prototype) => prototype.covered).length ?? 0
+  const totalProgressItems = totalTopics + totalPrototypes
+  const coveredProgressItems = coveredTopics + coveredPrototypes
+  const percent = totalProgressItems > 0 ? Math.round((coveredProgressItems / totalProgressItems) * 100) : null
 
   function stop(e) {
     e.stopPropagation()
   }
 
+  const templateName = curriculumTemplates.find(
+    (template) => template.id === student.curriculumSourceTemplateId,
+  )?.name
+
   return (
-    <div className="border-b border-glass-border/60 last:border-0">
+    <div>
       <div
         role="button"
         tabIndex={0}
@@ -591,13 +553,16 @@ export function StudentRow({ student, progressSummary }) {
         }}
         className="flex flex-wrap cursor-pointer items-center gap-3 rounded-[1.5rem] px-1 py-2 transition hover:bg-glass-strong/40"
       >
-        <Link to={`/student/${student.id}`} onClick={stop} aria-label={`Открыть дашборд ученика ${student.name}`}>
-          <Avatar initials={initials} />
-        </Link>
-
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-semibold text-ink">{student.name}</span>
+            <Link
+              to={`/student/${student.id}`}
+              onClick={stop}
+              className="flex min-w-0 items-center gap-2 truncate font-semibold text-ink transition hover:text-rose-deep"
+            >
+              <StudentDot />
+              <span className="truncate">{student.name}</span>
+            </Link>
             <StudentTags student={student} />
           </div>
           <div className="mt-1.5">
@@ -611,7 +576,7 @@ export function StudentRow({ student, progressSummary }) {
 
         <div className="flex shrink-0 items-center gap-2" onClick={stop}>
           <GhostBtn onClick={() => setIsHomeworkDialogOpen(true)} className="px-4 py-2">
-            <Plus className="size-3.5" aria-hidden="true" /> Урок
+            <Plus className="size-3.5" aria-hidden="true" /> Следующий урок
           </GhostBtn>
           <ContactButton student={student} />
           <button type="button" onClick={() => setExpanded((v) => !v)} className="text-muted-foreground/70">
@@ -642,9 +607,17 @@ export function StudentRow({ student, progressSummary }) {
               </ul>
               <div className="mt-3 space-y-1.5 border-t border-glass-border pt-3 text-sm">
                 <div className="flex justify-between text-muted-foreground">
+                  <span>Предмет</span>
+                  <span className="text-ink">{formatSubjects(student.subject)}</span>
+                </div>
+                <div className="mt-1 flex justify-between text-muted-foreground">
                   <span>Цель</span>
                   <span className="text-ink">{formatExamTarget(student.examTarget)}</span>
                 </div>
+              </div>
+              <div className="mt-4 flex justify-between border-t border-glass-border pt-3 text-sm">
+                <span className="text-muted-foreground">Учебный план</span>
+                <span className="text-ink">{templateName ?? "Не назначен"}</span>
               </div>
               <button
                 type="button"
@@ -660,21 +633,20 @@ export function StudentRow({ student, progressSummary }) {
               label="Темы программы"
               icon={FileText}
               items={liveProgress?.topics ?? []}
-              onEdit={() => setCurriculumModalKind("topics")}
+              studentId={student.id}
+              kind="topics"
             />
             <CurriculumTile
               label="Прототипы"
               icon={ListChecks}
               items={liveProgress?.prototypes ?? []}
-              onEdit={() => setCurriculumModalKind("prototypes")}
+              studentId={student.id}
+              kind="prototypes"
             />
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <div className="flex flex-wrap items-center gap-3 pl-1">
-              <SolidBtn onClick={() => setIsHomeworkDialogOpen(true)}>
-                <Plus className="size-3.5" aria-hidden="true" /> Подготовить урок
-              </SolidBtn>
               <GhostBtn onClick={() => setIsHistoryModalOpen(true)} className="px-4 py-2">
                 <Clock className="size-3.5" aria-hidden="true" /> История уроков
               </GhostBtn>
@@ -710,15 +682,6 @@ export function StudentRow({ student, progressSummary }) {
         student={student}
         open={isHistoryModalOpen}
         onOpenChange={setIsHistoryModalOpen}
-      />
-
-      <CurriculumToggleModal
-        studentId={student.id}
-        kind={curriculumModalKind}
-        label={curriculumModalKind === "prototypes" ? "Прототипы" : "Темы программы"}
-        progress={liveProgress}
-        open={curriculumModalKind !== null}
-        onOpenChange={(next) => !next && setCurriculumModalKind(null)}
       />
     </div>
   )

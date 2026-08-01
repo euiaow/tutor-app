@@ -58,37 +58,43 @@
 }
 
 /*
- * Warm/amber design system, migrated from the "redesign v2" mockup
- * (luminous-learn-dashboard-main). Card/border/muted/secondary are kept
- * OPAQUE here, unlike the mockup's own translucent values — the mockup's
- * "glass" look comes entirely from its own glass/glass-soft/glass-inset
- * utility classes below (which set their own background/blur), not from
- * these shared shadcn tokens. Every existing bg-card/border-border
- * consumer across the whole app (including the teacher dashboard, not
- * just the student page) reads these directly with no blur applied, so
- * keeping them solid is what keeps that content readable.
+ * Warm/amber design system, migrated from the "redesign student v3" mockup
+ * (luminous-learn-dashboard-main). Card/border/muted/secondary now match
+ * the mockup's own translucent values (session: v3 migration) — the earlier
+ * "kept opaque" decision was specifically about not breaking bg-card/
+ * border-border consumers that sit on a plain, non-decorative background.
+ * That's no longer a blanket concern (teacher panel has its own
+ * .teacher-theme scope now), but three screens still render straight on
+ * root tokens with no decorative backdrop of their own: LoginScreen
+ * (student PIN entry), PublicLanding, and TeacherLogin. Those three use
+ * `--card-opaque` below instead of `bg-card`, point-fixed rather than
+ * reverting this globally.
  */
 :root {
   color-scheme: light;
-  --background: oklch(0.69 0.007 70);
+  --background: oklch(0.955 0.014 70);
   --foreground: oklch(0.26 0.02 60);
-  --card: oklch(0.99 0.005 70);
+  --card: oklch(1 0 0 / 42%);
+  --card-opaque: oklch(0.99 0.005 70);
   --card-foreground: oklch(0.26 0.02 60);
   --popover: oklch(0.99 0.005 70);
   --popover-foreground: oklch(0.26 0.02 60);
   --primary: oklch(0.72 0.19 47);
   --primary-foreground: oklch(0.99 0.01 80);
-  --secondary: oklch(0.94 0.02 65);
+  --secondary: oklch(1 0 0 / 55%);
   --secondary-foreground: oklch(0.32 0.02 60);
-  --muted: oklch(0.93 0.02 65);
+  --muted: oklch(1 0 0 / 35%);
   --muted-foreground: oklch(0.52 0.02 60);
   --accent: oklch(0.88 0.07 65);
   --accent-foreground: oklch(0.28 0.03 55);
   --destructive: oklch(0.62 0.19 22);
   --destructive-foreground: oklch(0.99 0.01 80);
-  --border: oklch(0.88 0.02 60);
-  --input: oklch(0.88 0.02 60);
+  --border: oklch(1 0 0 / 55%);
+  --input: oklch(1 0 0 / 55%);
   --ring: oklch(0.72 0.19 47);
+  --status-good: oklch(0.68 0.11 155);
+  --status-warn: oklch(0.78 0.14 78);
+  --status-bad: oklch(0.6 0.15 28);
   --chart-1: oklch(0.72 0.19 47);
   --chart-2: oklch(0.65 0.14 200);
   --chart-3: oklch(0.7 0.16 145);
@@ -216,9 +222,29 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+  }
+  /* Matches the mockup's own `body` rule (rosy-reflections-main/src/styles.css)
+     byte-for-byte: a 2-stop vertical gradient with fixed attachment. Has to
+     live on the real <body> — not on .teacher-theme (its position:relative
+     wrapper) — because .teacher-theme is also the direct parent of the
+     position:fixed decorative blob layer (z-index:-10): a position:relative,
+     z-index:auto element's own background paints at "stack level 0", *after*
+     its negative-z-index descendants resolve in the same stacking context,
+     so a background painted there would sit on top of and dim the blobs
+     instead of underneath them. `:has()` scopes this to only the teacher
+     panel, matching the mockup exactly, without touching the student page's
+     shared bg-background rule above. */
+  body:has(.teacher-theme) {
+    background: linear-gradient(180deg, oklch(0.985 0.01 350), oklch(0.965 0.018 345));
+    background-attachment: fixed;
   }
 }
 
@@ -253,6 +279,23 @@
   border: 1px solid color-mix(in oklab, white 45%, transparent);
 }
 
+/* Student page's own grain texture (StudentGrainBackground) — distinct from
+   the teacher panel's grain-layer utility below (different size/opacity/
+   blend-mode, matches "redesign student v3" byte-for-byte). */
+@utility grain {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0.42;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+  }
+}
+
 /*
  * Hides the native scrollbar on an otherwise-normal overflow-y: auto
  * container — scrolling itself (touch/wheel) keeps working, only the
@@ -280,6 +323,7 @@
  * glass/glass-soft/glass-inset) per explicit instruction that unifying the
  * two themes' utility names isn't needed.
  */
+@layer base {
 .teacher-theme {
   --radius: 1.5rem;
   --background: oklch(0.975 0.012 350);
@@ -325,6 +369,7 @@
   position: relative;
   color: var(--foreground);
   font-family: var(--font-sans);
+}
 }
 
 @utility glass-panel {

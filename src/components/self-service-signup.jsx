@@ -26,7 +26,7 @@ export function SelfServiceSignup() {
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-md rounded-3xl border border-border bg-card p-8 shadow-xl shadow-primary/5 sm:p-10">
+      <section className="w-full max-w-md rounded-3xl border border-border bg-[var(--card-opaque)] p-8 shadow-xl shadow-primary/5 sm:p-10">
         <div className="flex flex-col items-center text-center">
           <div className="flex size-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
             <GraduationCap className="size-8" aria-hidden="true" />

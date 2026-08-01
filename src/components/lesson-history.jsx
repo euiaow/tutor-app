@@ -1,23 +1,22 @@
 import { useEffect, useState } from "react"
-import { CalendarDays, CheckCircle2, ChevronRight, XCircle } from "lucide-react"
+import { CalendarDays, CheckCircle2, CircleDashed, ChevronRight } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
 import { GlassDialog, GlassDialogContent, GlassDialogTitle } from "@/components/glass-dialog"
 import { MaterialLink } from "@/components/material-link"
-import { StatusBadge } from "@/components/status-badge"
 import { subscribeToLessons } from "@/firebase/lessons"
 
 const VISIBLE_COUNT = 3
 
-const ATTENDANCE_BADGES = {
-  on_time: { label: "Вовремя", variant: "success" },
-  late: { label: "Опоздал", variant: "warning" },
-  absent: { label: "Не пришёл", variant: "danger" },
+const ATTENDANCE_LABEL = {
+  on_time: "Вовремя",
+  late: "Опоздал",
+  absent: "Не пришёл",
 }
 
-const RATING_BADGES = {
-  excellent: { label: "Отлично", variant: "success" },
-  good: { label: "Хорошо", variant: "primary" },
-  needs_work: { label: "Старайся лучше", variant: "warning" },
+const RATING_LABEL = {
+  excellent: "Отлично",
+  good: "Хорошо",
+  needs_work: "Старайся лучше",
 }
 
 function formatDate(date) {
@@ -33,31 +32,32 @@ function formatDate(date) {
   })
 }
 
-// Distinct from StatusBadge's pastel pills on purpose — a light "surface"
-// plate (bg-card + shadow) for the positive state, a flat muted plate for
-// the negative one, so the two read as clearly different at a glance
-// rather than two similarly-weighted pastel tones.
-function HomeworkStatus({ done }) {
+// 3-tone glass pill, local to lesson history only — ported from "redesign
+// student v3"'s own Badge (LessonHistory.tsx). Deliberately not shared with
+// StatusBadge: that one's multi-hue palette (green/amber/red) is a working
+// tool for the teacher scanning many students at a glance, which is a
+// different job than a student's own single-lesson history reading as calm
+// glass. tone="warm" is the one highlighted/positive state (on-time
+// attendance, a set grade); everything else is neutral or muted glass, no
+// per-status hue.
+function Badge({ children, tone = "neutral" }) {
+  const tones = {
+    neutral: "bg-white/60 text-secondary-foreground",
+    warm: "text-primary-foreground",
+    muted: "bg-white/45 text-muted-foreground",
+  }
+
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-        done ? "bg-card text-foreground shadow-sm" : "bg-muted text-muted-foreground"
-      }`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${tones[tone]}`}
+      style={tone === "warm" ? { background: "var(--gradient-warm)" } : undefined}
     >
-      {done ? (
-        <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
-      ) : (
-        <XCircle className="size-3.5" aria-hidden="true" />
-      )}
-      {done ? "Домашка сделана" : "Домашка не сделана"}
+      {children}
     </span>
   )
 }
 
 function LessonCard({ lesson }) {
-  const attendance = ATTENDANCE_BADGES[lesson.attendance]
-  const rating = RATING_BADGES[lesson.rating]
-
   return (
     <li className="glass-soft flex flex-col gap-3 rounded-4xl p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -65,16 +65,27 @@ function LessonCard({ lesson }) {
           <CalendarDays className="size-3.5" aria-hidden="true" />
           {formatDate(lesson.date)}
         </div>
-        {attendance ? <StatusBadge variant={attendance.variant}>{attendance.label}</StatusBadge> : null}
+        {ATTENDANCE_LABEL[lesson.attendance] ? (
+          <Badge tone={lesson.attendance === "on_time" ? "warm" : "muted"}>
+            {ATTENDANCE_LABEL[lesson.attendance]}
+          </Badge>
+        ) : null}
       </div>
 
       <p className="font-display text-base text-foreground text-balance">
         {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
       </p>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <HomeworkStatus done={lesson.homeworkDone} />
-        {rating ? <StatusBadge variant={rating.variant}>{rating.label}</StatusBadge> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={lesson.homeworkDone ? "neutral" : "muted"}>
+          {lesson.homeworkDone ? (
+            <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
+          ) : (
+            <CircleDashed className="size-3.5" aria-hidden="true" />
+          )}
+          {lesson.homeworkDone ? "Домашка сделана" : "Домашка не сделана"}
+        </Badge>
+        {RATING_LABEL[lesson.rating] ? <Badge tone="warm">{RATING_LABEL[lesson.rating]}</Badge> : null}
       </div>
 
       {lesson.materials && lesson.materials.length > 0 ? (

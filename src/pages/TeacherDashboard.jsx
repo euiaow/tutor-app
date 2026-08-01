@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import {
+  ArrowRight,
   Bell,
   CalendarClock,
   CalendarPlus,
@@ -8,7 +9,6 @@ import {
   Clock,
   FileText,
   GraduationCap,
-  Info,
   LogOut,
   Play,
   X,
@@ -18,20 +18,20 @@ import { RegistrationLinkDialog } from "@/components/teacher/registration-link-d
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { ExtraLessonDialog } from "@/components/teacher/extra-lesson-dialog"
-import { ContactButton } from "@/components/teacher/contact-button"
+import { ContactIconButton } from "@/components/teacher/contact-button"
 import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
-import { getAllCurriculumProgressByStudent } from "@/firebase/curriculum"
+import { getAllCurriculumProgressByStudent, getCurriculumTemplates } from "@/firebase/curriculum"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { Spinner } from "@/components/ui/spinner"
 import {
-  Avatar,
   GhostBtn,
   Panel,
   SolidBtn,
+  StudentDot,
   TeacherCancelBtn,
   TeacherDialog,
   TeacherDialogContent,
@@ -41,7 +41,6 @@ import {
   Title,
   teacherInputCls,
 } from "@/components/teacher/theme-ui"
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { NotificationsList } from "@/components/notifications-list"
 import { subscribeToStudents } from "@/firebase/students"
 import {
@@ -247,7 +246,7 @@ function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChang
   )
 }
 
-function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
+function UpcomingLessonCard({ lesson, studentName, student }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
@@ -317,17 +316,38 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
     }
   }
 
+  // Whole row is clickable and opens the lesson card ("Подробнее" removed
+  // as a separate button) — every real action button inside stops
+  // propagation so it doesn't also trigger the row's own click.
+  function stop(e) {
+    e.stopPropagation()
+  }
+
+  // The dialogs below are rendered as siblings of the row's <li> (inside
+  // the same fragment), not as its children — even though they're portaled
+  // out of the DOM visually, React's synthetic events still bubble along
+  // the COMPONENT tree, so a click inside a nested dialog would otherwise
+  // also trigger the row's own onClick and reopen HomeworkLessonDialog on
+  // top of whatever dialog was just used.
   return (
-    <li className={`glass-tile rounded-[1.5rem] p-3 ${isCancelled ? "border-destructive/40" : ""}`}>
+    <>
+    <li
+      role="button"
+      tabIndex={0}
+      onClick={() => setDialogOpen(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          setDialogOpen(true)
+        }
+      }}
+      className={`glass-tile cursor-pointer rounded-[1.5rem] p-3 ${isCancelled ? "border-destructive/40" : ""}`}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <button
-          type="button"
-          onClick={() => setDialogOpen(true)}
-          className="flex min-w-0 flex-1 basis-64 items-center gap-3 text-left"
-        >
-          <Avatar initials={studentName.slice(0, 2).toUpperCase()} />
+        <div className="flex min-w-0 flex-1 basis-64 items-center gap-3">
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
+              <StudentDot />
               <span className="font-semibold text-ink">{studentName}</span>
               {lesson.isExtraLesson ? <TeacherStatusBadge tone="rose">доп.</TeacherStatusBadge> : null}
               <StudentTags student={student} />
@@ -349,8 +369,22 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
             <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Clock className="size-3" aria-hidden="true" />
-                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
-                {lesson.rescheduled ? <span className="ml-1 font-semibold text-rose-deep">перенесён</span> : null}
+                {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
+                  <>
+                    <span className="line-through">
+                      {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                    </span>
+                    <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    <span className="font-semibold text-foreground">
+                      {formatLessonDateTime(lesson.rescheduleProposedDate)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                    {lesson.rescheduled ? <span className="ml-1 font-semibold text-rose-deep">перенесён</span> : null}
+                  </>
+                )}
               </span>
               <span className={hasAssignment ? "flex items-center gap-1 font-semibold text-rose-deep" : "flex items-center gap-1"}>
                 <FileText className="size-3" aria-hidden="true" />
@@ -363,9 +397,9 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
               ) : null}
             </span>
           </span>
-        </button>
+        </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5" onClick={stop}>
           {studentAsksReschedule ? (
             <>
               <SolidBtn onClick={handleConfirmReschedule} disabled={rescheduleActionPending}>
@@ -388,12 +422,6 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
             </>
           ) : null}
 
-          {studentInitiated ? <span className="mx-0.5 h-5 w-px bg-glass-border" /> : null}
-
-          <GhostBtn onClick={() => setDialogOpen(true)} className="px-3 py-1.5">
-            <Info className="size-3.5" aria-hidden="true" /> Подробнее
-          </GhostBtn>
-
           {!studentInitiated && !isCancelled ? (
             <>
               <GhostBtn onClick={() => setRescheduleDialogOpen(true)} className="px-3 py-1.5">
@@ -402,17 +430,13 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
               <GhostBtn onClick={() => setCancelDialogOpen(true)} className="px-3 py-1.5">
                 <CircleSlash className="size-3.5" aria-hidden="true" /> Отменить
               </GhostBtn>
-              {videoCallUrl ? (
-                <SolidBtn onClick={() => openExternalLink(videoCallUrl)}>
-                  <Play className="size-3.5" aria-hidden="true" /> Начать урок
-                </SolidBtn>
-              ) : null}
             </>
           ) : null}
 
-          {student ? <ContactButton student={student} /> : null}
+          {student ? <ContactIconButton student={student} /> : null}
         </div>
       </div>
+    </li>
 
       <HomeworkLessonDialog
         studentId={lesson.studentId}
@@ -423,7 +447,7 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
       />
 
       <RescheduleDialog
-        key={rescheduleDialogOpen ? "open" : "closed"}
+        key={rescheduleDialogOpen ? "open-reschedule" : "closed-reschedule"}
         studentId={lesson.studentId}
         lessonId={lesson.id}
         initialDate={lesson.rescheduledDate ?? lesson.date}
@@ -432,14 +456,14 @@ function UpcomingLessonCard({ lesson, studentName, student, videoCallUrl }) {
       />
 
       <CancelLessonDialog
-        key={cancelDialogOpen ? "open" : "closed"}
+        key={cancelDialogOpen ? "open-cancel" : "closed-cancel"}
         studentId={lesson.studentId}
         lessonId={lesson.id}
         lessonDate={lesson.rescheduledDate ?? lesson.date}
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
       />
-    </li>
+    </>
   )
 }
 
@@ -448,9 +472,9 @@ function PastLessonCard({ lesson, studentName, student }) {
 
   return (
     <li className="flex items-center gap-3 py-3">
-      <Avatar initials={studentName.slice(0, 2).toUpperCase()} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
+          <StudentDot />
           <span className="truncate font-semibold text-ink">{studentName}</span>
           <StudentTags student={student} />
         </div>
@@ -573,7 +597,7 @@ function TeacherNotificationsBell() {
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <TeacherDialog open={open} onOpenChange={setOpen}>
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -584,10 +608,10 @@ function TeacherNotificationsBell() {
         {hasUnread ? <span className="absolute right-2.5 top-2.5 size-2 rounded-full bg-primary" /> : null}
       </button>
 
-      <SheetContent className="teacher-theme glass-panel rounded-l-[2rem] border-l-0">
-        <SheetTitle className="font-display text-ink">Уведомления</SheetTitle>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Уведомления</TeacherDialogTitle>
 
-        <div className="mt-6 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto scrollbar-hidden">
+        <div className="mt-5 flex max-h-[65vh] flex-col gap-3 overflow-y-auto">
           {notifications.some((notification) => !notification.read) ? (
             <GhostBtn onClick={handleMarkAllRead} className="self-start px-4 py-2">
               Отметить все прочитанными
@@ -596,8 +620,8 @@ function TeacherNotificationsBell() {
 
           <NotificationsList notifications={notifications} onNotificationClick={handleNotificationClick} />
         </div>
-      </SheetContent>
-    </Sheet>
+      </TeacherDialogContent>
+    </TeacherDialog>
   )
 }
 
@@ -616,12 +640,21 @@ export function TeacherDashboard() {
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
+  const [curriculumTemplates, setCurriculumTemplates] = useState([])
 
   useEffect(() => {
     const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
       console.error("Failed to load video call url:", error),
     )
     return () => unsub()
+  }, [])
+
+  // Fetched once here (not per-row) so every student row's "Учебный план"
+  // display can look up its template name without N separate reads.
+  useEffect(() => {
+    getCurriculumTemplates()
+      .then(setCurriculumTemplates)
+      .catch((err) => console.error("Failed to load curriculum templates:", err))
   }, [])
 
   async function handleSignOut() {
@@ -844,7 +877,16 @@ export function TeacherDashboard() {
 
         {clusteredUpcomingLessons.length > 0 ? (
           <Panel>
-            <Title>Ближайшие уроки</Title>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Title>Ближайшие уроки</Title>
+              <SolidBtn
+                onClick={() => videoCallUrl && openExternalLink(videoCallUrl)}
+                disabled={!videoCallUrl}
+                title={videoCallUrl ? "Начать видеозвонок" : "Ссылка на видеозвонок не настроена"}
+              >
+                <Play className="size-3.5" aria-hidden="true" /> Начать урок
+              </SolidBtn>
+            </div>
             <ul className="mt-4 space-y-3">
               {clusteredUpcomingLessons.map((lesson) => (
                 <UpcomingLessonCard
@@ -852,14 +894,13 @@ export function TeacherDashboard() {
                   lesson={lesson}
                   studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
                   student={students.find((s) => s.id === lesson.studentId)}
-                  videoCallUrl={videoCallUrl}
                 />
               ))}
             </ul>
           </Panel>
         ) : null}
 
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-[2fr_3fr]">
           {completedLessons.length > 0 ? (
             <Panel>
               <div className="flex items-center justify-between">
@@ -908,6 +949,7 @@ export function TeacherDashboard() {
                     key={student.id}
                     student={student}
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
+                    curriculumTemplates={curriculumTemplates}
                   />
                 ))}
               </div>

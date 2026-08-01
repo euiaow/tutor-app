@@ -9,12 +9,11 @@ import {
   ListChecks,
   Loader2,
   Paperclip,
-  Plus,
   Trash2,
   X,
 } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
-import { GhostBtn, SolidBtn, teacherInputCls, teacherTextareaCls } from "@/components/teacher/theme-ui"
+import { GhostBtn, SolidBtn, TeacherDialog, teacherInputCls, teacherTextareaCls } from "@/components/teacher/theme-ui"
 import {
   addLessonMaterial,
   completeLesson,
@@ -74,11 +73,11 @@ function ToggleGroup({ options, value, onChange, disabled }) {
   )
 }
 
-// One "row" per selected item — each row is a <select> over items not yet
-// covered and not already picked by a different row in this same form
-// (picked-elsewhere items stay excluded from other rows' options, but a
-// row's own current value stays in its own list so it doesn't disappear).
-function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, allCoveredLabel }) {
+// A checklist of not-yet-covered items — check any number to mark them
+// covered:true (via markTopicsCovered) together with completeLesson. Only
+// uncovered items are ever listed here; already-covered ones live in the
+// interactive tiles on the expanded student row instead.
+function CoveredMaterialChecklist({ label, items, selections, onChange, allCoveredLabel }) {
   const available = items.filter((item) => !item.covered)
 
   if (available.length === 0) {
@@ -90,56 +89,30 @@ function CoveredMaterialPicker({ label, items, selections, onChange, addLabel, a
     )
   }
 
-  function updateRow(index, value) {
-    onChange(selections.map((v, i) => (i === index ? value : v)))
-  }
-
-  function removeRow(index) {
-    onChange(selections.filter((_, i) => i !== index))
-  }
-
-  function addRow() {
-    onChange([...selections, ""])
-  }
-
-  function optionsForRow(index) {
-    const usedElsewhere = new Set(selections.filter((_, i) => i !== index).filter(Boolean))
-    return available.filter((item) => item.id === selections[index] || !usedElsewhere.has(item.id))
+  function toggle(itemId) {
+    onChange(selections.includes(itemId) ? selections.filter((id) => id !== itemId) : [...selections, itemId])
   }
 
   return (
     <div className="flex flex-col gap-2">
       <span className="text-sm font-semibold text-ink">{label}</span>
 
-      {selections.map((value, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <select value={value} onChange={(e) => updateRow(index, e.target.value)} className={teacherInputCls}>
-            <option value="">Выберите...</option>
-            {optionsForRow(index).map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => removeRow(index)}
-            aria-label="Удалить строку"
-            className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive"
+      <div className="flex flex-col gap-1.5">
+        {available.map((item) => (
+          <label
+            key={item.id}
+            className="glass-tile flex items-center gap-2.5 rounded-[1rem] px-3 py-2 text-sm text-ink transition hover:bg-glass-strong/50"
           >
-            <Trash2 className="size-4" aria-hidden="true" />
-          </button>
-        </div>
-      ))}
-
-      <button
-        type="button"
-        onClick={addRow}
-        className="flex items-center justify-center gap-1.5 rounded-full border border-dashed border-glass-border py-2 text-sm font-semibold text-muted-foreground transition hover:text-rose-deep"
-      >
-        <Plus className="size-4" aria-hidden="true" />
-        {addLabel}
-      </button>
+            <input
+              type="checkbox"
+              checked={selections.includes(item.id)}
+              onChange={() => toggle(item.id)}
+              className="size-4 shrink-0 rounded-md border-2 border-glass-border accent-primary"
+            />
+            {item.title}
+          </label>
+        ))}
+      </div>
     </div>
   )
 }
@@ -163,6 +136,7 @@ export function HomeworkLessonDialog({
   open,
   onOpenChange,
 }) {
+  const popupRef = useRef(null)
   const [derivedLessonId, setDerivedLessonId] = useState(null)
   const lessonId = fixedLessonId ?? derivedLessonId
   const [lesson, setLesson] = useState(null)
@@ -417,10 +391,14 @@ export function HomeworkLessonDialog({
   const isEditableAssignment = mode === "upcoming" && !isCompleted
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={handleDialogOpenChange}>
+    <TeacherDialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-50 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
-        <DialogPrimitive.Popup className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]">
+        <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-[100] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+        <DialogPrimitive.Popup
+          ref={popupRef}
+          initialFocus={popupRef}
+          className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-[101] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
+        >
           <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">
               {studentName}
@@ -615,22 +593,22 @@ export function HomeworkLessonDialog({
                   {curriculumProgress ? (
                     <div className="flex flex-col gap-4">
                       <span className="text-sm font-bold text-ink">Пройденный материал</span>
-                      <CoveredMaterialPicker
+                      <CoveredMaterialChecklist
                         label="Темы"
                         items={curriculumProgress.topics}
                         selections={topicSelections}
                         onChange={setTopicSelections}
-                        addLabel="Добавить ещё"
-                        allCoveredLabel="Все темы программы пройдены"
+                        allCoveredLabel="Все темы пройдены ✓"
                       />
-                      <CoveredMaterialPicker
-                        label="Прототипы"
-                        items={curriculumProgress.prototypes}
-                        selections={prototypeSelections}
-                        onChange={setPrototypeSelections}
-                        addLabel="Добавить ещё"
-                        allCoveredLabel="Все прототипы программы пройдены"
-                      />
+                      {curriculumProgress.prototypes.length > 0 ? (
+                        <CoveredMaterialChecklist
+                          label="Прототипы"
+                          items={curriculumProgress.prototypes}
+                          selections={prototypeSelections}
+                          onChange={setPrototypeSelections}
+                          allCoveredLabel="Все прототипы пройдены ✓"
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -725,6 +703,6 @@ export function HomeworkLessonDialog({
           ) : null}
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    </TeacherDialog>
   )
 }

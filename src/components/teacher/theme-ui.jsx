@@ -1,4 +1,6 @@
+import { useRef } from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -23,17 +25,14 @@ export function Tag({ children, tone = "muted", className = "" }) {
   )
 }
 
-export function Avatar({ initials, className = "" }) {
+// Small colored indicator next to a student's name — replaced the old
+// initials-circle Avatar everywhere it was used.
+export function StudentDot({ className = "" }) {
   return (
-    <div
-      className={cn(
-        "flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-primary-foreground",
-        className,
-      )}
-      style={{ background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" }}
-    >
-      {initials}
-    </div>
+    <span
+      aria-hidden="true"
+      className={cn("inline-block size-2.5 shrink-0 rounded-full bg-primary", className)}
+    />
   )
 }
 
@@ -116,12 +115,24 @@ export function TeacherDialog(props) {
 }
 
 export function TeacherDialogContent({ className, children, wide = false, ...props }) {
+  // Root cause of the page-jump-on-open bug (verified in base-ui's own
+  // source, not guessed): by default, opening a dialog focuses its first
+  // tabbable element via a bare `.focus()` call with NO `preventScroll` —
+  // only focusing the popup container itself gets `preventScroll: true`
+  // (base-ui's FloatingFocusManager: `preventScroll: elToFocus ===
+  // floatingFocusElement`). Passing `initialFocus={popupRef}` forces that
+  // path for every teacher dialog at once, instead of the previous
+  // approach of trying to detect-and-undo the jump after the fact.
+  const popupRef = useRef(null)
+
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-50 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+      <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-[100] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
       <DialogPrimitive.Popup
+        ref={popupRef}
+        initialFocus={popupRef}
         className={cn(
-          "teacher-theme glass-panel fixed top-1/2 left-1/2 z-50 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
+          "teacher-theme glass-panel fixed top-1/2 left-1/2 z-[101] max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
           wide ? "max-w-2xl" : "max-w-lg",
           className,
         )}
@@ -185,6 +196,40 @@ export function TeacherCancelBtn({ children = "Отмена", className = "", ..
     >
       {children}
     </button>
+  )
+}
+
+// Lightweight local popover (NOT a modal) — no backdrop/dimming, anchored
+// next to its trigger via Positioner. Used for quick inline edits like the
+// contact-link control, where a centered full-screen dialog would be
+// overkill for a single field.
+export function TeacherPopover(props) {
+  return <PopoverPrimitive.Root {...props} />
+}
+
+export function TeacherPopoverTrigger(props) {
+  return <PopoverPrimitive.Trigger {...props} />
+}
+
+export function TeacherPopoverContent({ className, children, align = "center", sideOffset = 8, ...props }) {
+  const popupRef = useRef(null)
+
+  return (
+    <PopoverPrimitive.Portal>
+      <PopoverPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-[100]">
+        <PopoverPrimitive.Popup
+          ref={popupRef}
+          initialFocus={popupRef}
+          className={cn(
+            "teacher-theme glass-panel w-72 rounded-[1.25rem] p-4 outline-none data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+        </PopoverPrimitive.Popup>
+      </PopoverPrimitive.Positioner>
+    </PopoverPrimitive.Portal>
   )
 }
 
