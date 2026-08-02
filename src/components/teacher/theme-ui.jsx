@@ -114,7 +114,13 @@ export function TeacherDialog(props) {
   return <DialogPrimitive.Root {...props} />
 }
 
-export function TeacherDialogContent({ className, children, wide = false, ...props }) {
+// `elevated` bumps both layers above the default z-[100]/z-[101] — for a
+// confirmation dialog opened from a control that already lives inside
+// another open TeacherDialog (e.g. "Сбросить подключение" inside the
+// notifications bell dialog), so it renders on top instead of behind/level
+// with the dialog it was opened from (same stacking-order fix as
+// TeacherPopoverContent's z-[110]).
+export function TeacherDialogContent({ className, children, wide = false, elevated = false, ...props }) {
   // Root cause of the page-jump-on-open bug (verified in base-ui's own
   // source, not guessed): by default, opening a dialog focuses its first
   // tabbable element via a bare `.focus()` call with NO `preventScroll` —
@@ -127,12 +133,26 @@ export function TeacherDialogContent({ className, children, wide = false, ...pro
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-[100] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+      {/* Base UI's Dialog.Backdrop skips rendering entirely for a "nested"
+          dialog (one opened while an ancestor Dialog.Root is already open —
+          detected via DialogRootContext, not something we opt into) unless
+          forceRender is set: `enabled: forceRender || !nested` in its own
+          source. Without this, an `elevated` dialog (opened from inside
+          another already-open TeacherDialog) would render its Popup on top
+          with no dimming/blur behind it at all. */}
+      <DialogPrimitive.Backdrop
+        forceRender={elevated}
+        className={cn(
+          "teacher-theme fixed inset-0 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+          elevated ? "z-[110]" : "z-[100]",
+        )}
+      />
       <DialogPrimitive.Popup
         ref={popupRef}
         initialFocus={popupRef}
         className={cn(
-          "teacher-theme glass-panel fixed top-1/2 left-1/2 z-[101] max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
+          "teacher-theme glass-panel fixed top-1/2 left-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
+          elevated ? "z-[111]" : "z-[101]",
           wide ? "max-w-2xl" : "max-w-lg",
           className,
         )}
@@ -216,7 +236,12 @@ export function TeacherPopoverContent({ className, children, align = "center", s
 
   return (
     <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-[100]">
+      {/* Above TeacherDialogContent's own z-[100]/z-[101] (Backdrop/Popup) —
+          a Popover must always render on top even when opened from inside an
+          already-open Dialog (e.g. the notifications bell's bot-connect
+          rows), not sit behind the dialog's popup at the same stacking
+          level. */}
+      <PopoverPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-[110]">
         <PopoverPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}

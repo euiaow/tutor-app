@@ -7,6 +7,7 @@ const {
   createSelfServiceToken,
   getRegistrationTokenStatus,
 } = require("../core/registration")
+const { resolveTeacherConnectToken } = require("../core/teacherConnect")
 const {
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
@@ -22,8 +23,7 @@ const { parseRescheduleDateInput } = require("../core/schedule")
 
 const SESSIONS_COLLECTION = "telegramSessions"
 
-// TODO: заменить на реальный домен приложения, когда он будет известен
-const PLACEHOLDER_DOMAIN = "PLACEHOLDER_DOMAIN"
+const PLACEHOLDER_DOMAIN = "princessschool-e678c.web.app"
 
 const TELEGRAM_BOT_TOKEN = defineSecret("TELEGRAM_BOT_TOKEN")
 
@@ -60,18 +60,48 @@ async function sendMessage(chatId, text, options = {}) {
       body: JSON.stringify(body),
     })
 
-    if (!response.ok) {
-      const errorBody = await response.text()
+    const payload = await response.json()
+
+    if (!response.ok || !payload.ok) {
       logger.error("Telegram sendMessage failed", {
         chatId,
         status: response.status,
-        errorBody,
+        payload,
       })
     }
 
-    return response
+    return payload
   } catch (error) {
     logger.error("Telegram sendMessage request threw", { chatId, error })
+    return null
+  }
+}
+
+// Deletes a message the bot itself sent — used to keep a proposal message
+// with buttons from being left dangling once the other side has already
+// answered through a different channel (see core/lessons.js's
+// deleteProposalMessage). Telegram rejects this for messages older than 48h
+// or already deleted; callers are expected to treat failure as non-fatal.
+async function deleteMessage(chatId, messageId) {
+  const token = TELEGRAM_BOT_TOKEN.value()
+  const url = `https://api.telegram.org/bot${token}/deleteMessage`
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+    })
+
+    const payload = await response.json()
+
+    if (!response.ok || !payload.ok) {
+      logger.warn("Telegram deleteMessage failed", { chatId, messageId, status: response.status, payload })
+    }
+
+    return payload
+  } catch (error) {
+    logger.warn("Telegram deleteMessage request threw", { chatId, messageId, error })
     return null
   }
 }
@@ -96,6 +126,20 @@ async function answerCallbackQuery(callbackQueryId, text) {
 
 async function handleStart(chatId, text) {
   const rawArg = parseStartToken(text)
+
+  // "/start teacher_{token}" connects the teacher's own chat to receive
+  // notifications — checked first since the "teacher_" prefix makes it
+  // unambiguous, unlike VK's free-text token entry (see vk.js's
+  // handleNoSessionMessage) which has to fall back to an explicit
+  // teacherConnectTokens lookup instead.
+  if (typeof rawArg === "string" && rawArg.startsWith("teacher_")) {
+    const token = rawArg.slice("teacher_".length)
+    const connected = await resolveTeacherConnectToken(token, "telegram", chatId)
+
+    logger.info("Telegram teacher connect attempt", { chatId, token, connected })
+    await sendMessage(chatId, connected ? botMessages.TEACHER_CONNECTED() : botMessages.TEACHER_CONNECT_INVALID())
+    return
+  }
 
   // "/start signup" is the entry point from /app's SelfServiceSignup screen
   // (and from PublicLanding's Telegram button, ?start=signup) — a fresh
@@ -284,6 +328,46 @@ async function handleCallbackQuery(callbackQuery) {
 
   logger.info("Telegram callback_query received", { chatId, data })
 
+  // Teacher-side buttons (shown when a *student* proposes a reschedule/
+  // cancellation) — checked first since their callback_data carries
+  // studentId+lessonId directly rather than relying on chat-identity
+  // resolution: the teacher's chat has no student doc to resolve through,
+  // unlike a student's own chat. See botMessages.RESCHEDULE_KEYBOARDS_FOR_TEACHER
+  // for why the prefix is short (Telegram's 64-byte callback_data limit).
+  const teacherConfirmReschMatch = /^t_confirm_resch_([^_]+)_([^_]+)$/.exec(data)
+  const teacherCancelReschMatch = /^t_cancel_resch_([^_]+)_([^_]+)$/.exec(data)
+  const teacherConfirmCxlMatch = /^t_confirm_cxl_([^_]+)_([^_]+)$/.exec(data)
+  const teacherRejectCxlMatch = /^t_reject_cxl_([^_]+)_([^_]+)$/.exec(data)
+
+  if (teacherConfirmReschMatch || teacherCancelReschMatch || teacherConfirmCxlMatch || teacherRejectCxlMatch) {
+    const match = teacherConfirmReschMatch || teacherCancelReschMatch || teacherConfirmCxlMatch || teacherRejectCxlMatch
+    const [, lessonId, studentId] = match
+
+    try {
+      if (teacherConfirmReschMatch) {
+        await confirmReschedule(studentId, lessonId, "teacher")
+        await answerCallbackQuery(callbackQueryId, "Перенос подтверждён")
+      } else if (teacherCancelReschMatch) {
+        await cancelReschedule(studentId, lessonId)
+        await answerCallbackQuery(callbackQueryId, "Перенос отклонён")
+      } else if (teacherConfirmCxlMatch) {
+        await confirmCancellation(studentId, lessonId, "teacher")
+        await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена")
+      } else {
+        await rejectCancellation(studentId, lessonId)
+        await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена")
+      }
+    } catch (error) {
+      logger.error("Telegram teacher reschedule/cancellation callback failed", { chatId, data, error })
+      const failureMessage =
+        teacherConfirmCxlMatch || teacherRejectCxlMatch
+          ? botMessages.CANCELLATION_CALLBACK_FAILED()
+          : botMessages.RESCHEDULE_CALLBACK_FAILED()
+      await answerCallbackQuery(callbackQueryId, failureMessage)
+    }
+    return
+  }
+
   const confirmMatch = /^confirm_reschedule_(.+)$/.exec(data)
   const cancelMatch = /^cancel_reschedule_(.+)$/.exec(data)
   // Cancellation callback_data also carries studentId (see
@@ -433,4 +517,4 @@ async function handleUpdate(update) {
   await sendMessage(chatId, botMessages.UNKNOWN_MESSAGE())
 }
 
-module.exports = { sendMessage, handleUpdate, TELEGRAM_BOT_TOKEN }
+module.exports = { sendMessage, deleteMessage, handleUpdate, TELEGRAM_BOT_TOKEN }

@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
+import { UpcomingLessonsListDialog } from "@/components/teacher/upcoming-lessons-list-dialog"
 import { ContactButton } from "@/components/teacher/contact-button"
 import { StudentTags } from "@/components/student-tags"
 import { TruncatedList } from "@/components/truncated-list"
@@ -32,6 +33,7 @@ import {
   TeacherDialogTitle,
   TeacherModalFooter,
   TeacherSaveBtn,
+  TeacherStatusBadge,
   teacherInputCls,
 } from "@/components/teacher/theme-ui"
 import { updateStudentSchedule, updateStudentProfile, deleteStudent } from "@/firebase/students"
@@ -573,6 +575,11 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
                       <p className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="size-3" aria-hidden="true" />
                         {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                        {lesson.status === "cancelled" ? (
+                          <TeacherStatusBadge tone="red" className="ml-1">
+                            Отменён
+                          </TeacherStatusBadge>
+                        ) : null}
                       </p>
                       {lesson.topic ? <p className="mt-0.5 text-sm text-ink">{lesson.topic}</p> : null}
                     </div>
@@ -668,7 +675,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
 
 export function StudentRow({ student, progressSummary, curriculumTemplates = [] }) {
   const [expanded, setExpanded] = useState(false)
-  const [isHomeworkDialogOpen, setIsHomeworkDialogOpen] = useState(false)
+  const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
@@ -744,8 +751,8 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
         </div>
 
         <div className="flex shrink-0 items-center gap-2" onClick={stop}>
-          <GhostBtn onClick={() => setIsHomeworkDialogOpen(true)} className="px-4 py-2">
-            <Plus className="size-3.5" aria-hidden="true" /> Следующий урок
+          <GhostBtn onClick={() => setIsUpcomingListOpen(true)} className="px-4 py-2">
+            <Plus className="size-3.5" aria-hidden="true" /> Следующие уроки
           </GhostBtn>
           <ContactButton student={student} />
           <button type="button" onClick={() => setExpanded((v) => !v)} className="text-muted-foreground/70">
@@ -831,12 +838,7 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
         </div>
       ) : null}
 
-      <HomeworkLessonDialog
-        studentId={student.id}
-        studentName={student.name}
-        open={isHomeworkDialogOpen}
-        onOpenChange={setIsHomeworkDialogOpen}
-      />
+      <UpcomingLessonsListDialog student={student} open={isUpcomingListOpen} onOpenChange={setIsUpcomingListOpen} />
 
       <DeleteStudentDialog
         studentId={student.id}

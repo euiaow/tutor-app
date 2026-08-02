@@ -14,6 +14,11 @@ const STUDENTS_COLLECTION = "students"
 // `options.telegramReplyMarkup`/`options.vkKeyboard` let callers (e.g.
 // proposeReschedule) attach an interactive keyboard in each platform's own
 // format — plain reminders leave both undefined.
+// Returns `false` if nothing was sent, or `{ platform, chatId, messageId }`
+// on success — the object form lets callers that attach a reply keyboard
+// (proposeReschedule/proposeCancellation) record which message to delete
+// later (see core/lessons.js's deleteProposalMessage), while still being
+// truthy for callers that only care whether delivery happened.
 async function sendReminderToStudent(studentId, message, options = {}) {
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
 
@@ -25,15 +30,25 @@ async function sendReminderToStudent(studentId, message, options = {}) {
   const student = studentSnapshot.data()
 
   if (student.platform === "telegram" && student.telegramChatId) {
-    await sendTelegramMessage(student.telegramChatId, message, { replyMarkup: options.telegramReplyMarkup })
+    const result = await sendTelegramMessage(student.telegramChatId, message, {
+      replyMarkup: options.telegramReplyMarkup,
+    })
     logger.info("sendReminderToStudent: sent via Telegram", { studentId })
-    return true
+    return {
+      platform: "telegram",
+      chatId: student.telegramChatId,
+      messageId: result?.result?.message_id ?? null,
+    }
   }
 
   if (student.platform === "vk" && student.vkPeerId) {
-    await sendVkMessage(student.vkPeerId, message, { keyboard: options.vkKeyboard })
+    const result = await sendVkMessage(student.vkPeerId, message, { keyboard: options.vkKeyboard })
     logger.info("sendReminderToStudent: sent via VK", { studentId })
-    return true
+    return {
+      platform: "vk",
+      chatId: student.vkPeerId,
+      messageId: result?.response ?? null,
+    }
   }
 
   logger.warn("sendReminderToStudent: no known messaging channel for student", { studentId })

@@ -95,6 +95,14 @@ function REGISTRATION_FAILED() {
   return "Не удалось завершить регистрацию. Обратись к репетитору за новой ссылкой"
 }
 
+function TEACHER_CONNECTED() {
+  return "Вы подключены как репетитор! Теперь будете получать уведомления сюда."
+}
+
+function TEACHER_CONNECT_INVALID() {
+  return "Ссылка недействительна или устарела, сгенерируйте новую в панели"
+}
+
 function formatMoscowDateTime(date) {
   if (!date) {
     return "—"
@@ -188,6 +196,50 @@ function RESCHEDULE_KEYBOARDS(lessonId, studentId) {
   }
 }
 
+// Teacher-side equivalent of RESCHEDULE_KEYBOARDS, used when a *student*
+// proposes a reschedule (target: teacher). Unlike the student-facing
+// keyboards, Telegram's callback_data here MUST carry studentId too, not
+// just lessonId — student-side buttons resolve studentId from the chat
+// itself (findStudentIdByChatIdentity), but the teacher's chat has no
+// student doc to resolve through. Kept prefix short ("t_confirm_resch_" not
+// "teacher_confirm_reschedule_") to stay under Telegram's 64-byte
+// callback_data limit once both a lessonId and a studentId are appended.
+function RESCHEDULE_KEYBOARDS_FOR_TEACHER(lessonId, studentId) {
+  return {
+    telegram: {
+      inline_keyboard: [
+        [
+          { text: "✅ Подтвердить", callback_data: `t_confirm_resch_${lessonId}_${studentId}` },
+          { text: "❌ Отклонить", callback_data: `t_cancel_resch_${lessonId}_${studentId}` },
+        ],
+      ],
+    },
+    vk: {
+      inline: true,
+      buttons: [
+        [
+          {
+            action: {
+              type: "callback",
+              label: "✅ Подтвердить",
+              payload: JSON.stringify({ action: "teacher_confirm_reschedule", studentId, lessonId }),
+            },
+            color: "positive",
+          },
+          {
+            action: {
+              type: "callback",
+              label: "❌ Отклонить",
+              payload: JSON.stringify({ action: "teacher_cancel_reschedule", studentId, lessonId }),
+            },
+            color: "negative",
+          },
+        ],
+      ],
+    },
+  }
+}
+
 function CANCELLATION_PROPOSED_TO_STUDENT(lessonDate) {
   return `🔴 Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate)}`
 }
@@ -244,6 +296,45 @@ function CANCELLATION_KEYBOARDS(lessonId, studentId) {
               type: "callback",
               label: "❌ Отклонить",
               payload: JSON.stringify({ action: "reject_cancel", studentId, lessonId }),
+            },
+            color: "negative",
+          },
+        ],
+      ],
+    },
+  }
+}
+
+// Teacher-side equivalent of CANCELLATION_KEYBOARDS — see
+// RESCHEDULE_KEYBOARDS_FOR_TEACHER's comment for why Telegram's
+// callback_data needs both ids and a short prefix here.
+function CANCELLATION_KEYBOARDS_FOR_TEACHER(lessonId, studentId) {
+  return {
+    telegram: {
+      inline_keyboard: [
+        [
+          { text: "✅ Подтвердить отмену", callback_data: `t_confirm_cxl_${lessonId}_${studentId}` },
+          { text: "❌ Отклонить", callback_data: `t_reject_cxl_${lessonId}_${studentId}` },
+        ],
+      ],
+    },
+    vk: {
+      inline: true,
+      buttons: [
+        [
+          {
+            action: {
+              type: "callback",
+              label: "✅ Подтвердить отмену",
+              payload: JSON.stringify({ action: "teacher_confirm_cancel", studentId, lessonId }),
+            },
+            color: "positive",
+          },
+          {
+            action: {
+              type: "callback",
+              label: "❌ Отклонить",
+              payload: JSON.stringify({ action: "teacher_reject_cancel", studentId, lessonId }),
             },
             color: "negative",
           },
@@ -355,6 +446,8 @@ module.exports = {
   STUDENT_NOT_LINKED,
   HOMEWORK_SAVE_FAILED,
   REGISTRATION_FAILED,
+  TEACHER_CONNECTED,
+  TEACHER_CONNECT_INVALID,
   REMINDER_MIDDAY_SUMMARY,
   buildPreLessonMessage,
   buildTenMinuteReminderMessage,
@@ -368,6 +461,7 @@ module.exports = {
   RESCHEDULE_NO_UPCOMING_LESSON,
   RESCHEDULE_CALLBACK_FAILED,
   RESCHEDULE_KEYBOARDS,
+  RESCHEDULE_KEYBOARDS_FOR_TEACHER,
   CANCELLATION_PROPOSED_TO_STUDENT,
   CANCELLATION_PROPOSED_TO_TEACHER,
   CANCELLATION_CONFIRMED,
@@ -375,4 +469,5 @@ module.exports = {
   CANCELLATION_REJECTED,
   CANCELLATION_CALLBACK_FAILED,
   CANCELLATION_KEYBOARDS,
+  CANCELLATION_KEYBOARDS_FOR_TEACHER,
 }

@@ -1,11 +1,79 @@
 import { useEffect, useState } from "react"
-import { Check, Copy, Link2, Trash2 } from "lucide-react"
-import { GhostBtn, Panel, Title } from "@/components/teacher/theme-ui"
+import { Check, Copy, Link2, Loader2, Trash2 } from "lucide-react"
+import {
+  GhostBtn,
+  Panel,
+  TeacherCancelBtn,
+  TeacherDialog,
+  TeacherDialogContent,
+  TeacherDialogDescription,
+  TeacherDialogTitle,
+  TeacherModalFooter,
+  Title,
+} from "@/components/teacher/theme-ui"
 import {
   cancelRegistrationToken,
   subscribeToPendingRegistrationTokens,
 } from "@/firebase/registration"
-import { buildRegistrationLinks, VK_GROUP } from "@/lib/registration-links"
+import { buildRegistrationMessages } from "@/lib/registration-links"
+
+// Same shape as student-row.jsx's DeleteStudentDialog — reused by pattern,
+// not by import, since that one is private to student-row.jsx and keyed off
+// studentId/studentName rather than a registration token.
+function CancelRegistrationDialog({ token, studentName, open, onOpenChange }) {
+  const [cancelling, setCancelling] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    if (cancelling) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) setError("")
+  }
+
+  async function handleConfirm() {
+    if (cancelling) return
+    setCancelling(true)
+    setError("")
+    try {
+      await cancelRegistrationToken(token)
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to cancel registration token:", err)
+      setError(err?.message || "Не удалось удалить ссылку. Попробуйте ещё раз")
+      setCancelling(false)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Удалить приглашение для {studentName}?</TeacherDialogTitle>
+        <TeacherDialogDescription>Ссылка перестанет работать.</TeacherDialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherModalFooter className="mt-5">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={cancelling} />
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={cancelling}
+            className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {cancelling ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Удаляем...
+              </span>
+            ) : (
+              "Удалить"
+            )}
+          </button>
+        </TeacherModalFooter>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
 
 function formatDate(timestamp) {
   if (!timestamp?.toDate) {
@@ -22,12 +90,9 @@ function formatDate(timestamp) {
 }
 
 function PendingRegistrationItem({ item }) {
-  const [cancelling, setCancelling] = useState(false)
   const [copiedChannel, setCopiedChannel] = useState(null)
-  const links = buildRegistrationLinks(item.token)
-
-  const telegramMessage = `Привет! Вот твоя ссылка для регистрации на платформе: ${links.telegram}\nПерейди по ней и следуй инструкциям бота 🎓`
-  const vkMessage = `Привет! Вот твоя ссылка для регистрации на платформе: https://vk.me/${VK_GROUP}\nПерейди по ней, напиши боту и первым сообщением отправь вот этот код: ${item.token}`
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const { telegram: telegramMessage, vk: vkMessage } = buildRegistrationMessages(item.token)
 
   async function handleCopy(channel, message) {
     try {
@@ -36,22 +101,6 @@ function PendingRegistrationItem({ item }) {
       setTimeout(() => setCopiedChannel((cur) => (cur === channel ? null : cur)), 1800)
     } catch (error) {
       console.error("Failed to copy link:", error)
-    }
-  }
-
-  async function handleCancel() {
-    const confirmed = window.confirm(
-      `Удалить приглашение для «${item.studentName}»? Ссылка перестанет работать.`,
-    )
-    if (!confirmed) return
-
-    setCancelling(true)
-    try {
-      await cancelRegistrationToken(item.token)
-    } catch (error) {
-      console.error("Failed to cancel registration token:", error)
-      window.alert("Не удалось удалить ссылку. Попробуйте ещё раз")
-      setCancelling(false)
     }
   }
 
@@ -87,14 +136,20 @@ function PendingRegistrationItem({ item }) {
         </GhostBtn>
         <button
           type="button"
-          onClick={handleCancel}
-          disabled={cancelling}
+          onClick={() => setConfirmOpen(true)}
           aria-label={`Удалить приглашение для ${item.studentName}`}
-          className="text-muted-foreground/70 transition hover:text-destructive disabled:opacity-50"
+          className="text-muted-foreground/70 transition hover:text-destructive"
         >
           <Trash2 className="size-4" aria-hidden="true" />
         </button>
       </div>
+
+      <CancelRegistrationDialog
+        token={item.token}
+        studentName={item.studentName}
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+      />
     </li>
   )
 }

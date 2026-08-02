@@ -217,7 +217,7 @@ export function FinanceSection({ students }) {
 
                   <div className="flex items-center gap-6">
                     <span
-                      className="w-14 shrink-0 text-right text-sm font-semibold"
+                      className="w-14 shrink-0 text-right text-lg font-semibold"
                       style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
                     >
                       {balance}

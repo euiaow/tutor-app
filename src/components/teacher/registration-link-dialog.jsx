@@ -1,9 +1,8 @@
 import { useState } from "react"
-import { AlertCircle, Plus } from "lucide-react"
-import { Field, SolidBtn, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, teacherInputCls } from "@/components/teacher/theme-ui"
-import { CopyableLink } from "@/components/teacher/copyable-link"
+import { AlertCircle, Check, Copy, Plus } from "lucide-react"
+import { Field, GhostBtn, SolidBtn, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, teacherInputCls } from "@/components/teacher/theme-ui"
 import { generateRegistrationLink } from "@/firebase/registration"
-import { buildRegistrationLinks } from "@/lib/registration-links"
+import { buildRegistrationMessages } from "@/lib/registration-links"
 
 export function RegistrationLinkDialog() {
   const [open, setOpen] = useState(false)
@@ -11,15 +10,17 @@ export function RegistrationLinkDialog() {
   const [status, setStatus] = useState("idle")
   const [error, setError] = useState("")
   const [token, setToken] = useState(null)
+  const [copiedChannel, setCopiedChannel] = useState(null)
 
   const loading = status === "loading"
-  const links = token ? buildRegistrationLinks(token) : null
+  const messages = token ? buildRegistrationMessages(token) : null
 
   function reset() {
     setStudentName("")
     setStatus("idle")
     setError("")
     setToken(null)
+    setCopiedChannel(null)
   }
 
   function handleOpenChange(nextOpen) {
@@ -45,6 +46,16 @@ export function RegistrationLinkDialog() {
     }
   }
 
+  async function handleCopy(channel, message) {
+    try {
+      await navigator.clipboard.writeText(message)
+      setCopiedChannel(channel)
+      setTimeout(() => setCopiedChannel((cur) => (cur === channel ? null : cur)), 1800)
+    } catch (err) {
+      console.error("Failed to copy invite text:", err)
+    }
+  }
+
   return (
     <>
       <SolidBtn onClick={() => setOpen(true)}>
@@ -56,13 +67,33 @@ export function RegistrationLinkDialog() {
         <TeacherDialogContent>
           <TeacherDialogTitle>Ссылка регистрации ученика</TeacherDialogTitle>
           <TeacherDialogDescription>
-            Создайте одноразовую ссылку и отправьте её ученику в Telegram или VK.
+            Создайте приглашение и отправьте его ученику в Telegram или VK.
           </TeacherDialogDescription>
 
-          {links ? (
-            <div className="mt-5 flex flex-col gap-4">
-              <CopyableLink label="Telegram" url={links.telegram} />
-              <CopyableLink label="VK" url={links.vk} />
+          {messages ? (
+            <div className="mt-5 flex flex-col gap-3">
+              <GhostBtn onClick={() => handleCopy("vk", messages.vk)} className="justify-center py-2.5">
+                {copiedChannel === "vk" ? (
+                  <>
+                    <Check className="size-3.5" aria-hidden="true" /> Скопировано
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3.5" aria-hidden="true" /> Скопировать приглашение для регистрации в VK
+                  </>
+                )}
+              </GhostBtn>
+              <GhostBtn onClick={() => handleCopy("tg", messages.telegram)} className="justify-center py-2.5">
+                {copiedChannel === "tg" ? (
+                  <>
+                    <Check className="size-3.5" aria-hidden="true" /> Скопировано
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3.5" aria-hidden="true" /> Скопировать приглашение для регистрации в Telegram
+                  </>
+                )}
+              </GhostBtn>
             </div>
           ) : (
             <form className="mt-5 flex flex-col gap-4" onSubmit={handleSubmit}>

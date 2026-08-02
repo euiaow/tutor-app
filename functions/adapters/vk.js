@@ -8,6 +8,7 @@ const {
   createSelfServiceToken,
   getRegistrationTokenStatus,
 } = require("../core/registration")
+const { resolveTeacherConnectToken } = require("../core/teacherConnect")
 const {
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
@@ -24,8 +25,7 @@ const { parseRescheduleDateInput } = require("../core/schedule")
 const SESSIONS_COLLECTION = "vkSessions"
 const PROCESSED_MESSAGES_COLLECTION = "vkProcessedMessages"
 
-// TODO: заменить на реальный домен приложения, когда он будет известен
-const PLACEHOLDER_DOMAIN = "PLACEHOLDER_DOMAIN"
+const PLACEHOLDER_DOMAIN = "princessschool-e678c.web.app"
 
 const VK_GROUP_TOKEN = defineSecret("VK_GROUP_TOKEN")
 const VK_CONFIRMATION_CODE = defineSecret("VK_CONFIRMATION_CODE")
@@ -103,6 +103,42 @@ async function sendMessage(peerId, text, options = {}) {
   }
 }
 
+// Deletes a message the group's bot itself sent — used to keep a proposal
+// message with buttons from being left dangling once the other side has
+// already answered through a different channel (see core/lessons.js's
+// deleteProposalMessage). `message_ids` takes the plain message id VK's own
+// messages.send response returns (see sendMessage below), not a
+// conversation_message_id. VK rejects this for messages older than 24h or
+// already deleted; callers are expected to treat failure as non-fatal.
+async function deleteMessage(peerId, messageId) {
+  const token = VK_GROUP_TOKEN.value()
+  const params = new URLSearchParams({
+    access_token: token,
+    v: VK_API_VERSION,
+    message_ids: String(messageId),
+    delete_for_all: "1",
+  })
+
+  try {
+    const response = await fetch("https://api.vk.com/method/messages.delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    })
+
+    const payload = await response.json()
+
+    if (!response.ok || payload.error) {
+      logger.warn("VK messages.delete failed", { peerId, messageId, status: response.status, error: payload.error })
+    }
+
+    return payload
+  } catch (error) {
+    logger.warn("VK messages.delete request threw", { peerId, messageId, error })
+    return null
+  }
+}
+
 async function handleNoSessionMessage(peerId, text, ref) {
   const hasRef = typeof ref === "string" && ref.trim() !== ""
   const token = hasRef ? ref.trim() : text.trim()
@@ -114,28 +150,39 @@ async function handleNoSessionMessage(peerId, text, ref) {
 
   const tokenData = await getRegistrationTokenStatus(token)
 
-  // No matching token at all: this is just a regular message from someone
-  // who hasn't started registration, not a broken/used link — greet them
-  // instead of telling them their (nonexistent) link is invalid.
-  if (!tokenData) {
-    logger.info("VK message text/ref is not a known token", { peerId })
-    await sendMessage(peerId, botMessages.WELCOME_NO_TOKEN())
+  if (tokenData) {
+    if (tokenData.status !== "pending") {
+      logger.warn("VK token already used", { peerId, token })
+      await sendMessage(peerId, botMessages.INVALID_TOKEN())
+      return
+    }
+
+    await db
+      .collection(SESSIONS_COLLECTION)
+      .doc(String(peerId))
+      .set({ token, step: "awaiting_name" })
+
+    logger.info("VK session started", { peerId, token, step: "awaiting_name" })
+    await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
     return
   }
 
-  if (tokenData.status !== "pending") {
-    logger.warn("VK token already used", { peerId, token })
-    await sendMessage(peerId, botMessages.INVALID_TOKEN())
+  // Not a student registration token — check whether it's a pending teacher
+  // connect code instead (see core/teacherConnect.js). An explicit
+  // collection lookup, not a guess by format, since both kinds of token come
+  // from the same random-string generator and could theoretically collide.
+  const connected = await resolveTeacherConnectToken(token, "vk", peerId)
+  if (connected) {
+    logger.info("VK teacher connect succeeded", { peerId, token })
+    await sendMessage(peerId, botMessages.TEACHER_CONNECTED())
     return
   }
 
-  await db
-    .collection(SESSIONS_COLLECTION)
-    .doc(String(peerId))
-    .set({ token, step: "awaiting_name" })
-
-  logger.info("VK session started", { peerId, token, step: "awaiting_name" })
-  await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
+  // No matching token of either kind: this is just a regular message from
+  // someone who hasn't started registration, not a broken/used link — greet
+  // them instead of telling them their (nonexistent) link is invalid.
+  logger.info("VK message text/ref is not a known token", { peerId })
+  await sendMessage(peerId, botMessages.WELCOME_NO_TOKEN())
 }
 
 async function handleAwaitingName(peerId, sessionRef, session, text) {
@@ -343,6 +390,15 @@ async function handleCallbackEvent(object) {
   if (peerId && payload) {
     logger.info("VK callback event received", { peerId, payload })
 
+    // "teacher_*" actions come from a keyboard sent to the teacher (a
+    // student proposed the reschedule/cancellation) — see
+    // botMessages.RESCHEDULE_KEYBOARDS_FOR_TEACHER/
+    // CANCELLATION_KEYBOARDS_FOR_TEACHER. Same payload shape as the
+    // student-facing actions below, just confirmed/rejected with role
+    // "teacher" instead of "student".
+    const isTeacherFailure = payload.action === "teacher_confirm_cancel" || payload.action === "teacher_reject_cancel"
+    const isCancellationFailure = payload.action === "confirm_cancel" || payload.action === "reject_cancel"
+
     try {
       if (payload.action === "confirm_reschedule") {
         await confirmReschedule(payload.studentId, payload.lessonId, "student")
@@ -352,13 +408,21 @@ async function handleCallbackEvent(object) {
         await confirmCancellation(payload.studentId, payload.lessonId, "student")
       } else if (payload.action === "reject_cancel") {
         await rejectCancellation(payload.studentId, payload.lessonId)
+      } else if (payload.action === "teacher_confirm_reschedule") {
+        await confirmReschedule(payload.studentId, payload.lessonId, "teacher")
+      } else if (payload.action === "teacher_cancel_reschedule") {
+        await cancelReschedule(payload.studentId, payload.lessonId)
+      } else if (payload.action === "teacher_confirm_cancel") {
+        await confirmCancellation(payload.studentId, payload.lessonId, "teacher")
+      } else if (payload.action === "teacher_reject_cancel") {
+        await rejectCancellation(payload.studentId, payload.lessonId)
       } else {
         logger.info("VK callback event ignored: unknown action", { peerId, payload })
       }
     } catch (error) {
       logger.error("VK callback event handling failed", { peerId, payload, error })
       const failureMessage =
-        payload.action === "confirm_cancel" || payload.action === "reject_cancel"
+        isCancellationFailure || isTeacherFailure
           ? botMessages.CANCELLATION_CALLBACK_FAILED()
           : botMessages.RESCHEDULE_CALLBACK_FAILED()
       await sendMessage(peerId, failureMessage)
@@ -561,4 +625,4 @@ async function handleEvent(body) {
   return "ok"
 }
 
-module.exports = { sendMessage, handleEvent, VK_GROUP_TOKEN, VK_CONFIRMATION_CODE }
+module.exports = { sendMessage, deleteMessage, handleEvent, VK_GROUP_TOKEN, VK_CONFIRMATION_CODE }

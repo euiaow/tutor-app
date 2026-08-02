@@ -236,6 +236,17 @@
   input[type="number"] {
     -moz-appearance: textfield;
   }
+  /* Opt back in to native spinner arrows for one specific field (the
+     curriculum template editor's score input) without touching every other
+     number input's hidden-arrow default above. */
+  input[type="number"].spinner-visible::-webkit-inner-spin-button,
+  input[type="number"].spinner-visible::-webkit-outer-spin-button {
+    -webkit-appearance: auto;
+    margin: 0;
+  }
+  input[type="number"].spinner-visible {
+    -moz-appearance: number-input;
+  }
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }

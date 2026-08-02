@@ -44,13 +44,30 @@ async function createNotification({
   // whole module graph has already finished loading, so this is safe (same
   // pattern core/lessons.js already used before this module existed).
   let delivered = false
+  // Only populated when sendReminderToStudent actually sent something and
+  // returned its message identity (see reminderUtils.js) — lets
+  // proposeReschedule/proposeCancellation record which bot message to
+  // delete later once the proposal is answered (see core/lessons.js's
+  // deleteProposalMessages). Stays null for every other notification type.
+  let sentMessage = null
+  // Teacher equivalent of sentMessage, but an array — unlike a student, the
+  // teacher can have both Telegram and VK connected at once, so
+  // sendMessageToTeacher may send (and need tracked) more than one message
+  // for the same proposal.
+  let sentMessages = null
   try {
     if (target === "student" && studentId) {
       const { sendReminderToStudent } = require("./reminderUtils")
-      delivered = await sendReminderToStudent(studentId, text, { telegramReplyMarkup, vkKeyboard })
+      const result = await sendReminderToStudent(studentId, text, { telegramReplyMarkup, vkKeyboard })
+      delivered = Boolean(result)
+      if (result && result.messageId != null) {
+        sentMessage = { platform: result.platform, chatId: result.chatId, messageId: result.messageId }
+      }
     } else if (target === "teacher") {
       const { sendMessageToTeacher } = require("./teacherNotifier")
-      delivered = await sendMessageToTeacher(text)
+      const results = await sendMessageToTeacher(text, { telegramReplyMarkup, vkKeyboard })
+      delivered = results.length > 0
+      sentMessages = results.filter((result) => result.messageId != null)
     }
   } catch (error) {
     logger.warn("createNotification: failed to deliver bot message", { id: ref.id, target, studentId, type, error })
@@ -60,7 +77,7 @@ async function createNotification({
   // deciding whether to mark a reminder as sent) tell a bot-delivery
   // failure apart from success — the Firestore record above is written
   // either way, so the in-app notification always exists regardless.
-  return { id: ref.id, delivered }
+  return { id: ref.id, delivered, sentMessage, sentMessages }
 }
 
 module.exports = { createNotification }

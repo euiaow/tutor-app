@@ -43,6 +43,8 @@ function createUpcomingDraft(studentId, slotIndex, date, durationMinutes) {
     rescheduleProposedDate: null,
     cancellationStatus: null,
     cancellationInitiator: null,
+    proposalMessage: null,
+    teacherProposalMessage: null,
     createdAt: FieldValue.serverTimestamp(),
   })
 }
@@ -433,6 +435,51 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
   logger.info("completeLesson: ensured next upcoming lesson", { studentId, nextLessonId })
 }
 
+// Deletes the bot message with buttons a propose* call sent to the student,
+// once the other side has answered — through the bot itself (the same
+// confirm*/cancel*/reject* call the button triggers) or through the website
+// (the exact same call, just made via the callable instead of a bot
+// callback) — so the buttons never sit there looking unanswered. One shared
+// path for both channels by construction: this runs inside
+// confirm/cancel/reject themselves, not in the bot adapters, so there's
+// nothing channel-specific to duplicate. Never throws — deletion failing
+// (message already gone, or older than the platform's delete window) isn't
+// allowed to break the confirm/cancel/reject flow itself.
+async function deleteOneProposalMessage(proposalMessage, context) {
+  try {
+    if (proposalMessage.platform === "telegram") {
+      const { deleteMessage } = require("../adapters/telegram")
+      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId)
+    } else if (proposalMessage.platform === "vk") {
+      const { deleteMessage } = require("../adapters/vk")
+      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId)
+    }
+  } catch (error) {
+    logger.warn("deleteProposalMessages: failed to delete bot proposal message", {
+      ...context,
+      proposalMessage,
+      error,
+    })
+  }
+}
+
+// Deletes both the student-side proposal message (`lesson.proposalMessage`,
+// at most one — a student only ever has one linked platform) and the
+// teacher-side ones (`lesson.teacherProposalMessage`, an array — the
+// teacher can have both Telegram and VK connected at once, so a single
+// proposal to the teacher may have gone out as two separate bot messages).
+async function deleteProposalMessages(lesson, context) {
+  if (lesson?.proposalMessage) {
+    await deleteOneProposalMessage(lesson.proposalMessage, context)
+  }
+
+  if (Array.isArray(lesson?.teacherProposalMessage)) {
+    for (const proposalMessage of lesson.teacherProposalMessage) {
+      await deleteOneProposalMessage(proposalMessage, context)
+    }
+  }
+}
+
 function assertRescheduleActor(value) {
   if (value !== "teacher" && value !== "student") {
     throw new HttpsError("invalid-argument", "Некорректная роль участника переноса")
@@ -481,7 +528,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
   if (initiator === "teacher") {
     const keyboards = botMessages.RESCHEDULE_KEYBOARDS(lessonId, studentId)
     logger.info("proposeReschedule: VK keyboard built", { studentId, lessonId, vkKeyboard: JSON.stringify(keyboards.vk) })
-    await createNotification({
+    const { sentMessage } = await createNotification({
       target: "student",
       studentId,
       type: "reschedule_proposed_to_student",
@@ -490,16 +537,27 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
+
+    if (sentMessage) {
+      await lessonRef.update({ proposalMessage: sentMessage })
+    }
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
     const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
-    await createNotification({
+    const keyboards = botMessages.RESCHEDULE_KEYBOARDS_FOR_TEACHER(lessonId, studentId)
+    const { sentMessages } = await createNotification({
       target: "teacher",
       studentId,
       type: "reschedule_proposed_to_teacher",
       text: botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate),
       lessonId,
+      telegramReplyMarkup: keyboards.telegram,
+      vkKeyboard: keyboards.vk,
     })
+
+    if (sentMessages && sentMessages.length > 0) {
+      await lessonRef.update({ teacherProposalMessage: sentMessages })
+    }
   }
 
   return rescheduleStatus
@@ -548,9 +606,13 @@ async function confirmReschedule(studentId, lessonId, confirmedBy) {
     rescheduledDate: proposedDate,
     rescheduleStatus: "confirmed",
     rescheduled: true,
+    proposalMessage: null,
+    teacherProposalMessage: null,
   })
 
   logger.info("confirmReschedule: reschedule confirmed", { studentId, lessonId, confirmedBy })
+
+  await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const newDate = proposedDate.toDate()
   const message = botMessages.RESCHEDULE_CONFIRMED(newDate)
@@ -601,9 +663,13 @@ async function cancelReschedule(studentId, lessonId) {
     rescheduleStatus: null,
     rescheduleInitiator: null,
     rescheduleProposedDate: null,
+    proposalMessage: null,
+    teacherProposalMessage: null,
   })
 
   logger.info("cancelReschedule: reschedule cancelled", { studentId, lessonId })
+
+  await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const message = botMessages.RESCHEDULE_REJECTED(originalDate)
 
@@ -657,7 +723,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
 
   if (initiator === "teacher") {
     const keyboards = botMessages.CANCELLATION_KEYBOARDS(lessonId, studentId)
-    await createNotification({
+    const { sentMessage } = await createNotification({
       target: "student",
       studentId,
       type: "cancellation_proposed_to_student",
@@ -666,16 +732,27 @@ async function proposeCancellation(studentId, lessonId, initiator) {
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
+
+    if (sentMessage) {
+      await lessonRef.update({ proposalMessage: sentMessage })
+    }
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
     const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
-    await createNotification({
+    const keyboards = botMessages.CANCELLATION_KEYBOARDS_FOR_TEACHER(lessonId, studentId)
+    const { sentMessages } = await createNotification({
       target: "teacher",
       studentId,
       type: "cancellation_proposed_to_teacher",
       text: botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate),
       lessonId,
+      telegramReplyMarkup: keyboards.telegram,
+      vkKeyboard: keyboards.vk,
     })
+
+    if (sentMessages && sentMessages.length > 0) {
+      await lessonRef.update({ teacherProposalMessage: sentMessages })
+    }
   }
 
   return cancellationStatus
@@ -725,14 +802,22 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
     }
   }
 
-  // The cancelled lesson is removed outright rather than kept around with
-  // status "cancelled" — the next occurrence of this slot gets its own
-  // draft created lazily (dailyReminderMidday's ensureUpcomingDraftsForAllStudents,
-  // or whenever the teacher next opens this student's card), not eagerly
-  // here, so a cancellation doesn't immediately "resurrect" a lesson.
-  await lessonRef.delete()
+  // Marked "cancelled" rather than deleted — same as the one-way
+  // cancelLessonDirectly path below — so it still shows up in lesson
+  // history instead of vanishing. The next occurrence of this slot still
+  // gets its own draft created lazily (dailyReminderMidday's
+  // ensureUpcomingDraftsForAllStudents, or whenever the teacher next opens
+  // this student's card), not eagerly here, so a cancellation doesn't
+  // immediately "resurrect" a lesson.
+  await lessonRef.update({ status: "cancelled" })
 
-  logger.info("confirmCancellation: cancellation confirmed, lesson deleted", { studentId, lessonId, confirmedBy })
+  logger.info("confirmCancellation: cancellation confirmed, lesson marked cancelled", {
+    studentId,
+    lessonId,
+    confirmedBy,
+  })
+
+  await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
   const message = botMessages.CANCELLATION_CONFIRMED(lessonDate)
@@ -743,11 +828,11 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
 
 // One-way cancellation — teacher cancels outright, no cancellationStatus/
 // cancellationInitiator pending step at all (those fields stay untouched,
-// unused by this path). Unlike confirmCancellation, the lesson doc is kept
-// (status: "cancelled") rather than deleted, so it still shows up in
-// lesson history; also doesn't call ensureUpcomingLesson for the same
-// reason confirmCancellation doesn't — the slot's next occurrence gets its
-// own draft lazily, not forced here.
+// unused by this path). Same "mark status: 'cancelled', never delete" shape
+// as confirmCancellation above, so both cancellation paths show up in
+// lesson history identically; also doesn't call ensureUpcomingLesson for
+// the same reason confirmCancellation doesn't — the slot's next occurrence
+// gets its own draft lazily, not forced here.
 async function cancelLessonDirectly(studentId, lessonId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -808,14 +893,19 @@ async function rejectCancellation(studentId, lessonId) {
   if (!snapshot.exists) {
     throw new HttpsError("not-found", "Урок не найден")
   }
-  const initiator = snapshot.data().cancellationInitiator
+  const lesson = snapshot.data()
+  const initiator = lesson.cancellationInitiator
 
   await lessonRef.update({
     cancellationStatus: null,
     cancellationInitiator: null,
+    proposalMessage: null,
+    teacherProposalMessage: null,
   })
 
   logger.info("rejectCancellation: cancellation rejected", { studentId, lessonId })
+
+  await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const message = botMessages.CANCELLATION_REJECTED()
 

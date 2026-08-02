@@ -1,20 +1,25 @@
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 
-// Manually created once in Firestore after deploy (there's no self-serve
-// signup for the teacher): integrations/teacherContact = { platform: "telegram"
-// | "vk", chatId: "<telegram chat id or vk peer id>" }.
+// integrations/teacherContact = { telegramChatId: string | null, vkPeerId:
+// string | null, updatedAt }. Populated by core/teacherConnect.js's
+// resolveTeacherConnectToken once the teacher redeems a connect token/link
+// from inside Telegram/VK — see the Teacher Dashboard's bot-connection UI.
 const TEACHER_CONTACT_DOC = "integrations/teacherContact"
 
-async function sendMessageToTeacher(text) {
+// Sends to every platform the teacher has connected, not just one — a
+// teacher who's linked both Telegram and VK gets the message in both.
+// `options.telegramReplyMarkup`/`options.vkKeyboard` let callers (student-
+// initiated reschedule/cancellation proposals) attach an interactive
+// keyboard, same as sendReminderToStudent. Returns an array of
+// `{platform, chatId, messageId}` — one entry per channel actually sent to
+// (0, 1, or 2 long) — rather than a single object like
+// sendReminderToStudent, since unlike a student the teacher can have both
+// channels connected at once and each needs its own message tracked for
+// deleteProposalMessages (core/lessons.js) to clean up later.
+async function sendMessageToTeacher(text, options = {}) {
   const snapshot = await db.doc(TEACHER_CONTACT_DOC).get()
-
-  if (!snapshot.exists) {
-    logger.warn("sendMessageToTeacher: integrations/teacherContact is not configured")
-    return false
-  }
-
-  const contact = snapshot.data()
+  const contact = snapshot.exists ? snapshot.data() : {}
 
   // Required lazily to avoid a circular require: the adapters require
   // core/lessons.js, and core/lessons.js calls into this module while
@@ -22,22 +27,31 @@ async function sendMessageToTeacher(text) {
   const { sendMessage: sendTelegramMessage } = require("../adapters/telegram")
   const { sendMessage: sendVkMessage } = require("../adapters/vk")
 
-  if (contact.platform === "telegram" && contact.chatId) {
-    await sendTelegramMessage(contact.chatId, text)
+  const sentMessages = []
+
+  if (contact.telegramChatId) {
+    const result = await sendTelegramMessage(contact.telegramChatId, text, {
+      replyMarkup: options.telegramReplyMarkup,
+    })
     logger.info("sendMessageToTeacher: sent via Telegram")
-    return true
+    sentMessages.push({
+      platform: "telegram",
+      chatId: contact.telegramChatId,
+      messageId: result?.result?.message_id ?? null,
+    })
   }
 
-  if (contact.platform === "vk" && contact.chatId) {
-    await sendVkMessage(contact.chatId, text)
+  if (contact.vkPeerId) {
+    const result = await sendVkMessage(contact.vkPeerId, text, { keyboard: options.vkKeyboard })
     logger.info("sendMessageToTeacher: sent via VK")
-    return true
+    sentMessages.push({ platform: "vk", chatId: contact.vkPeerId, messageId: result?.response ?? null })
   }
 
-  logger.warn("sendMessageToTeacher: teacherContact has no recognized platform/chatId", {
-    platform: contact.platform,
-  })
-  return false
+  if (sentMessages.length === 0) {
+    logger.warn("sendMessageToTeacher: no connected platform in integrations/teacherContact")
+  }
+
+  return sentMessages
 }
 
 module.exports = { sendMessageToTeacher }

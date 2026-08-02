@@ -1,12 +1,19 @@
 import { useState } from "react"
-import { Lock, LoaderCircle, LogIn, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { LoaderCircle, LogIn, AlertCircle } from "lucide-react"
 import { signInTeacher } from "@/firebase/auth"
 
 // TODO: заменить на реальный email аккаунта преподавателя, созданного
 // вручную в Firebase Console → Authentication → Add user
 const TEACHER_EMAIL = "Yfcnz200789088067160@yandex.ru"
 
+// Same layout/copy structure and glass-card treatment as the student login
+// screen (components/auth/login-screen.jsx) — ported on request, swapping
+// only the copy (teacher-specific) and the accent (teacher-theme's rose
+// --gradient-orb instead of the student page's orange --gradient-warm).
+// The input itself stays a single password field rather than PinInput's
+// 4-digit grid: teacher auth is Firebase email+password (signInTeacher),
+// not a numeric access code, so porting PinInput's UI would break real
+// passwords longer than 4 characters.
 export function TeacherLogin() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
@@ -31,22 +38,18 @@ export function TeacherLogin() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-md rounded-3xl border border-border bg-[var(--card-opaque)] p-8 shadow-xl shadow-primary/5 sm:p-10">
-        <div className="flex flex-col items-center text-center">
-          <div className="flex size-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-            <Lock className="size-8" aria-hidden="true" />
-          </div>
+    <main className="teacher-theme relative grid min-h-dvh place-items-center overflow-hidden px-5 py-14">
+      <div aria-hidden className="bg-grain-blobs">
+        <div className="blob-a" />
+        <div className="blob-b" />
+        <div className="grain-layer" />
+      </div>
 
-          <h1 className="mt-6 text-2xl font-extrabold tracking-tight text-foreground text-balance">
-            Вход для преподавателя
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground text-pretty">
-            Введите пароль, чтобы открыть панель преподавателя
-          </p>
-        </div>
+      <section className="glass-panel relative w-full max-w-sm rounded-4xl p-7 sm:p-9">
+        <h1 className="font-display text-3xl leading-tight text-foreground">Вход для преподавателя</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Введите пароль, чтобы открыть панель преподавателя</p>
 
-        <form className="mt-8 flex flex-col gap-6" onSubmit={handleSubmit}>
+        <form className="mt-7" onSubmit={handleSubmit}>
           <input
             type="password"
             value={password}
@@ -55,15 +58,14 @@ export function TeacherLogin() {
               if (error) setError("")
             }}
             disabled={loading}
-            placeholder="Пароль"
             autoFocus
             aria-label="Пароль"
-            className="h-14 rounded-2xl border-2 border-border bg-secondary/40 px-4 text-center text-lg font-semibold text-foreground shadow-sm outline-none transition-all placeholder:text-muted-foreground/40 focus:border-primary focus:bg-card focus:shadow-md focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+            className="glass-tile h-16 w-full rounded-3xl text-center font-display text-2xl text-foreground outline-none transition-shadow focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
           />
 
           <div
             aria-live="polite"
-            className={`flex items-center justify-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
+            className={`mt-4 flex items-center justify-center gap-2 rounded-xl bg-destructive/10 px-4 py-3 text-sm font-semibold text-destructive transition-all ${
               error ? "opacity-100" : "pointer-events-none h-0 overflow-hidden py-0 opacity-0"
             }`}
           >
@@ -71,25 +73,29 @@ export function TeacherLogin() {
             <span>{error}</span>
           </div>
 
-          <Button
+          <button
             type="submit"
-            size="lg"
             disabled={!password || loading}
-            className="h-14 rounded-2xl text-base font-bold shadow-lg shadow-primary/20 transition-transform active:scale-[0.98]"
+            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full px-5 py-4 text-sm font-medium text-primary-foreground transition-transform hover:scale-[1.01] disabled:opacity-55 disabled:hover:scale-100"
+            style={{ background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" }}
           >
             {loading ? (
               <>
-                <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
                 Входим...
               </>
             ) : (
               <>
-                <LogIn className="size-5" aria-hidden="true" />
+                <LogIn className="h-4 w-4" aria-hidden="true" />
                 Войти
               </>
             )}
-          </Button>
+          </button>
         </form>
+
+        <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
+          Доступ есть только у преподавателя.
+        </p>
       </section>
     </main>
   )

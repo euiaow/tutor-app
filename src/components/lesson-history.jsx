@@ -45,6 +45,7 @@ function Badge({ children, tone = "neutral" }) {
     neutral: "bg-white/60 text-secondary-foreground",
     warm: "text-primary-foreground",
     muted: "bg-white/45 text-muted-foreground",
+    cancelled: "bg-destructive/10 text-destructive",
   }
 
   return (
@@ -58,6 +59,8 @@ function Badge({ children, tone = "neutral" }) {
 }
 
 function LessonCard({ lesson }) {
+  const isCancelled = lesson.status === "cancelled"
+
   return (
     <li className="glass-soft flex flex-col gap-3 rounded-4xl p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -65,7 +68,9 @@ function LessonCard({ lesson }) {
           <CalendarDays className="size-3.5" aria-hidden="true" />
           {formatDate(lesson.date)}
         </div>
-        {ATTENDANCE_LABEL[lesson.attendance] ? (
+        {isCancelled ? (
+          <Badge tone="cancelled">Отменён</Badge>
+        ) : ATTENDANCE_LABEL[lesson.attendance] ? (
           <Badge tone={lesson.attendance === "on_time" ? "warm" : "muted"}>
             {ATTENDANCE_LABEL[lesson.attendance]}
           </Badge>
@@ -76,17 +81,22 @@ function LessonCard({ lesson }) {
         {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
       </p>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={lesson.homeworkDone ? "neutral" : "muted"}>
-          {lesson.homeworkDone ? (
-            <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
-          ) : (
-            <CircleDashed className="size-3.5" aria-hidden="true" />
-          )}
-          {lesson.homeworkDone ? "Домашка сделана" : "Домашка не сделана"}
-        </Badge>
-        {RATING_LABEL[lesson.rating] ? <Badge tone="warm">{RATING_LABEL[lesson.rating]}</Badge> : null}
-      </div>
+      {/* Attendance/homework/rating aren't meaningful for a lesson that
+          never happened — a cancelled lesson only shows its "Отменён"
+          badge above instead. */}
+      {!isCancelled ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={lesson.homeworkDone ? "neutral" : "muted"}>
+            {lesson.homeworkDone ? (
+              <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
+            ) : (
+              <CircleDashed className="size-3.5" aria-hidden="true" />
+            )}
+            {lesson.homeworkDone ? "Домашка сделана" : "Домашка не сделана"}
+          </Badge>
+          {RATING_LABEL[lesson.rating] ? <Badge tone="warm">{RATING_LABEL[lesson.rating]}</Badge> : null}
+        </div>
+      ) : null}
 
       {lesson.materials && lesson.materials.length > 0 ? (
         <ul className="flex flex-col gap-2">

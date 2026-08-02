@@ -38,6 +38,8 @@ const EXAM_TARGET_FIELD_CONFIG = {
     showScore: true,
     scoreMin: 0,
     scoreMax: 100,
+    scoreStep: 10,
+    scoreDefault: 70,
     scorePlaceholder: "0",
     scoreTitle: "Минимальный балл, с которого тема актуальна",
     topicsLabel: "Тема и целевое количество баллов, для которого актуальна",
@@ -47,6 +49,8 @@ const EXAM_TARGET_FIELD_CONFIG = {
     showScore: true,
     scoreMin: 2,
     scoreMax: 5,
+    scoreStep: 1,
+    scoreDefault: 4,
     scorePlaceholder: "3",
     scoreTitle: "Минимальная оценка, с которой тема актуальна",
     topicsLabel: "Тема и минимальная оценка, для которой актуальна",
@@ -65,8 +69,8 @@ function shortId() {
   return Math.random().toString(36).slice(2, 10)
 }
 
-function emptyRow() {
-  return { id: shortId(), title: "", minScoreRequired: 0 }
+function emptyRow(defaultScore = 0) {
+  return { id: shortId(), title: "", minScoreRequired: defaultScore }
 }
 
 function ExamTargetTag({ examTarget }) {
@@ -80,7 +84,19 @@ function ExamTargetTag({ examTarget }) {
   )
 }
 
-function RowList({ label, rows, onChange, addLabel, showScore, scoreMin, scoreMax, scorePlaceholder, scoreTitle }) {
+function RowList({
+  label,
+  rows,
+  onChange,
+  addLabel,
+  showScore,
+  scoreMin,
+  scoreMax,
+  scoreStep,
+  scoreDefault,
+  scorePlaceholder,
+  scoreTitle,
+}) {
   function updateRow(index, field, value) {
     onChange(rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)))
   }
@@ -90,7 +106,7 @@ function RowList({ label, rows, onChange, addLabel, showScore, scoreMin, scoreMa
   }
 
   function addRow() {
-    onChange([...rows, emptyRow()])
+    onChange([...rows, emptyRow(scoreDefault)])
   }
 
   return (
@@ -109,11 +125,12 @@ function RowList({ label, rows, onChange, addLabel, showScore, scoreMin, scoreMa
                 type="number"
                 min={scoreMin}
                 max={scoreMax}
+                step={scoreStep}
                 value={row.minScoreRequired ?? 0}
                 onChange={(e) => updateRow(index, "minScoreRequired", Number(e.target.value) || 0)}
                 placeholder={scorePlaceholder}
                 title={scoreTitle}
-                className={`${teacherInputCls} w-14! shrink-0 px-2! text-center`}
+                className={`${teacherInputCls} spinner-visible w-16! shrink-0 px-2! text-center`}
               />
             ) : null}
             <button
@@ -240,6 +257,8 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
             showScore={fieldConfig.showScore}
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
+            scoreStep={fieldConfig.scoreStep}
+            scoreDefault={fieldConfig.scoreDefault}
             scorePlaceholder={fieldConfig.scorePlaceholder}
             scoreTitle={fieldConfig.scoreTitle}
           />
@@ -251,6 +270,8 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
             showScore={fieldConfig.showScore}
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
+            scoreStep={fieldConfig.scoreStep}
+            scoreDefault={fieldConfig.scoreDefault}
             scorePlaceholder={fieldConfig.scorePlaceholder}
             scoreTitle={fieldConfig.scoreTitle}
           />

@@ -143,6 +143,7 @@ export function HomeworkLessonDialog({
   const [prepareError, setPrepareError] = useState("")
   const preparing = open && !lesson && !prepareError
   const isCompleted = lesson?.status === "completed"
+  const isCancelled = lesson?.status === "cancelled"
 
   const [mode, setMode] = useState("upcoming")
 
@@ -388,7 +389,7 @@ export function HomeworkLessonDialog({
   }
 
   const submissionFiles = lesson?.homework.submission.files ?? []
-  const isEditableAssignment = mode === "upcoming" && !isCompleted
+  const isEditableAssignment = mode === "upcoming" && !isCompleted && !isCancelled
 
   return (
     <TeacherDialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -548,7 +549,14 @@ export function HomeworkLessonDialog({
                 )}
               </Section>
 
-              {isCompleted ? (
+              {isCancelled ? (
+                <div className="glass-tile flex items-center gap-2 rounded-[1.25rem] p-4">
+                  <span className="rounded-full bg-destructive/10 px-2.5 py-0.5 text-[11px] font-semibold text-destructive">
+                    Отменён
+                  </span>
+                  <span className="text-sm text-muted-foreground">Урок не состоялся</span>
+                </div>
+              ) : isCompleted ? (
                 <div className="glass-tile flex flex-col gap-2 rounded-[1.25rem] p-4">
                   <span className="text-sm font-bold text-ink">Итоги урока</span>
                   <p className="text-sm text-ink">Посещение: {optionLabel(ATTENDANCE_OPTIONS, lesson.attendance)}</p>
@@ -614,7 +622,7 @@ export function HomeworkLessonDialog({
                 </div>
               )}
 
-              {mode === "completing" || isCompleted ? (
+              {mode === "completing" || isCompleted || isCancelled ? (
                 <Section icon={Paperclip} label="Дополнительные материалы">
                   <div className="flex flex-col gap-2">
                     <input
@@ -673,7 +681,7 @@ export function HomeworkLessonDialog({
             </div>
           )}
 
-          {!preparing && !prepareError && !isCompleted ? (
+          {!preparing && !prepareError && !isCompleted && !isCancelled ? (
             <div className="shrink-0 border-t border-glass-border p-4 sm:px-7">
               {mode === "completing" && completeError ? (
                 <p className="mb-2 text-sm font-semibold text-destructive">{completeError}</p>

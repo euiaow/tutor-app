@@ -40,7 +40,13 @@ const {
   rejectCancellation,
   recordHomeworkSubmission,
 } = require("./core/lessons")
-const { dailyReminderMidday, dailyReminderPreLesson, dailyReminderTenMin } = require("./reminders")
+const {
+  dailyReminderMidday,
+  dailyReminderPreLesson,
+  dailyReminderTenMin,
+  updateVideoCallAvailability,
+} = require("./reminders")
+const { createTeacherConnectToken } = require("./core/teacherConnect")
 const { deleteStudent } = require("./core/students")
 const { addPayment } = require("./core/finance")
 const {
@@ -56,8 +62,7 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const GOOGLE_OAUTH_REGION = "us-central1"
 const GOOGLE_OAUTH_CALLBACK_NAME = "googleOAuthCallback"
 
-// pending: заменить на боевой домен, когда он будет известен
-const APP_URL = "http://localhost:5173/teacher"
+const APP_URL = "https://princessschool-e678c.web.app/teacher"
 
 // The googleapis client needs the exact redirect URI both when it builds
 // the consent-screen URL and when it later exchanges the code for tokens —
@@ -598,6 +603,29 @@ exports.rejectCancellation = onCall(
   },
 )
 
+// Teacher-only (request.auth-gated) — mints a short-lived token the teacher
+// redeems from inside Telegram/VK to link that chat for notifications (see
+// core/teacherConnect.js). No secrets needed: this never sends a bot
+// message itself, it just writes a token doc and returns a link/code.
+exports.generateTeacherConnectToken = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { platform } = request.data ?? {}
+
+  try {
+    return await createTeacherConnectToken(platform)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to generate teacher connect token", error)
+    throw new HttpsError("internal", "Не удалось создать ссылку подключения")
+  }
+})
+
 // 9:00 Moscow time — reminds students about every upcoming lesson between
 // now and the end of tomorrow (Moscow calendar day), one combined message
 // per student. timeZone is set explicitly rather than hand-converting to a
@@ -630,6 +658,14 @@ exports.dailyReminderTenMin = onSchedule(
     await dailyReminderTenMin()
   },
 )
+
+// Every 5 minutes — maintains the videoCallAvailable flag on upcoming
+// lessons (see reminders.js). No secrets: this never sends a bot message,
+// only writes a Firestore field the student dashboard's video-call button
+// reads.
+exports.updateVideoCallAvailability = onSchedule("*/5 * * * *", async () => {
+  await updateVideoCallAvailability()
+})
 
 // Both secrets are needed even though this is the Telegram webhook: a
 // homework submission here can trigger a teacher notification, and the

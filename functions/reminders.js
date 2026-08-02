@@ -258,4 +258,55 @@ async function dailyReminderTenMin() {
   logger.info("dailyReminderTenMin: finished")
 }
 
-module.exports = { dailyReminderMidday, dailyReminderPreLesson, dailyReminderTenMin }
+const VIDEO_CALL_WINDOW_BEFORE_MS = 10 * 60 * 1000
+const VIDEO_CALL_WINDOW_AFTER_MS = 60 * 60 * 1000
+
+// updateVideoCallAvailability: runs every 5 minutes. Flags each upcoming
+// lesson's videoCallAvailable true while its effective date falls in
+// [now-10min, now+60min] — active a little before the lesson and for a
+// while after it starts, not switched off the instant it begins — and false
+// otherwise. A separate, independent tier from dailyReminderTenMin (whose
+// window is narrower and one-directional, and which sends a bot message
+// rather than gating a UI button): this only maintains a Firestore flag the
+// student dashboard's "Подключиться" button reads, no notification
+// involved. Unlike the reminder tiers above, this doesn't skip students
+// with no schedule slots — an extra (unscheduled) lesson still needs its
+// availability window maintained.
+async function updateVideoCallAvailability() {
+  logger.info("updateVideoCallAvailability: starting")
+
+  const now = new Date()
+  const windowStart = new Date(now.getTime() - VIDEO_CALL_WINDOW_BEFORE_MS)
+  const windowEnd = new Date(now.getTime() + VIDEO_CALL_WINDOW_AFTER_MS)
+
+  const studentsSnapshot = await db.collection(STUDENTS_COLLECTION).get()
+
+  for (const studentDoc of studentsSnapshot.docs) {
+    const studentId = studentDoc.id
+
+    try {
+      const upcomingDocs = await getUpcomingLessons(studentId)
+
+      for (const lessonDoc of upcomingDocs) {
+        const lesson = lessonDoc.data()
+        const date = effectiveLessonDate(lesson)
+        const shouldBeAvailable = Boolean(date) && date >= windowStart && date <= windowEnd
+
+        if (Boolean(lesson.videoCallAvailable) !== shouldBeAvailable) {
+          await lessonDoc.ref.update({ videoCallAvailable: shouldBeAvailable })
+        }
+      }
+    } catch (error) {
+      logger.error("updateVideoCallAvailability: failed to update lesson", { studentId, error })
+    }
+  }
+
+  logger.info("updateVideoCallAvailability: finished")
+}
+
+module.exports = {
+  dailyReminderMidday,
+  dailyReminderPreLesson,
+  dailyReminderTenMin,
+  updateVideoCallAvailability,
+}

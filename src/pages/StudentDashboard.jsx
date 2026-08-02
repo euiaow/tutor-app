@@ -767,13 +767,14 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                     Видеовстреча
                   </p>
                   <p className="mt-1 truncate text-sm text-secondary-foreground">
-                    Ссылка активна за 10 минут до начала
+                    {lesson.videoCallAvailable ? "Ссылка активна" : "Станет доступна ближе к началу урока"}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => openExternalLink(videoCallUrl)}
-                  className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02]"
+                  disabled={!lesson.videoCallAvailable}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
                   style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
                 >
                   <Video className="h-4 w-4" aria-hidden="true" />
