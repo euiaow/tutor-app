@@ -41,9 +41,10 @@
 
 ## Technical constraints
 
-- **App URL is hardcoded** in `functions/index.js`
-  (`APP_URL = "http://localhost:5173/teacher"`, marked `// pending: заменить
-  на боевой домен...`) — must be updated before/at production deploy.
+- **Domain is finalized (session 10)** — `APP_URL` (`functions/index.js`)
+  and the student registration-link domain (`telegram.js`/`vk.js`) both
+  point at the real `https://princessschool-e678c.web.app`. No more
+  hardcoded localhost/placeholder anywhere in `functions/`.
 - Students have no Firebase Auth identity — any function reachable from
   the Student Dashboard must not require `request.auth` and must trust
   `studentId`/role params from the request body (already a deliberate
@@ -70,7 +71,36 @@
   region's CPU quota at the exact health-check moment, not a genuinely
   exhausted quota — so the fix is sequential, single-function retries,
   not "just retry the batch again" or "wait longer before retrying the
-  batch."
+  batch." **Session 10: hit again, worse than ever (19 functions failed
+  in one batch at one point) — the one-at-a-time retry loop still
+  resolved every single one, no exceptions. Occasionally a solo retry
+  itself fails once or twice more before succeeding (seen with
+  `completeLesson` this session) — if that happens, wait ~60-90s
+  (`ScheduleWakeup`/background sleep, not a blocking foreground sleep)
+  and retry solo again rather than escalating to a full batch retry.**
+- **A related but distinct deploy-reliability issue found session 10: a
+  function's Cloud Run service can end up missing its
+  `allUsers`/`roles/run.invoker` IAM binding**, most likely as a side
+  effect of a deploy interrupted mid-way by the CPU-quota flake above —
+  normally `firebase deploy` grants this automatically on a *successful*
+  deploy, but it doesn't appear to get retroactively fixed by later
+  successful deploys of *other* functions. Symptom is easy to mistake for
+  a code bug: the client gets a generic `internal` error (or the action
+  just silently no-ops), and `firebase functions:log --only <name>` shows
+  **no real invocation trace at all** — the request is rejected at the
+  Cloud Run IAM layer before the function's own code runs. Fix (gcloud,
+  not available in this environment — hand the command to the user):
+  `gcloud run services add-iam-policy-binding <service> --region=us-
+  central1 --member=allUsers --role=roles/run.invoker`. **Cloud Run
+  service names are always the function name lowercased** (no other
+  transformation) — e.g. `cancelLessonDirectly` → `cancellessondirectly`;
+  using the camelCase function name in the gcloud command 404s. A batch
+  Cloud Shell script exists (see `activeContext.md`/`progress.md` session
+  10 notes) that checks every `onCall`/`onRequest` export and fixes any
+  missing bindings in one pass — `onSchedule`/`onDocumentWritten`
+  functions must be excluded from it, they use a different (non-public)
+  invoker by design and making them public would be a regression, not a
+  fix.
 
 ## Dependencies worth knowing about
 

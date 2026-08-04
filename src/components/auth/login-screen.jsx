@@ -3,8 +3,10 @@ import { LoaderCircle, LogIn, AlertCircle } from "lucide-react"
 import { PinInput } from "@/components/auth/pin-input"
 import { StudentGrainBackground } from "@/components/student-grain-background"
 import { verifyStudentAccessCode } from "@/firebase/students"
+import { usePageTitle } from "@/lib/usePageTitle"
 
 export function LoginScreen({ studentId, onSuccess }) {
+  usePageTitle("Вход")
   const [pin, setPin] = useState(["", "", "", ""])
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)

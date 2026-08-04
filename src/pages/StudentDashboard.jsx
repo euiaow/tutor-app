@@ -37,6 +37,7 @@ import {
   GlassDialogDescription,
 } from "@/components/glass-dialog"
 import { LoginScreen } from "@/components/auth/login-screen"
+import { usePageTitle } from "@/lib/usePageTitle"
 import { subscribeToStudent, getStudentTelegramChatId, setStudentGoal } from "@/firebase/students"
 import {
   subscribeToStudentNotifications,
@@ -1201,6 +1202,7 @@ function getInitial(name) {
 }
 
 function StudentDashboardContent({ studentId }) {
+  usePageTitle("Моя панель")
   const [student, setStudent] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)

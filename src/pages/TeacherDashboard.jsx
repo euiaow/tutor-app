@@ -8,6 +8,7 @@ import {
   LogOut,
   Play,
 } from "lucide-react"
+import { usePageTitle } from "@/lib/usePageTitle"
 import { StudentRow } from "@/components/teacher/student-row"
 import { UpcomingLessonCard } from "@/components/teacher/upcoming-lesson-card"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
@@ -246,6 +247,7 @@ function TeacherNotificationsBell() {
 }
 
 export function TeacherDashboard() {
+  usePageTitle("Учительская")
   const [students, setStudents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)

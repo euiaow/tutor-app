@@ -189,15 +189,84 @@
   to the mockup's stacked Пройдено/Осталось layout, lesson-history tags
   redesigned to a local 3-tone glass `Badge` (deliberately not merged with
   the teacher's `StatusBadge`), login screen (`LoginScreen`/`PinInput`)
-  fully migrated over two passes. See [[activeContext]] session 9 for the
-  full list and what got missed on the first pass.
+  fully migrated over two passes. See `changelog/2026-08-august.md` for
+  the full detail.
+- **Domain finalized (session 10)** — no more `PLACEHOLDER_DOMAIN`/
+  localhost anywhere in `functions/`; everything points at
+  `https://princessschool-e678c.web.app`.
+- **Bot proposal-message cross-channel sync (session 10)** — when a
+  reschedule/cancellation proposal's bot message (with buttons) is
+  answered through a *different* channel (bot vs. website, or Telegram vs.
+  VK for the teacher), the original message is deleted and replaced by a
+  plain outcome text. Works both directions: student-facing messages
+  (`lesson.proposalMessage`) and, new this session, teacher-facing ones
+  too (`lesson.teacherProposalMessage`, an array — the teacher can have
+  both channels connected). See [[systemPatterns]].
+- **Teacher bot connect via one-time tokens (session 10)** — replaces the
+  old manual-Firestore-doc setup. Teacher generates a Telegram deep link
+  or a VK code from the notifications-bell dialog
+  (`generateTeacherConnectToken` callable, `teacherConnectTokens/`
+  collection, 10-min TTL); `integrations/teacherContact` now supports
+  **both** Telegram and VK connected simultaneously
+  (`{telegramChatId, vkPeerId}`, was single-channel before). Student-
+  initiated proposals now send the teacher an interactive
+  confirm/reject keyboard too (previously text-only) — see
+  [[systemPatterns]] for the Telegram `callback_data` byte-limit
+  constraint this ran into.
+- **Video call availability window (session 10)** — `videoCallAvailable`
+  flag maintained every 5 minutes (`updateVideoCallAvailability`), true
+  only within 10 minutes before through 60 minutes after a lesson's
+  effective start. Student's "Подключиться" button is always visible now
+  but disabled outside that window (previously always-enabled once any
+  global link was set — a real gap, since the link is shared across every
+  student).
+- **`UpcomingLessonsListDialog` (session 10)** — the student-row button
+  ("Следующие уроки") now opens every upcoming lesson within 3 weeks, not
+  just the single nearest one, relevant now that a student can have
+  multiple weekly schedule slots. `UpcomingLessonCard`/`RescheduleDialog`/
+  `CancelLessonDialog` extracted out of `TeacherDashboard.jsx` into shared
+  `upcoming-lesson-card.jsx` so both this dialog and "Ближайшие уроки"
+  reuse one implementation.
+- **Cancelled lessons now appear in history (session 10)** —
+  `confirmCancellation` (two-sided cancel) no longer deletes the lesson
+  doc; sets `status: "cancelled"` exactly like the one-sided
+  `cancelLessonDirectly` already did. Both now show an "Отменён" badge in
+  lesson history (student's own view and the teacher's per-student view),
+  with attendance/homework/rating badges hidden since the lesson never
+  happened. Weekly income calc audited and confirmed already correctly
+  excludes cancelled lessons (structural, via its `status in
+  [upcoming,completed]` query) — no change needed there.
+- Curriculum template score field, registration-invite copy text,
+  `window.confirm`→custom dialog for registration deletion, Финансы
+  "Оплачено" font size, and `TeacherLogin`'s visual redesign (matching the
+  student `LoginScreen`'s grain background + glass card, rose accent
+  instead of orange) — all session 10, see `activeContext.md`.
 
 ## Known issues / open items
 
-- `APP_URL` in `functions/index.js` is hardcoded to
-  `http://localhost:5173/teacher` with an explicit `pending` comment to
-  replace it before production.
 - No automated test suite in the repo.
+- **New infra-level failure class found session 10, distinct from the
+  missing-secrets bug (session 5): a Cloud Function's Cloud Run service
+  can silently lose its `allUsers`/`roles/run.invoker` IAM binding**,
+  usually after a deploy interrupted mid-way by the CPU-quota flake (see
+  [[techContext]]). Symptom: client gets a generic `internal` error (or,
+  for a non-`onCall` case, the action just silently does nothing), and
+  `firebase functions:log --only <name>` shows **zero real invocation
+  traces** — the request is rejected at the Cloud Run IAM layer before the
+  function's own code ever runs. Fix: `gcloud run services
+  add-iam-policy-binding <lowercase-service-name> --region=us-central1
+  --member=allUsers --role=roles/run.invoker` (Cloud Run service names are
+  always the lowercased function name, e.g. `cancelLessonDirectly` →
+  `cancellessondirectly` — a real gotcha, first attempt with the camelCase
+  name 404s). A Cloud Shell script exists (given to the user, not run by
+  Claude — see session 10 notes) that checks/fixes this across every
+  `onCall`/`onRequest` export at once; ran once, fixed everything found at
+  the time. **If this symptom recurs on a function added after session
+  10, it hasn't been covered by that pass — check it manually.**
+- **Student "Отменить урок" button — flagged unresolved since session 4,
+  possibly fixed as a side effect of session 10's IAM-invoker fix above**
+  (exact matching symptom: client action does nothing, no server trace),
+  but not explicitly re-tested. Confirm before removing this line.
 - **Resolved as of session 8, regressed again in session 9**: session 8's
   work was committed and pushed (`3e365a3`), plus one more commit
   (`e01c493`, "редизайн учителя без фикса багов") since. **Everything from

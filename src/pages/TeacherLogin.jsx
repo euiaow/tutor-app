@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { LoaderCircle, LogIn, AlertCircle } from "lucide-react"
 import { signInTeacher } from "@/firebase/auth"
+import { usePageTitle } from "@/lib/usePageTitle"
 
 // TODO: заменить на реальный email аккаунта преподавателя, созданного
 // вручную в Firebase Console → Authentication → Add user
@@ -15,6 +16,7 @@ const TEACHER_EMAIL = "Yfcnz200789088067160@yandex.ru"
 // not a numeric access code, so porting PinInput's UI would break real
 // passwords longer than 4 characters.
 export function TeacherLogin() {
+  usePageTitle("Вход")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)

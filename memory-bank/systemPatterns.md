@@ -424,16 +424,55 @@ src/
   must live on an ancestor that is not that layer's own positioned parent.**
 - **`--card-opaque`** (`index.css`, root `:root`) exists for screens that
   render straight on root design tokens with no decorative background
-  layer of their own — `PublicLanding.jsx`, `TeacherLogin.jsx`,
-  `SelfServiceSignup.jsx` all swap `bg-card` → `bg-[var(--card-opaque)]`
-  rather than using the (as of the "redesign student v3" migration)
-  translucent `--card`, which would blend into a flat page with nothing
-  behind it. `LoginScreen.jsx` used this too until `StudentGrainBackground`
-  was added directly to it, at which point it switched to the real
-  translucent `glass` utility class instead — **the moment a screen gains
-  its own decorative background, revisit whether `--card-opaque` is still
-  needed for it**, don't assume the point-fix must stay forever once
-  applied.
+  layer of their own — `PublicLanding.jsx`, `SelfServiceSignup.jsx` swap
+  `bg-card` → `bg-[var(--card-opaque)]` rather than using the (as of the
+  "redesign student v3" migration) translucent `--card`, which would blend
+  into a flat page with nothing behind it. `LoginScreen.jsx` used this too
+  until `StudentGrainBackground` was added directly to it, at which point
+  it switched to the real translucent `glass` utility class instead —
+  **the moment a screen gains its own decorative background, revisit
+  whether `--card-opaque` is still needed for it**, don't assume the
+  point-fix must stay forever once applied. `TeacherLogin.jsx` followed
+  the same trajectory in session 10: redesigned around `.teacher-theme`'s
+  own grain/blob background (`bg-grain-blobs`/`blob-a`/`blob-b`/
+  `grain-layer`, the same decorative layer `TeacherDashboard.jsx` uses) and
+  `glass-panel`/`glass-tile`, so it no longer needs `--card-opaque` either.
+- **Base UI's `Dialog.Backdrop` skips rendering entirely for a "nested"
+  dialog** (a `Dialog.Root` opened while an ancestor `Dialog.Root` is
+  already open, detected automatically via React context, not something
+  opted into) **unless `forceRender` is explicitly passed** — confirmed by
+  reading `node_modules/@base-ui/react/dialog/backdrop/DialogBackdrop.js`
+  directly: `enabled: forceRender || !nested`. Found when the teacher
+  bot-connect "Сбросить подключение" confirmation dialog (opened from a
+  Popover trigger living inside the already-open notifications-bell
+  dialog) rendered with zero dimming/blur behind it — not a z-index bug,
+  the `<div>` simply wasn't in the DOM at all. Fixed via a new `elevated`
+  boolean prop on `TeacherDialogContent` (`theme-ui.jsx`): bumps
+  Backdrop/Popup from `z-[100]`/`z-[101]` to `z-[110]`/`z-[111]` *and*
+  passes `forceRender={elevated}` to the Backdrop — both parts are
+  required, the z-index bump alone does nothing if the element never
+  renders. **Any future confirmation dialog opened from inside an
+  already-open `TeacherDialog` must pass `elevated`.** `TeacherPopoverContent`
+  needed the same z-index bump (`z-[100]` → `z-[110]`) for the same
+  reason — a Popover has no backdrop to worry about, but its own Popup
+  was still tied for z-index with the outer Dialog's Backdrop, so it could
+  render behind the outer Dialog's Popup.
+- **Telegram's `callback_data` has a real 64-byte limit that this project
+  bumped into for the first time in session 10.** Every existing
+  student-facing reschedule/cancellation callback encoded at most one
+  Firestore auto-id (20 chars) plus a short prefix comfortably under the
+  limit. The new teacher-facing keyboards need **both** `lessonId` and
+  `studentId` in the callback data (the teacher's chat has no student doc
+  to resolve identity through, unlike a student's own chat) — a verbose
+  prefix like `teacher_confirm_reschedule_` pushed the total past 64 bytes
+  once both ids were appended. Fixed by using short prefixes instead
+  (`t_confirm_resch_`, `t_cancel_resch_`, `t_confirm_cxl_`,
+  `t_reject_cxl_`) — VK's equivalent JSON `payload` field has no such
+  constraint, so its action names stay descriptive
+  (`teacher_confirm_reschedule` etc.). **Any future Telegram inline
+  keyboard that needs to encode more than one Firestore id in
+  `callback_data` should budget for this limit up front, not discover it
+  after building the keyboard.**
 
 ## Component relationships
 
@@ -479,10 +518,39 @@ src/
   → upcoming lesson drafts reconciled + Google Calendar events
   created/updated/deleted.
 - Lesson reschedule/cancel → `propose*` sets status+initiator on the
-  lesson doc and notifies the other side's bot → `confirm*`/`reject*`/
-  `cancel*` resolves the status, updates the calendar event (reschedule)
-  or deletes it (cancellation).
+  lesson doc, notifies the other side's bot (with an interactive keyboard
+  if the recipient is the student *or*, as of session 10, the teacher —
+  both sides now get buttons, not just the student) → `confirm*`/
+  `reject*`/`cancel*` resolves the status, updates the calendar event
+  (reschedule) or deletes it (cancellation). **Cancellation, as of session
+  10, never deletes the lesson doc either way** — `confirmCancellation`
+  (two-sided) and `cancelLessonDirectly` (one-sided) both set
+  `status: "cancelled"` and leave the doc in place, so it still shows up
+  in lesson history with an "Отменён" badge; history queries already
+  filtered `status !== "upcoming"` so needed no change, only the two
+  cancellation functions themselves and the badge display did.
+- **Proposal-message cross-channel deletion** (session 10): a propose*
+  call that sends a keyboard records where it went —
+  `lesson.proposalMessage: {platform, chatId, messageId}` for the student
+  side (at most one, a student only has one linked platform),
+  `lesson.teacherProposalMessage: Array<{platform, chatId, messageId}>`
+  for the teacher side (0–2, since the teacher can have both Telegram and
+  VK connected at once via `core/teacherConnect.js`). Every resolution
+  path (`confirmReschedule`/`cancelReschedule`/`confirmCancellation`/
+  `rejectCancellation`) calls `deleteProposalMessages(lesson, ...)`
+  (`core/lessons.js`) before/alongside its own Firestore update — one
+  shared deletion path regardless of whether the resolution came from a
+  bot button press or a website click, so the message never sits there
+  looking unanswered when it was actually resolved through a different
+  channel. `sendReminderToStudent`/`sendMessageToTeacher` had to change
+  their return shape (from plain `boolean` to an object/array carrying the
+  sent message's platform+chatId+messageId) to make this possible;
+  `createNotification` surfaces this as `sentMessage`/`sentMessages`.
 - Reminder schedulers (`onSchedule`) → `functions/reminders.js` queries
   lessons in the relevant time window → `botMessages.js` builds text →
   `adapters/telegram.js` / `adapters/vk.js` deliver per student's
-  registered platform.
+  registered platform. `updateVideoCallAvailability` (session 10, every 5
+  min) is a fourth, independent scheduler in the same file — unlike the
+  other three, it never sends a bot message, just maintains
+  `lesson.videoCallAvailable` for the student dashboard's video-call
+  button to read.
