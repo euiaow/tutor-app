@@ -115,12 +115,50 @@ async function isConnected() {
   return Boolean(snapshot.exists && snapshot.data().refresh_token)
 }
 
+// Clears both the stored tokens and every student's stale googleEventIds —
+// without the latter, reconnecting (especially under a different Google
+// account) would try to update events by ids that no longer exist instead
+// of creating fresh ones. Token revocation with Google is best-effort: a
+// failure there (already-revoked token, network hiccup) must never block
+// the local cleanup, which is the part that actually matters for a clean
+// reconnect.
+async function disconnectGoogleCalendar() {
+  const integrationSnapshot = await getIntegrationRef().get()
+  const refreshToken = integrationSnapshot.exists ? integrationSnapshot.data().refresh_token : null
+
+  if (refreshToken) {
+    try {
+      const client = buildOAuthClient()
+      client.setCredentials({ refresh_token: refreshToken })
+      await client.revokeToken(refreshToken)
+      logger.info("Google Calendar token revoked with Google")
+    } catch (error) {
+      logger.warn("Failed to revoke Google Calendar token with Google (continuing anyway)", error)
+    }
+  }
+
+  await getIntegrationRef().delete()
+
+  const studentsSnapshot = await db.collection("students").get()
+  const batch = db.batch()
+  studentsSnapshot.docs.forEach((studentDoc) => {
+    batch.update(studentDoc.ref, {
+      googleEventIds: FieldValue.delete(),
+      googleEventId: FieldValue.delete(),
+    })
+  })
+  await batch.commit()
+
+  logger.info("Google Calendar disconnected", { studentsCleared: studentsSnapshot.size })
+}
+
 module.exports = {
   buildOAuthClient,
   getAuthUrl,
   saveTokens,
   getAuthorizedClient,
   isConnected,
+  disconnectGoogleCalendar,
   GOOGLE_OAUTH_CLIENT_ID,
   GOOGLE_OAUTH_CLIENT_SECRET,
 }

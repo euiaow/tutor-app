@@ -105,9 +105,9 @@ function PendingRegistrationItem({ item }) {
   }
 
   return (
-    <li className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.5rem] px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-ink">{item.studentName}</p>
+    <li className="glass-tile flex flex-col gap-3 rounded-[1.5rem] px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="min-w-0 w-full sm:w-auto sm:flex-1">
+        <p className="font-semibold text-ink sm:truncate">{item.studentName}</p>
         <p className="mt-0.5 text-[11px] text-muted-foreground">Ссылка создана {formatDate(item.createdAt)}</p>
       </div>
 

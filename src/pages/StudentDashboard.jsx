@@ -693,9 +693,10 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           <button
             type="button"
             onClick={() => setAllLessonsOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground"
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground sm:text-sm"
           >
-            Посмотреть все уроки
+            <span className="sm:hidden">Все уроки</span>
+            <span className="hidden sm:inline">Посмотреть все уроки</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}

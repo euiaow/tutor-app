@@ -38,6 +38,7 @@ export function mapStudentDoc(id, data) {
     telegramChatId: data.telegramChatId ?? null,
     vkPeerId: data.vkPeerId ?? null,
     contactUrl: data.contactUrl ?? null,
+    accessCode: data.accessCode ?? null,
     curriculumSourceTemplateId: data.curriculumSourceTemplateId ?? null,
     targetScore: data.targetScore ?? null,
     examDate: data.examDate ?? null,

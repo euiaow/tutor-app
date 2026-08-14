@@ -4,6 +4,7 @@ import { functions } from "./firebase"
 const startGoogleOAuthCallable = httpsCallable(functions, "startGoogleOAuth")
 const getGoogleCalendarStatusCallable = httpsCallable(functions, "getGoogleCalendarStatus")
 const getCalendarEmbedInfoCallable = httpsCallable(functions, "getCalendarEmbedInfo")
+const disconnectGoogleCalendarCallable = httpsCallable(functions, "disconnectGoogleCalendar")
 
 export async function startGoogleOAuth() {
   const result = await startGoogleOAuthCallable()
@@ -18,4 +19,8 @@ export async function getGoogleCalendarStatus() {
 export async function getCalendarEmbedInfo() {
   const result = await getCalendarEmbedInfoCallable()
   return result.data.embedUrl
+}
+
+export async function disconnectGoogleCalendar() {
+  await disconnectGoogleCalendarCallable()
 }

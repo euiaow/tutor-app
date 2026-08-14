@@ -200,32 +200,38 @@ export function FinanceSection({ students }) {
               const balance = student.paidLessonsBalance ?? 0
 
               return (
-                <li key={student.id} className="flex flex-wrap items-center gap-4 py-3">
+                <li key={student.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
                   <button
                     type="button"
                     onClick={() => setSelectedStudent(student)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    className="flex w-full min-w-0 items-center gap-3 text-left sm:w-auto sm:flex-1"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <StudentDot />
-                        <span className="truncate font-semibold text-ink">{student.name}</span>
+                        <span className="font-semibold text-ink sm:truncate">{student.name}</span>
                         <StudentTags student={student} />
                       </div>
                     </div>
                   </button>
 
-                  <div className="flex items-center gap-6">
-                    <span
-                      className="w-14 shrink-0 text-right text-lg font-semibold"
-                      style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
-                    >
-                      {balance}
+                  <div className="flex items-center justify-between gap-4 sm:justify-start sm:gap-6">
+                    <span className="flex items-center gap-1.5 sm:contents">
+                      <span className="text-xs text-muted-foreground sm:hidden">Оплачено:</span>
+                      <span
+                        className="text-lg font-semibold sm:w-14 sm:shrink-0 sm:text-right"
+                        style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
+                      >
+                        {balance}
+                      </span>
                     </span>
-                    <span className="w-16 shrink-0 text-right text-base text-muted-foreground">
-                      {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
+                    <span className="flex items-center gap-1.5 sm:contents">
+                      <span className="text-xs text-muted-foreground sm:hidden">Ставка:</span>
+                      <span className="text-base text-muted-foreground sm:w-16 sm:shrink-0 sm:text-right">
+                        {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
+                      </span>
                     </span>
-                    <GhostBtn onClick={() => setPayingStudentId(student.id)} className="w-24 shrink-0 justify-center py-2 text-sm">
+                    <GhostBtn onClick={() => setPayingStudentId(student.id)} className="shrink-0 justify-center py-2 text-sm sm:w-24">
                       Оплата
                     </GhostBtn>
                   </div>

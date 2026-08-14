@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Clock,
   GraduationCap,
+  Loader2,
   LogOut,
   Play,
 } from "lucide-react"
@@ -29,9 +30,12 @@ import {
   Panel,
   SolidBtn,
   StudentDot,
+  TeacherCancelBtn,
   TeacherDialog,
   TeacherDialogContent,
+  TeacherDialogDescription,
   TeacherDialogTitle,
+  TeacherModalFooter,
   Title,
 } from "@/components/teacher/theme-ui"
 import { NotificationsList } from "@/components/notifications-list"
@@ -49,6 +53,7 @@ import {
 } from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
 import {
+  disconnectGoogleCalendar,
   getCalendarEmbedInfo,
   getGoogleCalendarStatus,
   startGoogleOAuth,
@@ -246,6 +251,68 @@ function TeacherNotificationsBell() {
   )
 }
 
+// Same shape as student-row.jsx's DeleteStudentDialog — theme-ui primitives,
+// glass-tile Отмена + destructive-tinted confirm button.
+function DisconnectGoogleCalendarDialog({ open, onOpenChange, onDisconnected }) {
+  const [disconnecting, setDisconnecting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    if (disconnecting) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) setError("")
+  }
+
+  async function handleDisconnect() {
+    if (disconnecting) return
+    setDisconnecting(true)
+    setError("")
+    try {
+      await disconnectGoogleCalendar()
+      setDisconnecting(false)
+      onDisconnected()
+      onOpenChange(false)
+    } catch (err) {
+      console.error("Failed to disconnect Google Calendar:", err)
+      setError(err?.message || "Не удалось отключить Google Calendar")
+      setDisconnecting(false)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Отключить Google Calendar?</TeacherDialogTitle>
+        <TeacherDialogDescription>
+          Расписание учеников не пострадает, но события в календаре перестанут обновляться, пока не подключишь
+          заново.
+        </TeacherDialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherModalFooter className="mt-5">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={disconnecting} />
+          <button
+            type="button"
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {disconnecting ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Отключаем...
+              </span>
+            ) : (
+              "Отключить"
+            )}
+          </button>
+        </TeacherModalFooter>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
+
 export function TeacherDashboard() {
   usePageTitle("Учительская")
   const [students, setStudents] = useState([])
@@ -253,6 +320,7 @@ export function TeacherDashboard() {
   const [error, setError] = useState(null)
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(null)
   const [connectingGoogleCalendar, setConnectingGoogleCalendar] = useState(false)
+  const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false)
   const [embedUrl, setEmbedUrl] = useState(null)
   const [embedError, setEmbedError] = useState(null)
   const embedLoading = googleCalendarConnected === true && !embedUrl && !embedError
@@ -298,6 +366,12 @@ export function TeacherDashboard() {
       console.error("Failed to start Google Calendar connection:", err)
       setConnectingGoogleCalendar(false)
     }
+  }
+
+  function handleGoogleCalendarDisconnected() {
+    setGoogleCalendarConnected(false)
+    setEmbedUrl(null)
+    setEmbedError(null)
   }
 
   useEffect(() => {
@@ -422,7 +496,7 @@ export function TeacherDashboard() {
             >
               <GraduationCap className="size-5" aria-hidden="true" />
             </div>
-            <div>
+            <div className="hidden md:block">
               <h1 className="font-display text-lg tracking-tight text-ink">Учебный портал</h1>
               <p className="text-xs text-muted-foreground">Кабинет преподавателя</p>
             </div>
@@ -452,6 +526,13 @@ export function TeacherDashboard() {
               {googleCalendarConnected === true ? (
                 <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="size-1.5 rounded-full bg-primary" /> Google Calendar подключён
+                  <button
+                    type="button"
+                    onClick={() => setDisconnectDialogOpen(true)}
+                    className="underline decoration-dotted underline-offset-2 hover:text-rose-deep"
+                  >
+                    Отключить
+                  </button>
                 </p>
               ) : googleCalendarConnected === false ? (
                 <p className="mt-1 text-xs text-muted-foreground">Google Calendar не подключён</p>
@@ -459,6 +540,12 @@ export function TeacherDashboard() {
             </div>
             <ExtraLessonDialog students={students} />
           </div>
+
+          <DisconnectGoogleCalendarDialog
+            open={disconnectDialogOpen}
+            onOpenChange={setDisconnectDialogOpen}
+            onDisconnected={handleGoogleCalendarDisconnected}
+          />
 
           {googleCalendarConnected === false ? (
             <div className="glass-tile mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] px-4 py-3">

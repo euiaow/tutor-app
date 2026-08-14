@@ -15,6 +15,7 @@ const {
   saveTokens,
   getAuthorizedClient,
   isConnected,
+  disconnectGoogleCalendar,
   GOOGLE_OAUTH_CLIENT_ID,
   GOOGLE_OAUTH_CLIENT_SECRET,
 } = require("./core/googleAuth")
@@ -784,6 +785,23 @@ exports.getGoogleCalendarStatus = onCall(async (request) => {
 
   return { connected }
 })
+
+exports.disconnectGoogleCalendar = onCall(
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    try {
+      await disconnectGoogleCalendar()
+      return { success: true }
+    } catch (error) {
+      logger.error("Failed to disconnect Google Calendar", error)
+      throw new HttpsError("internal", "Не удалось отключить Google Calendar")
+    }
+  },
+)
 
 exports.getCalendarEmbedInfo = onCall(
   { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },

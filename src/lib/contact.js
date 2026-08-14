@@ -35,3 +35,33 @@ export function getContactUrl(student) {
 export function isDefaultTelegramContact(student) {
   return Boolean(student && student.platform === "telegram" && student.telegramChatId && !student.contactUrl)
 }
+
+// Accepts whatever shape a teacher pastes in — a bare username, one with a
+// leading "@", or a full t.me link — and reduces it to the bare username.
+// Kept intentionally forgiving (see contact-button.jsx's Telegram-specific
+// override form) since teachers copy usernames from different sources.
+export function extractTelegramUsername(input) {
+  if (!input) return ""
+
+  let value = input.trim()
+
+  const linkMatch = value.match(/(?:https?:\/\/)?t\.me\/([^/?#]+)/i)
+  if (linkMatch) {
+    value = linkMatch[1]
+  }
+
+  if (value.startsWith("@")) {
+    value = value.slice(1)
+  }
+
+  return value.trim()
+}
+
+// Inverse of extractTelegramUsername's "clean input" side — turns a bare
+// username back into the https://t.me/... form actually stored on
+// student.contactUrl, so the stored data shape never changes even though
+// the teacher-facing form only deals in usernames.
+export function buildTelegramContactUrl(input) {
+  const username = extractTelegramUsername(input)
+  return username ? `https://t.me/${username}` : null
+}

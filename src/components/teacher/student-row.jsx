@@ -727,17 +727,17 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
             setExpanded((v) => !v)
           }
         }}
-        className="flex flex-wrap cursor-pointer items-center gap-3 rounded-[1.5rem] px-1 py-2 transition hover:bg-glass-strong/40"
+        className="flex flex-col cursor-pointer gap-2 rounded-[1.5rem] px-1 py-2 transition hover:bg-glass-strong/40 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 w-full sm:flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to={`/student/${student.id}`}
               onClick={stop}
-              className="flex min-w-0 items-center gap-2 truncate font-semibold text-ink transition hover:text-rose-deep"
+              className="flex min-w-0 items-center gap-2 font-semibold text-ink transition hover:text-rose-deep sm:truncate"
             >
               <StudentDot />
-              <span className="truncate">{student.name}</span>
+              <span className="sm:truncate">{student.name}</span>
             </Link>
             <StudentTags student={student} />
           </div>
@@ -750,9 +750,11 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2" onClick={stop}>
+        <div className="flex items-center gap-2 sm:shrink-0" onClick={stop}>
           <GhostBtn onClick={() => setIsUpcomingListOpen(true)} className="px-4 py-2">
-            <Plus className="size-3.5" aria-hidden="true" /> Следующие уроки
+            <Plus className="size-3.5" aria-hidden="true" />
+            <span className="sm:hidden">След. уроки</span>
+            <span className="hidden sm:inline">Следующие уроки</span>
           </GhostBtn>
           <ContactButton student={student} />
           <button type="button" onClick={() => setExpanded((v) => !v)} className="text-muted-foreground/70">
@@ -794,6 +796,10 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
               <div className="mt-4 flex justify-between border-t border-glass-border pt-3 text-sm">
                 <span className="text-muted-foreground">Учебный план</span>
                 <span className="text-ink">{templateName ?? "Не назначен"}</span>
+              </div>
+              <div className="mt-1 flex justify-between text-sm">
+                <span className="text-muted-foreground">Пароль</span>
+                <span className="text-ink">{student.accessCode}</span>
               </div>
               <button
                 type="button"
