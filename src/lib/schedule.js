@@ -10,13 +10,18 @@ const DAY_NAMES_RU = [
 
 export const DAY_OPTIONS = DAY_NAMES_RU.map((label, value) => ({ value, label }))
 
-// Tutor's schedule.dayOfWeek/time are always Moscow wall-clock values,
-// regardless of where the student's or teacher's device is set to — a
-// student on UTC+6 must see the same "19:00" the teacher typed in, not
-// 19:00 shifted by their own device's offset.
-const SCHEDULE_TIME_ZONE = "Europe/Moscow"
+// Full-rewrite note: schedule.dayOfWeek/time used to be interpreted as a
+// fixed Moscow wall-clock value — reversed; the teacher's own saved
+// timezone is now the interpretation context (see
+// functions/core/schedule.js, the canonical backend copy this file
+// mirrors — getNextLessonDateForSlot/getNextLessonDate below are unused on
+// the frontend today, all "next lesson" display reads the already-computed
+// date off the backend-written lesson doc instead, but kept in sync with
+// the backend copy's shape regardless). DEFAULT_TIME_ZONE here is only
+// this file's own safety-net default for a caller that doesn't pass one.
+const DEFAULT_TIME_ZONE = "Europe/Moscow"
 
-function getZonedParts(date, timeZone) {
+export function getZonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
@@ -44,7 +49,7 @@ function getZonedParts(date, timeZone) {
 // UTC instant it represents. Re-measures the zone's offset at a guessed
 // instant and corrects for it, so it works for any IANA zone without a
 // library (the same technique date-fns-tz's zonedTimeToUtc uses internally).
-function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
+export function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0)
   const zoned = getZonedParts(new Date(utcGuess), timeZone)
   const zonedAsUtc = Date.UTC(zoned.year, zoned.month - 1, zoned.day, zoned.hour, zoned.minute, zoned.second)
@@ -63,7 +68,7 @@ function getNextLessonDateForSlot(slot) {
   }
 
   const now = new Date()
-  const nowInMoscow = getZonedParts(now, SCHEDULE_TIME_ZONE)
+  const nowInMoscow = getZonedParts(now, DEFAULT_TIME_ZONE)
   // A calendar date's day-of-week doesn't depend on time-of-day or zone
   // offset, so reading it off a UTC-midnight Date built from Moscow's
   // year/month/day is safe.
@@ -80,7 +85,7 @@ function getNextLessonDateForSlot(slot) {
     candidateDay.getUTCDate(),
     hours,
     minutes,
-    SCHEDULE_TIME_ZONE,
+    DEFAULT_TIME_ZONE,
   )
 
   if (candidate <= now) {
@@ -136,15 +141,19 @@ export function getNextLessonDate(scheduleSlots) {
   return dates.reduce((earliest, date) => (date < earliest ? date : earliest))
 }
 
-export function formatNextLessonDate(date) {
+// timeZone is the *viewer's* own display preference (see
+// lib/user-prefs-context.jsx's useTimeZone) — defaults to
+// DEFAULT_TIME_ZONE (Moscow) purely as the technical fallback for a viewer
+// with no timezone saved yet.
+export function formatNextLessonDate(date, timeZone = DEFAULT_TIME_ZONE) {
   if (!date) {
     return "Расписание не задано"
   }
 
-  const weekday = date.toLocaleDateString("ru-RU", { timeZone: SCHEDULE_TIME_ZONE, weekday: "long" })
+  const weekday = date.toLocaleDateString("ru-RU", { timeZone, weekday: "long" })
   const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1)
   const time = date.toLocaleTimeString("ru-RU", {
-    timeZone: SCHEDULE_TIME_ZONE,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
   })
@@ -155,18 +164,18 @@ export function formatNextLessonDate(date) {
 // Full calendar date + time (e.g. "28 июля, 16:00") — used for concrete
 // lesson.date values, as opposed to formatNextLessonDate's weekday-only
 // format for the recurring weekly schedule.
-export function formatLessonDateTime(date) {
+export function formatLessonDateTime(date, timeZone = DEFAULT_TIME_ZONE) {
   if (!date) {
     return ""
   }
 
   const datePart = date.toLocaleDateString("ru-RU", {
-    timeZone: SCHEDULE_TIME_ZONE,
+    timeZone,
     day: "numeric",
     month: "long",
   })
   const timePart = date.toLocaleTimeString("ru-RU", {
-    timeZone: SCHEDULE_TIME_ZONE,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
   })

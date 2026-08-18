@@ -253,9 +253,17 @@ export function subscribeToAllUpcomingLessons(studentId, onData, onError) {
 // subcollection at once. maxResults is fetched up front and the dashboard
 // paginates the "Показать ещё" button client-side over this array, rather
 // than re-querying Firestore on every click.
-export function subscribeToUpcomingLessons(onData, onError, maxResults = 25) {
+//
+// teacherId filter is explicit here, not left to Firestore Rules alone —
+// same reasoning as subscribeToStudents (src/firebase/students.js): a
+// collectionGroup `list` query whose security rule checks
+// resource.data.teacherId gets rejected outright (permission-denied) unless
+// the query itself is provably scoped on that same field, it doesn't just
+// silently filter results.
+export function subscribeToUpcomingLessons(teacherId, onData, onError, maxResults = 25) {
   const upcomingQuery = query(
     collectionGroup(db, "lessons"),
+    where("teacherId", "==", teacherId),
     where("status", "==", "upcoming"),
     orderBy("date", "asc"),
     limit(maxResults),
@@ -277,9 +285,10 @@ export function subscribeToUpcomingLessons(onData, onError, maxResults = 25) {
 // Powers the teacher dashboard's "Прошедшие уроки" block — same
 // collectionGroup approach as subscribeToUpcomingLessons, ordered newest
 // first instead (needs its own composite index, see firestore.indexes.json).
-export function subscribeToCompletedLessons(onData, onError, maxResults = 25) {
+export function subscribeToCompletedLessons(teacherId, onData, onError, maxResults = 25) {
   const completedQuery = query(
     collectionGroup(db, "lessons"),
+    where("teacherId", "==", teacherId),
     where("status", "==", "completed"),
     orderBy("date", "desc"),
     limit(maxResults),
@@ -307,9 +316,10 @@ export function subscribeToCompletedLessons(onData, onError, maxResults = 25) {
 // to "this week" happens client-side (see finance-section.jsx) because the
 // week has to be evaluated against the *effective* date (rescheduledDate ??
 // date), which Firestore can't query on directly.
-export function subscribeToIncomeLessons(onData, onError) {
+export function subscribeToIncomeLessons(teacherId, onData, onError) {
   const incomeQuery = query(
     collectionGroup(db, "lessons"),
+    where("teacherId", "==", teacherId),
     where("status", "in", ["upcoming", "completed"]),
     orderBy("date", "asc"),
   )
@@ -330,9 +340,10 @@ export function subscribeToIncomeLessons(onData, onError) {
 // One-time fetch of every completed lesson across every student — powers
 // the teacher dashboard's "Показать все прошедшие уроки" modal, which loads
 // on demand rather than subscribing, unlike subscribeToCompletedLessons.
-export async function getAllCompletedLessons() {
+export async function getAllCompletedLessons(teacherId) {
   const completedQuery = query(
     collectionGroup(db, "lessons"),
+    where("teacherId", "==", teacherId),
     where("status", "==", "completed"),
     orderBy("date", "desc"),
   )

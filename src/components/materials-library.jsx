@@ -9,10 +9,12 @@ import {
   GlassDialogDescription,
 } from "@/components/glass-dialog"
 import { formatLessonDateTime } from "@/lib/schedule"
+import { useTimeZone } from "@/lib/user-prefs-context"
 
 const VISIBLE_COUNT = 3
 
 export function MaterialsLibrary({ materials, loading = false, error = null }) {
+  const timeZone = useTimeZone()
   const [showAll, setShowAll] = useState(false)
   const visibleMaterials = materials.slice(0, VISIBLE_COUNT)
   const hasMore = materials.length > VISIBLE_COUNT
@@ -104,7 +106,7 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
                   </a>
                   {material.lessonDate ? (
                     <span className="text-xs text-muted-foreground">
-                      {formatLessonDateTime(material.lessonDate)}
+                      {formatLessonDateTime(material.lessonDate, timeZone)}
                     </span>
                   ) : null}
                 </li>

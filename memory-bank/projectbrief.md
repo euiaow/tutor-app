@@ -32,7 +32,17 @@ integrations and Google Calendar sync.
 
 ## Scope boundaries
 
-- Single-teacher product (no multi-tenant teacher accounts today).
+- **Multi-tenant as of session 12** (was single-teacher-only through
+  session 11) — any number of teacher accounts can use the app
+  independently, each with their own students, schedule, curriculum
+  templates, bot connections, and now (Phase 4a) their own timezone/color-
+  theme preference. Every teacher-owned collection/subcollection carries a
+  `teacherId` field; every list/collectionGroup query must filter on it
+  explicitly (Firestore Rules alone cannot enforce this for collections
+  that also need an open, unauthenticated student-side read — see
+  `systemPatterns.md`). A public per-teacher landing page
+  (`/app/:slug`) and per-teacher bot self-service signup exist so a
+  prospective student can find and register with the *right* teacher.
 - Students are identified by Firestore document, not Firebase Auth —
   student-facing actions are unauthenticated by design (see
   `functions/index.js` initiator/role params).

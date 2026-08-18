@@ -215,13 +215,34 @@ function ConnectStatusRow({ label, platform, connected, renderConnectBody, popov
 // TeacherNotificationsBell's dialog.
 export function TeacherBotConnectStatus() {
   const [contact, setContact] = useState({ telegramConnected: false, vkConnected: false })
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
-    const unsubscribe = subscribeToTeacherContact(setContact, (error) =>
-      console.error("Failed to load teacher bot connection status:", error),
-    )
+    const unsubscribe = subscribeToTeacherContact(setContact, (error) => {
+      console.error("Failed to load teacher bot connection status:", error)
+      setLoadError(error)
+    })
     return unsubscribe
   }, [])
+
+  // A failed read (e.g. a Firestore Rules permission gap on
+  // teachers/{uid}/integrations/{doc}) used to be indistinguishable from a
+  // genuine "not connected" — the subscription's onError only logged to the
+  // console and left `contact` at its default {false, false}, so the row
+  // below read as "не подключён" either way. Surfacing the error explicitly
+  // here means a status that's actually still correct server-side (bot
+  // delivery uses the Admin SDK, which bypasses Rules entirely and would
+  // keep working even while this client read fails) doesn't get misread as
+  // a real disconnect.
+  if (loadError) {
+    return (
+      <div className="flex flex-col gap-2.5 border-t border-glass-border pt-3">
+        <p className="text-sm text-destructive">
+          Не удалось загрузить статус подключения ботов ({loadError.code ?? loadError.message})
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2.5 border-t border-glass-border pt-3">

@@ -27,6 +27,7 @@ import {
 import { getCurriculumProgress, markTopicsCovered } from "@/firebase/curriculum"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
+import { useTimeZone } from "@/lib/user-prefs-context"
 
 const ATTENDANCE_OPTIONS = [
   { value: "on_time", label: "Вовремя" },
@@ -136,6 +137,7 @@ export function HomeworkLessonDialog({
   open,
   onOpenChange,
 }) {
+  const timeZone = useTimeZone()
   const popupRef = useRef(null)
   const [derivedLessonId, setDerivedLessonId] = useState(null)
   const lessonId = fixedLessonId ?? derivedLessonId
@@ -405,7 +407,7 @@ export function HomeworkLessonDialog({
               {studentName}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">
-              {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date) : "Следующий урок"}
+              {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone) : "Следующий урок"}
             </DialogPrimitive.Description>
           </div>
 
@@ -431,14 +433,35 @@ export function HomeworkLessonDialog({
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-hidden p-6 pt-5 sm:p-7 sm:pt-5">
               <Section icon={BookOpen} label="Тема урока">
                 {isEditableAssignment ? (
-                  <input
-                    type="text"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    disabled={saving}
-                    placeholder="Present Simple"
-                    className={teacherInputCls}
-                  />
+                  <div className="flex flex-col gap-2">
+                    {curriculumProgress?.topics?.some((item) => !item.covered) ? (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) setTopic(e.target.value)
+                        }}
+                        disabled={saving}
+                        className={teacherInputCls}
+                      >
+                        <option value="">Выбрать из программы...</option>
+                        {curriculumProgress.topics
+                          .filter((item) => !item.covered)
+                          .map((item) => (
+                            <option key={item.id} value={item.title}>
+                              {item.title}
+                            </option>
+                          ))}
+                      </select>
+                    ) : null}
+                    <input
+                      type="text"
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                      disabled={saving}
+                      placeholder="Present Simple"
+                      className={teacherInputCls}
+                    />
+                  </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">{topic || "Тема не указана"}</p>
                 )}
@@ -507,7 +530,7 @@ export function HomeworkLessonDialog({
                   {saveError ? <span className="text-sm font-semibold text-destructive">{saveError}</span> : null}
 
                   {isEditableAssignment ? (
-                    <GhostBtn onClick={handleSaveAssignment} disabled={saving || uploading} className="mt-1 self-start px-4 py-2">
+                    <SolidBtn onClick={handleSaveAssignment} disabled={saving || uploading} className="mt-1 self-start px-4 py-2">
                       {saving ? (
                         <>
                           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -516,7 +539,7 @@ export function HomeworkLessonDialog({
                       ) : (
                         "Сохранить"
                       )}
-                    </GhostBtn>
+                    </SolidBtn>
                   ) : null}
                 </div>
               </Section>
@@ -532,7 +555,7 @@ export function HomeworkLessonDialog({
                         className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm"
                       >
                         <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                          {file.submittedAt ? formatLessonDateTime(file.submittedAt) : "Дата отправки неизвестна"}
+                          {file.submittedAt ? formatLessonDateTime(file.submittedAt, timeZone) : "Дата отправки неизвестна"}
                         </span>
                         <a
                           href={file.url}
@@ -654,7 +677,7 @@ export function HomeworkLessonDialog({
                             <Paperclip className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                             <span className="min-w-0 flex-1 truncate text-ink">{material.title}</span>
                             <span className="shrink-0 text-xs text-muted-foreground">
-                              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
                             </span>
                             <button
                               type="button"
@@ -686,13 +709,13 @@ export function HomeworkLessonDialog({
               {mode === "completing" && completeError ? (
                 <p className="mb-2 text-sm font-semibold text-destructive">{completeError}</p>
               ) : null}
-              <SolidBtn
-                className="w-full justify-center py-3 text-sm"
-                onClick={mode === "upcoming" ? () => setMode("completing") : handleCompleteLesson}
-                disabled={mode === "completing" && completing}
-              >
-                {mode === "completing" ? (
-                  completing ? (
+              {mode === "completing" ? (
+                <SolidBtn
+                  className="w-full justify-center py-3 text-sm"
+                  onClick={handleCompleteLesson}
+                  disabled={completing}
+                >
+                  {completing ? (
                     <>
                       <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                       Сохраняем...
@@ -702,11 +725,13 @@ export function HomeworkLessonDialog({
                       <Check className="size-4" aria-hidden="true" />
                       Сохранить и завершить урок
                     </>
-                  )
-                ) : (
-                  "Урок прошёл"
-                )}
-              </SolidBtn>
+                  )}
+                </SolidBtn>
+              ) : (
+                <GhostBtn className="w-full justify-center py-3 text-sm" onClick={() => setMode("completing")}>
+                  Урок прошёл
+                </GhostBtn>
+              )}
             </div>
           ) : null}
         </DialogPrimitive.Popup>

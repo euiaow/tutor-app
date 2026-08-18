@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Video } from "lucide-react"
 import { Field, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, TeacherModalFooter, TeacherSaveBtn, teacherInputCls } from "@/components/teacher/theme-ui"
 import { subscribeToVideoCallUrl, updateVideoCallUrl } from "@/firebase/videoCall"
+import { auth } from "@/firebase/firebase"
 
 export function VideoCallSettings() {
   const [open, setOpen] = useState(false)
@@ -10,7 +11,11 @@ export function VideoCallSettings() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     const unsub = subscribeToVideoCallUrl(
+      uid,
       (data) => setUrl(data ?? ""),
       (error) => console.error("Failed to load video call url:", error),
     )
@@ -24,9 +29,12 @@ export function VideoCallSettings() {
 
   async function handleSave() {
     if (saving) return
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     setSaving(true)
     try {
-      await updateVideoCallUrl(value.trim() || null)
+      await updateVideoCallUrl(uid, value.trim() || null)
       setOpen(false)
     } catch (error) {
       console.error("Failed to update video call url:", error)

@@ -63,6 +63,7 @@ async function assignCurriculumTemplate(studentId, templateId) {
   await progressRef(studentId).set({
     topics: withProgressDefaults(template.topics),
     prototypes: withProgressDefaults(template.prototypes),
+    teacherId: studentSnapshot.data().teacherId ?? null,
     assignedAt: FieldValue.serverTimestamp(),
   })
 
@@ -143,9 +144,15 @@ async function addPersonalTopic(studentId, { title, minScoreRequired, type } = {
   const snapshot = await ref.get()
 
   if (!snapshot.exists) {
+    const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+    if (!studentSnapshot.exists) {
+      throw new HttpsError("not-found", "Ученик не найден")
+    }
+
     await ref.set({
       topics: field === "topics" ? [newItem] : [],
       prototypes: field === "prototypes" ? [newItem] : [],
+      teacherId: studentSnapshot.data().teacherId ?? null,
       assignedAt: FieldValue.serverTimestamp(),
     })
   } else {

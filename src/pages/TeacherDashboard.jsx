@@ -8,6 +8,7 @@ import {
   Loader2,
   LogOut,
   Play,
+  Settings,
 } from "lucide-react"
 import { usePageTitle } from "@/lib/usePageTitle"
 import { StudentRow } from "@/components/teacher/student-row"
@@ -23,6 +24,7 @@ import { CurriculumSection } from "@/components/teacher/curriculum-section"
 import { getAllCurriculumProgressByStudent, getCurriculumTemplates } from "@/firebase/curriculum"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
+import { auth } from "@/firebase/firebase"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -58,6 +60,10 @@ import {
   getGoogleCalendarStatus,
   startGoogleOAuth,
 } from "@/firebase/google-calendar"
+import { subscribeToTeacherProfile, updateTeacherSettings } from "@/firebase/teachers"
+import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
+import { resolveTimeZone } from "@/lib/timezone"
+import { SettingsDialog } from "@/components/settings-dialog"
 
 const MAX_CLUSTERED_LESSONS = 3
 const MAX_LESSON_GAP_DAYS = 6
@@ -92,6 +98,7 @@ function selectClusteredUpcomingLessons(lessons) {
 }
 
 function PastLessonCard({ lesson, studentName, student }) {
+  const timeZone = useTimeZone()
   const [dialogOpen, setDialogOpen] = useState(false)
 
   return (
@@ -104,7 +111,7 @@ function PastLessonCard({ lesson, studentName, student }) {
         </div>
         <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
           <Clock className="size-3" aria-hidden="true" />
-          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+          {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
         </p>
         {lesson.topic ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{lesson.topic}</p> : null}
       </div>
@@ -135,11 +142,14 @@ function AllPastLessonsDialog({ open, onOpenChange, students }) {
   useEffect(() => {
     if (!open) return
 
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     let cancelled = false
     setLoading(true)
     setError("")
 
-    getAllCompletedLessons()
+    getAllCompletedLessons(uid)
       .then((data) => {
         if (cancelled) return
         setLessons(data)
@@ -331,10 +341,29 @@ export function TeacherDashboard() {
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
   const [curriculumTemplates, setCurriculumTemplates] = useState([])
+  const [teacherProfile, setTeacherProfile] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
-    const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsub = subscribeToVideoCallUrl(uid, setVideoCallUrl, (error) =>
       console.error("Failed to load video call url:", error),
+    )
+    return () => unsub()
+  }, [])
+
+  // Multi-tenancy Phase 4a: timezone/colorTheme live on the same
+  // teachers/{uid} profile doc ensureTeacherProfile (App.jsx) bootstraps —
+  // subscribed here (not read once) so a save from SettingsDialog re-renders
+  // this page's UserPrefsProvider immediately without a manual refetch.
+  useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsub = subscribeToTeacherProfile(uid, setTeacherProfile, (error) =>
+      console.error("Failed to load teacher profile:", error),
     )
     return () => unsub()
   }, [])
@@ -342,7 +371,10 @@ export function TeacherDashboard() {
   // Fetched once here (not per-row) so every student row's "Учебный план"
   // display can look up its template name without N separate reads.
   useEffect(() => {
-    getCurriculumTemplates()
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    getCurriculumTemplates(uid)
       .then(setCurriculumTemplates)
       .catch((err) => console.error("Failed to load curriculum templates:", err))
   }, [])
@@ -375,7 +407,11 @@ export function TeacherDashboard() {
   }
 
   useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     const unsubscribe = subscribeToStudents(
+      uid,
       (data) => {
         setStudents(data)
         setLoading(false)
@@ -399,13 +435,20 @@ export function TeacherDashboard() {
   useEffect(() => {
     if (students.length === 0) return
 
-    getAllCurriculumProgressByStudent()
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    getAllCurriculumProgressByStudent(uid)
       .then(setCurriculumProgressByStudent)
       .catch((error) => console.error("Failed to load curriculum progress summaries:", error))
   }, [students.length])
 
   useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     const unsubscribe = subscribeToUpcomingLessons(
+      uid,
       setUpcomingLessons,
       (firestoreError) => {
         console.error("Failed to load upcoming lessons:", firestoreError)
@@ -417,7 +460,10 @@ export function TeacherDashboard() {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = subscribeToCompletedLessons(setCompletedLessons, (firestoreError) => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsubscribe = subscribeToCompletedLessons(uid, setCompletedLessons, (firestoreError) => {
       console.error("Failed to load completed lessons:", firestoreError)
     })
 
@@ -479,8 +525,17 @@ export function TeacherDashboard() {
     { value: String(paymentDue), label: "Оплата ожидается" },
   ]
 
+  // Multi-tenancy Phase 4a: colorTheme "amber" swaps the whole teacher-scope
+  // CSS variable block (index.css's .amber-scope, mirroring .teacher-theme's
+  // shape with the student page's own hues) instead of the pink one — see
+  // useColorTheme's callers in theme-ui.jsx/ui/dialog.jsx for why portaled
+  // dialogs need this same class applied to themselves, not just this root.
+  const themeClass = teacherProfile?.colorTheme === "amber" ? "amber-scope" : "teacher-theme"
+  const resolvedTimeZone = resolveTimeZone(teacherProfile?.timezone)
+
   return (
-    <div className="teacher-theme relative min-h-screen px-4 py-6 md:px-8 md:py-10">
+    <UserPrefsProvider timeZone={resolvedTimeZone} themeClass={themeClass}>
+    <div className={`${themeClass} relative min-h-screen px-4 py-6 md:px-8 md:py-10`}>
       <div aria-hidden className="bg-grain-blobs">
         <div className="blob-a" />
         <div className="blob-b" />
@@ -504,11 +559,28 @@ export function TeacherDashboard() {
           <div className="flex items-center gap-2">
             <VideoCallSettings />
             <TeacherNotificationsBell />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Настройки"
+              className="glass-tile grid size-10 place-items-center rounded-full text-foreground/70"
+            >
+              <Settings className="size-4" aria-hidden="true" />
+            </button>
             <GhostBtn onClick={handleSignOut} className="px-4 py-2">
               <LogOut className="size-3.5" aria-hidden="true" /> Выйти
             </GhostBtn>
           </div>
         </header>
+
+        <SettingsDialog
+          variant="teacher"
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          timezone={teacherProfile?.timezone ?? ""}
+          colorTheme={teacherProfile?.colorTheme ?? "pink"}
+          onSave={(values) => updateTeacherSettings(auth.currentUser.uid, values)}
+        />
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {stats.map((s) => (
@@ -676,5 +748,6 @@ export function TeacherDashboard() {
         <PendingRegistrations />
       </div>
     </div>
+    </UserPrefsProvider>
   )
 }

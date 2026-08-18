@@ -4,6 +4,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { GlassDialog, GlassDialogContent, GlassDialogTitle } from "@/components/glass-dialog"
 import { MaterialLink } from "@/components/material-link"
 import { subscribeToLessons } from "@/firebase/lessons"
+import { useTimeZone } from "@/lib/user-prefs-context"
 
 const VISIBLE_COUNT = 3
 
@@ -19,13 +20,13 @@ const RATING_LABEL = {
   needs_work: "Старайся лучше",
 }
 
-function formatDate(date) {
+function formatDate(date, timeZone) {
   if (!date) {
     return "—"
   }
 
   return date.toLocaleDateString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -59,6 +60,7 @@ function Badge({ children, tone = "neutral" }) {
 }
 
 function LessonCard({ lesson }) {
+  const timeZone = useTimeZone()
   const isCancelled = lesson.status === "cancelled"
 
   return (
@@ -66,7 +68,7 @@ function LessonCard({ lesson }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <CalendarDays className="size-3.5" aria-hidden="true" />
-          {formatDate(lesson.date)}
+          {formatDate(lesson.date, timeZone)}
         </div>
         {isCancelled ? (
           <Badge tone="cancelled">Отменён</Badge>

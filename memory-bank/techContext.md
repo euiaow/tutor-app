@@ -95,12 +95,38 @@
   service names are always the function name lowercased** (no other
   transformation) — e.g. `cancelLessonDirectly` → `cancellessondirectly`;
   using the camelCase function name in the gcloud command 404s. A batch
-  Cloud Shell script exists (see `activeContext.md`/`progress.md` session
+  Cloud Shell script exists (see `changelog/2026-08-august.md`'s session
   10 notes) that checks every `onCall`/`onRequest` export and fixes any
   missing bindings in one pass — `onSchedule`/`onDocumentWritten`
   functions must be excluded from it, they use a different (non-public)
   invoker by design and making them public would be a regression, not a
   fix.
+- **A third, distinct deploy-failure class (session 11), easy to confuse
+  with the two above: the function was simply never included in any
+  `firebase deploy --only functions...` command at all.** Surfaces
+  identically from the client's perspective — a generic `internal`
+  error — but the diagnosis is different and much simpler: run `firebase
+  functions:list` and check whether the function is even present. This
+  happens when a function is written across turns that include an
+  explicit "don't deploy yet" instruction, and a later turn only runs
+  `--only hosting` for unrelated frontend work — the backend code sits in
+  the working tree, fully correct, and just never gets uploaded. Fix is
+  trivial (deploy the missing function), but **don't jump to the
+  secrets-array or IAM-binding checklists for a fresh `internal` error
+  without first confirming the function actually exists on the backend** —
+  check `functions:list` membership before reading logs.
+- **A separate Firebase CLI flake (session 11), distinct from the
+  CPU-quota one below**: `firebase deploy --only functions:<name>` can
+  fail on its very first attempt with `"Error: User code failed to load.
+  Cannot determine backend specification. Timeout after 10000."` — a
+  source-analysis timeout during the CLI's own "Loading and analyzing
+  source code" step, not a real error in the function code (confirmed via
+  `node -e "require('./index.js')"` loading cleanly beforehand). A plain
+  retry of the identical command succeeded. Different symptom from the
+  CPU-quota flake below (that one fails at the Cloud Run health-check
+  stage, after upload has already started) — same remedy either way
+  (retry), but worth telling the two apart by which stage of the deploy
+  log they fail at.
 
 ## Dependencies worth knowing about
 
@@ -133,13 +159,20 @@
   was initialized to support those.
 - No `firestore.rules` or `storage.rules` file exists in this repo/git —
   neither is declared in `firebase.json` either. Security rules are
-  managed entirely outside this checkout (Firebase Console, presumably).
-  Confirmed this session: a plain unauthenticated Firebase client SDK
-  script (no admin credentials) could read the whole `students` collection
-  successfully — rules currently allow this, consistent with the
-  students-have-no-auth architecture, but it means **there is no local
-  source of truth for security rules to review before changing
-  student-facing data access**.
+  managed entirely outside this checkout (Firebase Console). **Status
+  changed session 12: the Console rules, previously an unpublished draft
+  (real ownership checks written but not yet live — "in progress" per
+  earlier sessions' framing), were published for real this session.**
+  This immediately surfaced a class of tenant-isolation bugs that had been
+  latent the whole time multi-tenancy was being built: several list/
+  collectionGroup queries had no explicit `teacherId` filter and had only
+  ever "worked" because the old draft/permissive rules never actually
+  enforced ownership — see [[systemPatterns]] for the fix pattern and
+  [[activeContext]] session 12 for the full list of affected queries.
+  **There is still no local source of truth for the rules text itself** —
+  only their *effects* are now visible from query behavior, which is a
+  meaningfully worse diagnostic position than before (a permission-denied
+  now has to be reasoned about from symptoms, not read off a rules file).
 - `gcloud` CLI is **not installed** in this environment — for Cloud
   Functions log/data diagnostics, use `firebase functions:log --only
   <name> -n <count>` instead (filter out `AuditLog` noise, see

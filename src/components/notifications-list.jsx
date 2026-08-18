@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { formatRelativeTime } from "@/lib/notifications"
+import { useTimeZone } from "@/lib/user-prefs-context"
 import { markNotificationRead } from "@/firebase/notifications"
 import {
   confirmReschedule,
@@ -142,6 +143,7 @@ function ProposalActions({ notification }) {
 // StudentDashboard.jsx) — the teacher's bell never passes it, since these
 // two proposal types are always addressed to the student.
 function NotificationRow({ notification, onClick, glass, enableProposalActions }) {
+  const timeZone = useTimeZone()
   // The action buttons render a real <button> each — nesting those inside
   // the row's own click-to-mark-read <button> would be invalid HTML (and
   // break their own click handling), so the rowClassName (background,
@@ -163,7 +165,7 @@ function NotificationRow({ notification, onClick, glass, enableProposalActions }
           >
             {notification.text}
           </span>
-          <span className="text-xs text-muted-foreground">{formatRelativeTime(notification.createdAt)}</span>
+          <span className="text-xs text-muted-foreground">{formatRelativeTime(notification.createdAt, timeZone)}</span>
         </span>
         {!notification.read ? (
           <span className="mt-1.5 size-2 shrink-0 rounded-full bg-red-500" aria-hidden="true" />

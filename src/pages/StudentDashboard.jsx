@@ -20,6 +20,7 @@ import {
   CalendarDays,
   Target,
   Pencil,
+  Settings,
 } from "lucide-react"
 import { StudentGrainBackground } from "@/components/student-grain-background"
 import { ExamRadar } from "@/components/student/exam-radar"
@@ -61,19 +62,15 @@ import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { subscribeToCurriculumProgress } from "@/firebase/curriculum"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
-
-// datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
-// timezone, not UTC — offsetting by getTimezoneOffset() before calling
-// toISOString() (which is always UTC) gets that local wall-clock string.
-// Mirrors TeacherDashboard's identical helper.
-function toDatetimeLocal(date) {
-  const offset = date.getTimezoneOffset() * 60000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
+import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
+import { resolveTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
+import { updateStudentSettings } from "@/firebase/students"
+import { SettingsDialog } from "@/components/settings-dialog"
 
 function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+  const timeZone = useTimeZone()
   const [initialDatePart, initialTimePart] = initialDate
-    ? toDatetimeLocal(initialDate).split("T")
+    ? utcDateToLocalInput(initialDate, timeZone).split("T")
     : ["", ""]
   const [date, setDate] = useState(initialDatePart)
   const [time, setTime] = useState(initialTimePart)
@@ -96,7 +93,7 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
     setSubmitting(true)
     setError("")
     try {
-      const proposedDate = new Date(`${date}T${time}:00`)
+      const proposedDate = localInputsToUtcDate(date, time, timeZone)
       await proposeReschedule(studentId, lessonId, proposedDate, "student")
       handleOpenChange(false)
     } catch (err) {
@@ -154,6 +151,7 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
 }
 
 function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+  const timeZone = useTimeZone()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
 
@@ -185,7 +183,7 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
       <GlassDialogContent>
         <GlassDialogTitle>Отменить урок</GlassDialogTitle>
         <GlassDialogDescription>
-          Вы уверены, что хотите запросить отмену урока{lessonDate ? ` ${formatLessonDateTime(lessonDate)}` : ""}?
+          Вы уверены, что хотите запросить отмену урока{lessonDate ? ` ${formatLessonDateTime(lessonDate, timeZone)}` : ""}?
         </GlassDialogDescription>
 
         {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
@@ -291,11 +289,12 @@ function CompactStatusBadge({ tone, children }) {
 // those live on the main "Следующий урок" card; this is just an overview
 // of every upcoming draft across all of a student's schedule slots.
 function UpcomingLessonRow({ lesson }) {
+  const timeZone = useTimeZone()
   return (
     <li className="glass-inset flex flex-col gap-1.5 rounded-2xl px-4 py-3">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <CalendarDays className="size-3.5" aria-hidden="true" />
-        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
       </div>
       <p className="text-sm text-secondary-foreground">
         {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
@@ -308,11 +307,11 @@ function UpcomingLessonRow({ lesson }) {
           </CompactStatusBadge>
           <span className="flex items-center gap-1.5 text-xs">
             <span className="text-muted-foreground line-through">
-              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
             </span>
             <ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />
             <span className="font-semibold text-foreground">
-              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
             </span>
           </span>
         </div>
@@ -382,6 +381,7 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
 // exam-prepping (examTarget "ege"/"oge") — a plain school-program student
 // has no exam to set a target score against.
 function MyGoalCard({ studentId, student }) {
+  const timeZone = useTimeZone()
   const [editing, setEditing] = useState(false)
   const [targetScore, setTargetScore] = useState("")
   const [examDate, setExamDate] = useState("")
@@ -389,9 +389,15 @@ function MyGoalCard({ studentId, student }) {
   const [error, setError] = useState("")
 
   const hasGoal = student.targetScore != null && student.examDate != null
+  // ОГЭ is graded 2-5 (a school mark), ЕГЭ 0-100 (a scaled score) — same
+  // targetScore field, different valid range/label/default depending on
+  // which exam this student is preparing for.
+  const isOge = student.examTarget === "oge"
 
   function startEditing() {
-    setTargetScore(student.targetScore != null ? String(student.targetScore) : "")
+    setTargetScore(
+      student.targetScore != null ? String(student.targetScore) : isOge ? "4" : "",
+    )
     setExamDate(student.examDate ? toDateInputValue(student.examDate) : "")
     setError("")
     setEditing(true)
@@ -419,15 +425,16 @@ function MyGoalCard({ studentId, student }) {
         <h3 className="font-display text-lg text-foreground">Моя цель</h3>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex-1">
-            <span className="text-xs text-muted-foreground">Целевой балл</span>
+            <span className="text-xs text-muted-foreground">{isOge ? "Целевая оценка" : "Целевой балл"}</span>
             <input
               type="number"
-              min="0"
-              max="100"
+              min={isOge ? "2" : "0"}
+              max={isOge ? "5" : "100"}
+              step={isOge ? "1" : undefined}
               value={targetScore}
               onChange={(e) => setTargetScore(e.target.value)}
               disabled={saving}
-              placeholder="80"
+              placeholder={isOge ? "4" : "80"}
               className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
             />
           </label>
@@ -515,12 +522,12 @@ function MyGoalCard({ studentId, student }) {
 
       <div className="mt-4 flex flex-wrap gap-3">
         <div className="glass-inset flex-1 rounded-3xl p-4">
-          <p className="text-xs text-muted-foreground">Целевой балл</p>
+          <p className="text-xs text-muted-foreground">{isOge ? "Целевая оценка" : "Целевой балл"}</p>
           <p className="mt-1 font-display text-2xl text-primary">{student.targetScore}</p>
         </div>
         <div className="glass-inset flex-1 rounded-3xl p-4">
           <p className="text-xs text-muted-foreground">Дата экзамена</p>
-          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(student.examDate)}</p>
+          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(student.examDate, timeZone)}</p>
         </div>
       </div>
     </section>
@@ -528,6 +535,7 @@ function MyGoalCard({ studentId, student }) {
 }
 
 function NextLessonPlate({ studentId, hasSchedule }) {
+  const timeZone = useTimeZone()
   const [lesson, setLesson] = useState(null)
   const [cancelledLesson, setCancelledLesson] = useState(null)
   const [actionPending, setActionPending] = useState(false)
@@ -540,12 +548,21 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   const lastLessonIdRef = useRef(null)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
 
+  // Reads off lesson.teacherId (denormalized onto every lesson doc, multi-
+  // tenancy Phase 1) rather than a separate student-doc field, since this
+  // component only ever loads studentId/hasSchedule as props — the lesson
+  // subscription below already has to run first regardless.
   useEffect(() => {
-    const unsub = subscribeToVideoCallUrl(setVideoCallUrl, (error) =>
+    if (!lesson?.teacherId) {
+      setVideoCallUrl(null)
+      return
+    }
+
+    const unsub = subscribeToVideoCallUrl(lesson.teacherId, setVideoCallUrl, (error) =>
       console.error("Failed to load video call url:", error),
     )
     return () => unsub()
-  }, [])
+  }, [lesson?.teacherId])
 
   async function handleHomeworkFileChange(e) {
     const file = e.target.files?.[0]
@@ -686,7 +703,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               ? "Урок отменён"
               : showPlaceholder
                 ? "Преподаватель ещё не добавил расписание"
-                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
           </h2>
         </div>
         {hasSchedule ? (
@@ -709,11 +726,11 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           <StatusPlate tone="warn" title="Репетитор предлагает перенос">
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
-                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
               </span>
               <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
               <span className="font-semibold text-foreground">
-                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
               </span>
             </p>
             <StatusPlateActions
@@ -730,11 +747,11 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           <StatusPlate tone="warn" title="Запрос на перенос отправлен">
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
-                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
               </span>
               <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
               <span className="font-semibold text-foreground">
-                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate) : "—"}
+                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
               </span>
             </p>
           </StatusPlate>
@@ -828,7 +845,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                     Домашнее задание получено ✓
                     {lastSubmission?.submittedAt ? (
                       <span className="font-normal text-muted-foreground">
-                        ({formatLessonDateTime(lastSubmission.submittedAt)})
+                        ({formatLessonDateTime(lastSubmission.submittedAt, timeZone)})
                       </span>
                     ) : null}
                   </p>
@@ -844,7 +861,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                           <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
                           <span className="truncate">
                             Файл {index + 1}
-                            {file.submittedAt ? ` (${formatLessonDateTime(file.submittedAt)})` : ""}
+                            {file.submittedAt ? ` (${formatLessonDateTime(file.submittedAt, timeZone)})` : ""}
                           </span>
                         </a>
                       </li>
@@ -944,10 +961,10 @@ function toJsDate(value) {
   return value?.toDate?.() ?? value ?? null
 }
 
-function formatShortDate(value) {
+function formatShortDate(value, timeZone) {
   const date = toJsDate(value)
   if (!date) return ""
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
+  return date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
 }
 
 // Local (not UTC) YYYY-MM-DD for a controlled <input type="date"> value —
@@ -1121,6 +1138,7 @@ function AllNotificationsDialog({ notifications, open, onOpenChange, onNotificat
 }
 
 function StudentNotifications({ studentId }) {
+  const timeZone = useTimeZone()
   const [notifications, setNotifications] = useState([])
   const [allOpen, setAllOpen] = useState(false)
   const hasUnread = notifications.some((notification) => !notification.read)
@@ -1157,7 +1175,7 @@ function StudentNotifications({ studentId }) {
           <span className={`text-sm leading-relaxed ${lastNotification.read ? "opacity-90" : ""}`}>
             {lastNotification.text}
           </span>
-          <span className="text-xs opacity-50">{formatRelativeTime(lastNotification.createdAt)}</span>
+          <span className="text-xs opacity-50">{formatRelativeTime(lastNotification.createdAt, timeZone)}</span>
         </button>
       ) : (
         <span className="min-w-0 text-sm text-ink-foreground/60">Нет новых уведомлений</span>
@@ -1210,6 +1228,7 @@ function StudentDashboardContent({ studentId }) {
   const [lessons, setLessons] = useState([])
   const [lessonsLoading, setLessonsLoading] = useState(true)
   const [lessonsError, setLessonsError] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     const unsubscribe = subscribeToStudent(
@@ -1321,19 +1340,45 @@ function StudentDashboardContent({ studentId }) {
     ? daysSinceLastUpdate(curriculumProgress.topics, curriculumProgress.prototypes)
     : null
 
+  // Multi-tenancy Phase 4a: "teacher-theme" (pink) if this student picked
+  // it, "" (plain root/amber tokens, the pre-existing default) otherwise —
+  // mirrors TeacherDashboard.jsx's own themeClass resolution but the other
+  // direction (see index.css's .teacher-theme doc comment for why this
+  // scope class works fine either way round).
+  const themeClass = student.colorTheme === "pink" ? "teacher-theme" : ""
+  const resolvedTimeZone = resolveTimeZone(student.timezone)
+
   return (
-    <div className="relative mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-10 sm:py-14">
-      <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+    <UserPrefsProvider timeZone={resolvedTimeZone} themeClass={themeClass}>
+    <div className={`relative mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-10 sm:py-14 ${themeClass}`}>
+      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4">
         <div className="min-w-0">
           <p className="text-sm text-muted-foreground">Добро пожаловать</p>
           <h1 className="font-display truncate text-2xl text-foreground sm:text-3xl">
             Привет, {firstName}! ✌️
           </h1>
         </div>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Настройки"
+          className="glass-soft grid size-11 shrink-0 place-items-center rounded-full text-foreground/70 transition hover:text-foreground"
+        >
+          <Settings className="h-5 w-5" aria-hidden="true" />
+        </button>
         <div className="glass-soft grid h-14 w-14 shrink-0 place-items-center rounded-full font-display text-lg text-foreground">
           {getInitial(firstName)}
         </div>
       </header>
+
+      <SettingsDialog
+        variant="student"
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        timezone={student.timezone ?? ""}
+        colorTheme={student.colorTheme ?? "amber"}
+        onSave={(values) => updateStudentSettings(studentId, values)}
+      />
 
       <NextLessonPlate studentId={studentId} hasSchedule={Boolean(student.scheduleSlots?.length)} />
 
@@ -1366,6 +1411,7 @@ function StudentDashboardContent({ studentId }) {
         error={lessonsError}
       />
     </div>
+    </UserPrefsProvider>
   )
 }
 

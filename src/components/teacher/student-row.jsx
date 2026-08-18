@@ -48,6 +48,8 @@ import {
 } from "@/firebase/curriculum"
 import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
 import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatExamTarget, formatSubjects } from "@/lib/student-profile"
+import { useTimeZone } from "@/lib/user-prefs-context"
+import { auth } from "@/firebase/firebase"
 
 const MAX_SCHEDULE_SLOTS = 7
 const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
@@ -297,9 +299,12 @@ function StudentEditModal({ student, open, onOpenChange }) {
     setTemplateId(student.curriculumSourceTemplateId ?? "")
     setError("")
 
-    getCurriculumTemplates()
-      .then(setTemplates)
-      .catch((err) => console.error("Failed to load curriculum templates:", err))
+    const uid = auth.currentUser?.uid
+    if (uid) {
+      getCurriculumTemplates(uid)
+        .then(setTemplates)
+        .catch((err) => console.error("Failed to load curriculum templates:", err))
+    }
   }, [open, student])
 
   function updateSlot(index, field, value) {
@@ -531,6 +536,7 @@ function StudentEditModal({ student, open, onOpenChange }) {
 // subscribeToLessons feed the student-facing history view uses, filtered to
 // non-upcoming, opening HomeworkLessonDialog per lesson like PastLessonCard.
 function StudentLessonHistoryModal({ student, open, onOpenChange }) {
+  const timeZone = useTimeZone()
   const [lessons, setLessons] = useState([])
   const [loading, setLoading] = useState(false)
   const [openLessonId, setOpenLessonId] = useState(null)
@@ -574,7 +580,7 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="size-3" aria-hidden="true" />
-                        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
                         {lesson.status === "cancelled" ? (
                           <TeacherStatusBadge tone="red" className="ml-1">
                             Отменён
@@ -609,6 +615,7 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
 // to this one tile so a click only shows a spinner on the row that was
 // actually clicked, not the whole list.
 function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
+  const timeZone = useTimeZone()
   const [updatingId, setUpdatingId] = useState(null)
   const covered = items.filter((item) => item.covered).length
 
@@ -637,6 +644,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
       </p>
       <TruncatedList
         items={items}
+        limit={5}
         emptyLabel="Пусто"
         className="mt-3 space-y-1.5 text-sm"
         renderItem={(item) => (
@@ -662,7 +670,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
               <span className={item.covered ? "text-ink line-through" : "text-muted-foreground"}>{item.title}</span>
               {item.covered && item.coveredAt ? (
                 <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-                  {formatLessonDateTime(item.coveredAt.toDate?.() ?? item.coveredAt)}
+                  {formatLessonDateTime(item.coveredAt.toDate?.() ?? item.coveredAt, timeZone)}
                 </span>
               ) : null}
             </button>

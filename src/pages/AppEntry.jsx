@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Spinner } from "@/components/ui/spinner"
-import { SelfServiceSignup } from "@/components/self-service-signup"
-import { PublicLanding } from "@/pages/PublicLanding"
+import { RegistrationNotFound } from "@/components/registration-not-found"
 import { findStudentIdByTelegramUserId } from "@/firebase/students"
 
 function getTelegramUserId() {
   return window.Telegram?.WebApp?.initDataUnsafe?.user?.id ?? null
 }
 
-// Single entry point for both the Telegram Mini App menu button and a
-// public QR code at offline events — resolves which of three screens to
-// show at load time, then never re-checks (a redirect or one of the two
-// static screens is the only thing this component ever renders).
+// Entry point for the Telegram Mini App menu button — shared across every
+// teacher's bot, so (multi-tenancy Phase 3) it can only ever do the
+// "already-known Telegram user → their own dashboard" redirect; it can no
+// longer offer blind self-service signup for an unrecognized user, since
+// there's no way to know which teacher to attribute a new student to from
+// here. The per-teacher signup entry point is /app/:slug (TeacherLanding),
+// a sibling route, not something this component redirects to.
 export function AppEntry() {
   const [screen, setScreen] = useState("checking")
   const navigate = useNavigate()
@@ -26,7 +28,10 @@ export function AppEntry() {
     const telegramUserId = getTelegramUserId()
 
     if (!telegramUserId) {
-      setScreen("landing")
+      // Opened outside the Telegram Mini App context entirely (a stray
+      // link/bookmark to bare /app) — same "can't identify a teacher"
+      // reasoning as the not-found case below applies here too.
+      setScreen("not-found")
       return
     }
 
@@ -41,11 +46,11 @@ export function AppEntry() {
           return
         }
 
-        setScreen("signup")
+        setScreen("not-found")
       })
       .catch((error) => {
         console.error("Failed to resolve Telegram student:", error)
-        if (!cancelled) setScreen("signup")
+        if (!cancelled) setScreen("not-found")
       })
 
     return () => {
@@ -61,9 +66,5 @@ export function AppEntry() {
     )
   }
 
-  if (screen === "signup") {
-    return <SelfServiceSignup />
-  }
-
-  return <PublicLanding />
+  return <RegistrationNotFound />
 }

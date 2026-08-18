@@ -7,12 +7,14 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
   Timestamp,
   updateDoc,
+  where,
 } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
-import { db, functions } from "./firebase"
+import { db, functions, auth } from "./firebase"
 
 const CURRICULUM_TEMPLATES_COLLECTION = "curriculumTemplates"
 const CURRICULUM_PROGRESS_SUBCOLLECTION = "curriculumProgress"
@@ -33,9 +35,15 @@ function mapTemplateDoc(id, data) {
   }
 }
 
-export async function getCurriculumTemplates() {
+// teacherId filter is explicit, not left to Firestore Rules alone — same
+// reasoning as subscribeToStudents (src/firebase/students.js): a `list`
+// query whose security rule checks resource.data.teacherId is rejected
+// outright (permission-denied) unless the query itself is provably scoped
+// on that same field.
+export async function getCurriculumTemplates(teacherId) {
   const ref = collection(db, CURRICULUM_TEMPLATES_COLLECTION)
-  const snapshot = await getDocs(ref)
+  const templatesQuery = query(ref, where("teacherId", "==", teacherId))
+  const snapshot = await getDocs(templatesQuery)
   return snapshot.docs.map((document) => mapTemplateDoc(document.id, document.data()))
 }
 
@@ -46,6 +54,10 @@ export async function createCurriculumTemplate({ name, examTarget, topics, proto
     examTarget,
     topics,
     prototypes,
+    // Multi-tenancy Phase 2: templates are admin-only, teacher-owned config
+    // (same "direct client write" convention as the rest of this file) —
+    // stamped once at creation, never touched again by updateCurriculumTemplate.
+    teacherId: auth.currentUser?.uid ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
@@ -127,8 +139,11 @@ export function subscribeToCurriculumProgress(studentId, onData, onError) {
 // powers the progress bar on every (collapsed) row in the student list
 // without holding open a listener per student; only the row a teacher
 // actually expands gets a live subscribeToCurriculumProgress on top of this.
-export async function getAllCurriculumProgressByStudent() {
-  const progressQuery = collectionGroup(db, CURRICULUM_PROGRESS_SUBCOLLECTION)
+export async function getAllCurriculumProgressByStudent(teacherId) {
+  const progressQuery = query(
+    collectionGroup(db, CURRICULUM_PROGRESS_SUBCOLLECTION),
+    where("teacherId", "==", teacherId),
+  )
   const snapshot = await getDocs(progressQuery)
 
   const byStudentId = {}

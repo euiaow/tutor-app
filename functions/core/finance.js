@@ -36,6 +36,7 @@ async function addPayment(studentId, lessonsCount, note = null) {
       amount: count,
       note: note || null,
       lessonId: null,
+      teacherId: studentSnapshot.data().teacherId ?? null,
       createdAt: FieldValue.serverTimestamp(),
     })
     transaction.update(studentRef, { paidLessonsBalance: nextBalance })
@@ -69,6 +70,7 @@ async function deductLessonFromBalance(studentId, lessonId) {
       amount: -1,
       note: null,
       lessonId,
+      teacherId: studentData.teacherId ?? null,
       createdAt: FieldValue.serverTimestamp(),
     })
     transaction.update(studentRef, { paidLessonsBalance: nextBalance })

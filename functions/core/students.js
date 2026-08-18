@@ -137,6 +137,57 @@ async function deleteBotSessionsForStudent(studentId, student) {
   }
 }
 
+const VALID_COLOR_THEMES = new Set(["pink", "amber"])
+
+// Generic IANA-zone validity check (Intl throws RangeError for a bogus
+// zone) rather than checking against a fixed whitelist — the frontend's
+// TIME_ZONE_OPTIONS (src/lib/timezone.js) is just a curated suggestion
+// list, not the actual set of zones a saved value is allowed to be (e.g.
+// Intl.DateTimeFormat().resolvedOptions().timeZone can hand back a device
+// zone that isn't in that curated list at all).
+function isValidTimeZone(timeZone) {
+  if (typeof timeZone !== "string" || !timeZone) {
+    return false
+  }
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Student-facing, no request.auth check — same trust model (studentId
+// knowledge) as every other student-reachable callable in this project
+// (see setStudentGoal in core/curriculum.js for the identical shape).
+// Multi-tenancy Phase 4a: the two per-user display preferences (see
+// teachers/{uid}'s identically-named fields, written directly by the
+// teacher via updateDoc rather than a callable — see App.jsx/
+// firebase/teachers.js).
+async function updateStudentSettings(studentId, { timezone, colorTheme } = {}) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!isValidTimeZone(timezone)) {
+    throw new HttpsError("invalid-argument", "Некорректный часовой пояс")
+  }
+  if (!VALID_COLOR_THEMES.has(colorTheme)) {
+    throw new HttpsError("invalid-argument", "Некорректная цветовая тема")
+  }
+
+  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
+  const studentSnapshot = await studentRef.get()
+  if (!studentSnapshot.exists) {
+    throw new HttpsError("not-found", "Ученик не найден")
+  }
+
+  await studentRef.update({ timezone, colorTheme })
+
+  logger.info("updateStudentSettings: settings updated", { studentId, timezone, colorTheme })
+
+  return { success: true }
+}
+
 async function deleteStudent(studentId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -160,7 +211,7 @@ async function deleteStudent(studentId) {
   let calendarEventsDeleted = 0
   for (const eventId of eventIdsToDelete) {
     try {
-      await deleteLessonEvent(eventId)
+      await deleteLessonEvent(student.teacherId ?? null, eventId)
       calendarEventsDeleted += 1
     } catch (error) {
       logger.warn("deleteStudent: failed to delete Google Calendar event, continuing", {
@@ -194,4 +245,4 @@ async function deleteStudent(studentId) {
   logger.info("deleteStudent completed", { studentId, lessonsDeleted, calendarEventsDeleted })
 }
 
-module.exports = { deleteStudent }
+module.exports = { deleteStudent, updateStudentSettings }

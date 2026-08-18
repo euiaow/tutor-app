@@ -15,7 +15,9 @@ teacher a proper web dashboard.
 - Renegotiating a lesson time over chat with no record of what was agreed
   (now modeled explicitly as reschedule/cancellation status machines).
 - Keeping a Google Calendar in sync with an ever-changing weekly schedule
-  by hand.
+  by hand. The teacher can also cleanly disconnect and reconnect the
+  calendar (e.g. to switch Google accounts) without leaving stale event
+  ids behind that would break the next sync.
 - Tracking who's paid for how many lessons and remembering to chase
   payments before a student's paid package quietly runs out.
 
@@ -48,6 +50,17 @@ teacher a proper web dashboard.
   (`addPayment`); when the balance drops to or below the student's
   low-balance threshold, both the teacher (bell) and — if the student has
   opted in — the student (bot) get nudged automatically.
+
+- Each user (teacher or student) has their own **timezone and color-theme
+  preference**, set once via a Settings dialog on their own dashboard. The
+  guiding principle (session 12, after an earlier same-session attempt to
+  keep schedule times fixed to Moscow was explicitly reversed): a person
+  always enters and always sees lesson times in *their own* timezone —
+  never a shared assumption, never the tutor's timezone imposed on a
+  student elsewhere, never the device's timezone silently substituted.
+  Color theme is purely cosmetic (pink or amber, the two palettes that
+  already existed for teacher/student respectively) — either side can
+  pick either one.
 
 ## User experience goals
 

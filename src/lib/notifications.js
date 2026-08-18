@@ -12,8 +12,11 @@ function pluralize(count, one, few, many) {
 
 // "только что" / "5 минут назад" / "3 часа назад" / "вчера" / "12 июля" —
 // coarse enough for a notification feed, doesn't need second-level
-// precision the way a chat timestamp would.
-export function formatRelativeTime(date) {
+// precision the way a chat timestamp would. timeZone only matters for the
+// final ">7 days ago" branch (an actual calendar date) — pass the viewer's
+// resolved timezone (see lib/user-prefs-context.jsx); omitting it keeps the
+// old device-timezone behavior.
+export function formatRelativeTime(date, timeZone) {
   if (!date) return ""
 
   const diffMs = Date.now() - date.getTime()
@@ -45,5 +48,5 @@ export function formatRelativeTime(date) {
     return `${days} ${pluralize(days, "день", "дня", "дней")} назад`
   }
 
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
+  return date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
 }

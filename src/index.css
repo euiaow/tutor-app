@@ -265,6 +265,13 @@
     background: linear-gradient(180deg, oklch(0.985 0.01 350), oklch(0.965 0.018 345));
     background-attachment: fixed;
   }
+  /* Multi-tenancy Phase 4a: same shape as the pink rule above, hue swapped
+     to match .amber-scope's own palette (a teacher who picked "amber" in
+     Settings) — see .amber-scope's own doc comment below. */
+  body:has(.amber-scope) {
+    background: linear-gradient(180deg, oklch(0.985 0.01 70), oklch(0.96 0.018 65));
+    background-attachment: fixed;
+  }
 }
 
 /*
@@ -385,6 +392,94 @@
   --gradient-orb: radial-gradient(circle at 32% 28%, oklch(0.84 0.15 350), oklch(0.62 0.2 8));
   --shadow-glass: 0 24px 60px -28px oklch(0.5 0.16 355 / 45%);
   --shadow-soft: 0 10px 30px -18px oklch(0.5 0.16 355 / 55%);
+  --blob-a-gradient: radial-gradient(
+    circle at 35% 30%,
+    oklch(0.86 0.14 350 / 90%),
+    oklch(0.7 0.19 8 / 55%) 55%,
+    transparent 75%
+  );
+  --blob-b-gradient: radial-gradient(
+    circle at 60% 55%,
+    oklch(0.9 0.1 340 / 85%),
+    oklch(0.74 0.16 355 / 45%) 60%,
+    transparent 78%
+  );
+  position: relative;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+}
+
+/*
+ * Multi-tenancy Phase 4a — the "amber" colorTheme choice for either role.
+ * Same variable shape as .teacher-theme above (every token any teacher-
+ * scoped component reads — glass-panel/glass-tile, TeacherDialog, the blob
+ * decoration, --balance-* finance badges, etc.), just populated with the
+ * student page's own amber/orange hues instead of pink — background/
+ * foreground/card/primary/etc. are lifted directly from :root above (the
+ * existing amber palette), not a new design; --glass/--glass-strong/
+ * --glass-border are hue-neutral white-translucency in both scopes already,
+ * copied as-is; --balance-* status colors are semantic (green/amber/red),
+ * also copied as-is rather than re-tinted. Selected on TeacherDashboard.jsx
+ * (colorTheme === "amber") — lets a teacher use the student page's palette
+ * for their own dashboard, per explicit spec ("просто даём выбор из уже
+ * существующих палитр").
+ */
+@layer base {
+.amber-scope {
+  --radius: 1.75rem;
+  --background: oklch(0.955 0.014 70);
+  --foreground: oklch(0.26 0.02 60);
+  --ink: oklch(0.19 0.01 60);
+  --ink-foreground: oklch(0.97 0.01 80);
+  --card: oklch(1 0 0 / 42%);
+  --card-foreground: oklch(0.26 0.02 60);
+  --popover: oklch(0.99 0.005 70);
+  --popover-foreground: oklch(0.26 0.02 60);
+  --primary: oklch(0.72 0.19 47);
+  --primary-foreground: oklch(0.99 0.01 80);
+  --secondary: oklch(1 0 0 / 55%);
+  --secondary-foreground: oklch(0.32 0.02 60);
+  --muted: oklch(1 0 0 / 35%);
+  --muted-foreground: oklch(0.52 0.02 60);
+  --accent: oklch(0.88 0.07 65);
+  --accent-foreground: oklch(0.28 0.03 55);
+  --destructive: oklch(0.62 0.19 22);
+  --destructive-foreground: oklch(0.99 0.01 80);
+  --border: oklch(1 0 0 / 55%);
+  --input: oklch(1 0 0 / 55%);
+  --ring: oklch(0.72 0.19 47);
+  --glass: oklch(1 0 0 / 30%);
+  --glass-strong: oklch(1 0 0 / 42%);
+  --glass-border: oklch(1 0 0 / 70%);
+  --rose-deep: oklch(0.55 0.17 45);
+  --rose-soft: oklch(0.85 0.09 60);
+  --balance-ok: oklch(0.58 0.09 155);
+  --balance-warn: oklch(0.66 0.11 75);
+  --balance-danger: oklch(0.58 0.15 20);
+  --gradient-page: radial-gradient(
+      1200px 700px at 10% -5%,
+      oklch(0.92 0.09 65 / 90%),
+      transparent 60%
+    ),
+    radial-gradient(900px 600px at 95% 10%, oklch(0.88 0.1 55 / 85%), transparent 60%),
+    radial-gradient(1000px 800px at 60% 100%, oklch(0.93 0.07 70 / 80%), transparent 65%),
+    linear-gradient(180deg, oklch(0.98 0.012 70), oklch(0.96 0.02 65));
+  --gradient-orb: radial-gradient(circle at 32% 28%, oklch(0.86 0.13 65), oklch(0.68 0.2 40));
+  --shadow-glass: 0 32px 80px -32px oklch(0.45 0.09 50 / 0.45);
+  --shadow-soft: 0 24px 60px -24px oklch(0.5 0.1 50 / 0.35);
+  --blob-a-gradient: radial-gradient(
+    circle at 35% 30%,
+    oklch(0.9 0.09 65 / 90%),
+    oklch(0.72 0.19 47 / 55%) 55%,
+    transparent 75%
+  );
+  --blob-b-gradient: radial-gradient(
+    circle at 60% 55%,
+    oklch(0.92 0.06 65 / 85%),
+    oklch(0.76 0.15 50 / 45%) 60%,
+    transparent 78%
+  );
   position: relative;
   color: var(--foreground);
   font-family: var(--font-sans);
@@ -419,12 +514,17 @@
   width: 62vw;
   height: 62vw;
   border-radius: 58% 42% 61% 39% / 45% 55% 45% 55%;
-  background: radial-gradient(
+  /* Multi-tenancy Phase 4a: --blob-a-gradient is defined per color-theme
+     scope (.teacher-theme = pink, .amber-scope = amber, see index.css
+     above) so this decorative layer re-tints along with the rest of the
+     teacher panel instead of always rendering pink regardless of the
+     chosen theme. Fallback keeps the original pink value for safety. */
+  background: var(--blob-a-gradient, radial-gradient(
     circle at 35% 30%,
     oklch(0.86 0.14 350 / 90%),
     oklch(0.7 0.19 8 / 55%) 55%,
     transparent 75%
-  );
+  ));
   filter: blur(90px);
   opacity: 0.55;
 }
@@ -436,12 +536,12 @@
   width: 56vw;
   height: 56vw;
   border-radius: 44% 56% 38% 62% / 60% 38% 62% 40%;
-  background: radial-gradient(
+  background: var(--blob-b-gradient, radial-gradient(
     circle at 60% 55%,
     oklch(0.9 0.1 340 / 85%),
     oklch(0.74 0.16 355 / 45%) 60%,
     transparent 78%
-  );
+  ));
   filter: blur(95px);
   opacity: 0.5;
 }

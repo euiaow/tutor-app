@@ -8,6 +8,7 @@ const {
   getRegistrationTokenStatus,
 } = require("../core/registration")
 const { resolveTeacherConnectToken } = require("../core/teacherConnect")
+const { findTeacherBySlug } = require("../core/teachers")
 const {
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
@@ -141,22 +142,42 @@ async function handleStart(chatId, text) {
     return
   }
 
-  // "/start signup" is the entry point from /app's SelfServiceSignup screen
-  // (and from PublicLanding's Telegram button, ?start=signup) — a fresh
-  // token is minted right here rather than requiring the teacher to have
-  // pre-created one, then the exact same awaiting_name/awaiting_pin
-  // session machine below takes over, no separate code path to keep in
-  // sync.
-  if (rawArg === "signup") {
-    const token = await createSelfServiceToken()
+  // "/start signup_{slug}" is the entry point from a specific teacher's
+  // /app/:slug landing page (multi-tenancy Phase 3) — the slug identifies
+  // which teacher this student is signing up with, since the bot itself is
+  // shared across every teacher. A fresh token is minted right here rather
+  // than requiring the teacher to have pre-created one, then the exact same
+  // awaiting_name/awaiting_pin session machine below takes over, no
+  // separate code path to keep in sync.
+  if (typeof rawArg === "string" && rawArg.startsWith("signup_")) {
+    const slug = rawArg.slice("signup_".length)
+    const teacher = await findTeacherBySlug(slug)
+
+    if (!teacher) {
+      logger.warn("Telegram self-service signup: unknown teacher slug", { chatId, slug })
+      await sendMessage(chatId, botMessages.SIGNUP_LINK_INVALID())
+      return
+    }
+
+    const token = await createSelfServiceToken(teacher.id)
 
     await db
       .collection(SESSIONS_COLLECTION)
       .doc(String(chatId))
       .set({ token, step: "awaiting_name" })
 
-    logger.info("Telegram self-service signup started", { chatId, token })
+    logger.info("Telegram self-service signup started", { chatId, token, teacherId: teacher.id })
     await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN())
+    return
+  }
+
+  // Bare "/start signup" (no slug) — can no longer be resolved to a
+  // specific teacher now that the bot serves more than one. Previously this
+  // minted a token with no teacherId at all; that's no longer acceptable
+  // once there's more than one teacher to potentially attribute it to.
+  if (rawArg === "signup") {
+    logger.info("Telegram self-service signup requested with no teacher slug", { chatId })
+    await sendMessage(chatId, botMessages.SIGNUP_NEEDS_TEACHER_LINK())
     return
   }
 
@@ -291,7 +312,17 @@ async function handleRescheduleRequest(chatId, studentId) {
 }
 
 async function handleAwaitingRescheduleDate(chatId, sessionRef, session, text) {
-  const proposedDate = parseRescheduleDateInput(text)
+  const studentId = await findStudentIdByChatIdentity("telegram", chatId)
+  if (!studentId) {
+    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED())
+    return
+  }
+
+  // The student is the one typing this date, so it's parsed as wall-clock
+  // time in *their* own saved timezone, not a fixed assumption.
+  const studentSnapshot = await db.collection("students").doc(studentId).get()
+  const studentTimeZone = studentSnapshot.exists ? studentSnapshot.data().timezone || undefined : undefined
+  const proposedDate = parseRescheduleDateInput(text, studentTimeZone)
 
   if (!proposedDate) {
     await sendMessage(chatId, botMessages.RESCHEDULE_INVALID_DATE())
@@ -299,12 +330,6 @@ async function handleAwaitingRescheduleDate(chatId, sessionRef, session, text) {
   }
 
   await sessionRef.delete()
-
-  const studentId = await findStudentIdByChatIdentity("telegram", chatId)
-  if (!studentId) {
-    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED())
-    return
-  }
 
   try {
     await proposeReschedule(studentId, session.lessonId, proposedDate, "student")

@@ -9,7 +9,12 @@ these files are for full verbatim narrative detail only, rarely needed.
   redesigns, curriculum templates feature, balance tracker, `/app` entry
   point, Telegram Mini App groundwork). Archived 2026-08-01.
 - [2026-08-august.md](2026-08-august.md) — session 9 (teacher modal-freeze
-  root cause, student page "redesign v3" migration). Archived 2026-08-02.
+  root cause, student page "redesign v3" migration), session 10 (domain
+  finalization, teacher↔student bot notification parity, Cloud Run IAM
+  invoker discovery, cancellation-history fix), session 11 (accidental-
+  revert catch, Google Calendar disconnect, native-app link handoff,
+  mobile-layout pass, Telegram username contact UX). Archived 2026-08-02,
+  2026-08-16, and 2026-08-18 respectively.
 
 `activeContext.md` itself keeps only the most recent 1 session inline —
 check there first for anything recent; come here only for older detail.

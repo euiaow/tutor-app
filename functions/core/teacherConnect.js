@@ -5,8 +5,14 @@ const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 
 const TOKENS_COLLECTION = "teacherConnectTokens"
-const TEACHER_CONTACT_DOC = "integrations/teacherContact"
+const TEACHERS_COLLECTION = "teachers"
+const INTEGRATIONS_SUBCOLLECTION = "integrations"
+const TEACHER_CONTACT_DOC_ID = "teacherContact"
 const TOKEN_TTL_MS = 10 * 60 * 1000
+
+function teacherContactRef(teacherId) {
+  return db.collection(TEACHERS_COLLECTION).doc(teacherId).collection(INTEGRATIONS_SUBCOLLECTION).doc(TEACHER_CONTACT_DOC_ID)
+}
 
 // Same bot that serves student registration/reminders (one Telegram bot for
 // the whole app) — duplicated here rather than imported from
@@ -31,7 +37,7 @@ function isTokenExpired(createdAt) {
 // generateTeacherConnectToken in index.js, which gates this on
 // request.auth) — mints a short-lived token the teacher then redeems from
 // inside Telegram/VK to link that chat to integrations/teacherContact.
-async function createTeacherConnectToken(platform) {
+async function createTeacherConnectToken(teacherId, platform) {
   if (platform !== "telegram" && platform !== "vk") {
     throw new HttpsError("invalid-argument", "Некорректная платформа подключения")
   }
@@ -40,10 +46,11 @@ async function createTeacherConnectToken(platform) {
   await db.collection(TOKENS_COLLECTION).doc(token).set({
     platform,
     status: "pending",
+    teacherId,
     createdAt: FieldValue.serverTimestamp(),
   })
 
-  logger.info("createTeacherConnectToken: token created", { platform, token })
+  logger.info("createTeacherConnectToken: token created", { platform, token, teacherId })
 
   if (platform === "telegram") {
     return { deepLink: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=teacher_${token}` }
@@ -78,12 +85,12 @@ async function resolveTeacherConnectToken(token, platform, chatIdentity) {
   await ref.update({ status: "used" })
 
   const field = platform === "telegram" ? "telegramChatId" : "vkPeerId"
-  await db.doc(TEACHER_CONTACT_DOC).set(
+  await teacherContactRef(data.teacherId).set(
     { [field]: String(chatIdentity), updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
   )
 
-  logger.info("resolveTeacherConnectToken: teacher connected", { platform, token })
+  logger.info("resolveTeacherConnectToken: teacher connected", { platform, token, teacherId: data.teacherId })
   return true
 }
 

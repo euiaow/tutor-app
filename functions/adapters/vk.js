@@ -9,6 +9,7 @@ const {
   getRegistrationTokenStatus,
 } = require("../core/registration")
 const { resolveTeacherConnectToken } = require("../core/teacherConnect")
+const { findTeacherBySlug } = require("../core/teachers")
 const {
   findStudentIdByChatIdentity,
   uploadHomeworkFile,
@@ -42,10 +43,19 @@ function isRescheduleRequestText(text) {
 }
 
 // VK has no "/start {arg}" deep-link mechanic like Telegram — this is the
-// self-service entry point instead, triggered by the exact word (not a
-// substring match, unlike isRescheduleRequestText, since "регистрация"
-// could otherwise false-positive inside an unrelated sentence).
-function isSignupRequestText(text) {
+// self-service entry point instead. Multi-tenancy Phase 3: the bare word
+// "регистрация" used to be enough (single global teacher); now the exact
+// code must carry which teacher via a slug suffix, "регистрация-{slug}"
+// (dash chosen over underscore since it's easier to type on a phone
+// keyboard). Anchored full-string match (not a substring match, unlike
+// isRescheduleRequestText) so it can't false-positive inside an unrelated
+// sentence.
+function parseSignupSlug(text) {
+  const match = /^регистрация-([a-z0-9-]+)$/i.exec(text.trim().toLowerCase())
+  return match ? match[1] : null
+}
+
+function isBareSignupRequestText(text) {
   return text.trim().toLowerCase() === "регистрация"
 }
 
@@ -300,7 +310,17 @@ async function handleRescheduleRequest(peerId, studentId) {
 }
 
 async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
-  const proposedDate = parseRescheduleDateInput(text)
+  const studentId = await findStudentIdByChatIdentity("vk", peerId)
+  if (!studentId) {
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    return
+  }
+
+  // The student is the one typing this date, so it's parsed as wall-clock
+  // time in *their* own saved timezone, not a fixed assumption.
+  const studentSnapshot = await db.collection("students").doc(studentId).get()
+  const studentTimeZone = studentSnapshot.exists ? studentSnapshot.data().timezone || undefined : undefined
+  const proposedDate = parseRescheduleDateInput(text, studentTimeZone)
 
   if (!proposedDate) {
     await sendMessage(peerId, botMessages.RESCHEDULE_INVALID_DATE())
@@ -308,12 +328,6 @@ async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
   }
 
   await sessionRef.delete()
-
-  const studentId = await findStudentIdByChatIdentity("vk", peerId)
-  if (!studentId) {
-    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
-    return
-  }
 
   try {
     await proposeReschedule(studentId, session.lessonId, proposedDate, "student")
@@ -551,12 +565,29 @@ async function handleMessageNew(object) {
       }
     }
 
-    if (isSignupRequestText(text)) {
-      const token = await createSelfServiceToken()
+    const signupSlug = parseSignupSlug(text)
+    if (signupSlug) {
+      const teacher = await findTeacherBySlug(signupSlug)
+
+      if (!teacher) {
+        logger.warn("VK self-service signup: unknown teacher slug", { peerId, slug: signupSlug })
+        await sendMessage(peerId, botMessages.SIGNUP_LINK_INVALID())
+        return
+      }
+
+      const token = await createSelfServiceToken(teacher.id)
       await sessionRef.set({ token, step: "awaiting_name" })
 
-      logger.info("VK self-service signup started", { peerId, token })
+      logger.info("VK self-service signup started", { peerId, token, teacherId: teacher.id })
       await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
+      return
+    }
+
+    // Bare "регистрация" (no slug) — can no longer be resolved to a
+    // specific teacher now that the community serves more than one.
+    if (isBareSignupRequestText(text)) {
+      logger.info("VK self-service signup requested with no teacher slug", { peerId })
+      await sendMessage(peerId, botMessages.SIGNUP_NEEDS_TEACHER_LINK())
       return
     }
 

@@ -1,14 +1,15 @@
 import { RotateCcw } from "lucide-react"
 import { TruncatedList } from "@/components/truncated-list"
+import { useTimeZone } from "@/lib/user-prefs-context"
 
 function toJsDate(value) {
   return value?.toDate?.() ?? value ?? null
 }
 
-function formatShortDate(value) {
+function formatShortDate(value, timeZone) {
   const date = toJsDate(value)
   if (!date) return ""
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
+  return date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
 }
 
 // Пройдено/Осталось split for a topics or prototypes list — stacked
@@ -20,6 +21,7 @@ function formatShortDate(value) {
 // program), so this logic lives in one place instead of being duplicated
 // across the two page/component files that need it.
 export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) {
+  const timeZone = useTimeZone()
   const total = covered.length + remaining.length
 
   return (
@@ -51,7 +53,7 @@ export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) 
                   ) : null}
                   <span className={`truncate ${item.needsReview ? "text-primary" : ""}`}>{item.title}</span>
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatShortDate(item.coveredAt)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{formatShortDate(item.coveredAt, timeZone)}</span>
               </li>
             )}
           />

@@ -64,7 +64,17 @@ async function generateUniqueId(collectionName, candidateFn, maxAttempts = 5) {
 // about them yet. The same awaiting_name/awaiting_pin session machine
 // fills the name in afterward, same as always; only isSelfService marks
 // this token so completeRegistration knows to notify the teacher.
-async function createSelfServiceToken() {
+//
+// Multi-tenancy Phase 1 gap, flagged explicitly: teacherId is null here
+// (default) because the bot adapters that call this (adapters/telegram.js's
+// "/start signup", adapters/vk.js's "регистрация") have no way yet to know
+// which teacher's bot a student is talking to — there is still only one
+// global bot per platform, serving one teacher. Resolving that is Phase 3's
+// bot-routing problem, not this phase's. A student who signs up this way
+// today gets `teacherId: null` on their student doc until Phase 3 wires up
+// per-teacher bot routing (or Phase 5 backfills it for the single existing
+// teacher).
+async function createSelfServiceToken(teacherId = null) {
   const token = await generateUniqueId(REGISTRATION_TOKENS_COLLECTION, () => randomToken())
 
   await db
@@ -74,17 +84,21 @@ async function createSelfServiceToken() {
       studentName: null,
       status: "pending",
       isSelfService: true,
+      teacherId,
       createdAt: FieldValue.serverTimestamp(),
     })
 
-  logger.info("Self-service registration token created", { token })
+  logger.info("Self-service registration token created", { token, teacherId })
 
   return token
 }
 
-async function createRegistrationToken(studentName) {
+async function createRegistrationToken(studentName, teacherId) {
   if (!studentName || typeof studentName !== "string" || !studentName.trim()) {
     throw new HttpsError("invalid-argument", "Укажите имя ученика")
+  }
+  if (!teacherId || typeof teacherId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан преподаватель")
   }
 
   const token = await generateUniqueId(REGISTRATION_TOKENS_COLLECTION, () => randomToken())
@@ -95,10 +109,11 @@ async function createRegistrationToken(studentName) {
     .set({
       studentName: studentName.trim(),
       status: "pending",
+      teacherId,
       createdAt: FieldValue.serverTimestamp(),
     })
 
-  logger.info("Registration token created", { token })
+  logger.info("Registration token created", { token, teacherId })
 
   return token
 }
@@ -176,6 +191,7 @@ async function completeRegistration(token, fullName, accessCode, identity = null
       platform,
       telegramChatId,
       vkPeerId,
+      teacherId: freshToken.data().teacherId ?? null,
     })
 
     transaction.update(tokenRef, {
@@ -202,7 +218,7 @@ async function completeRegistration(token, fullName, accessCode, identity = null
   return studentId
 }
 
-async function cancelRegistrationToken(token) {
+async function cancelRegistrationToken(token, teacherId) {
   if (!token || typeof token !== "string") {
     throw new HttpsError("invalid-argument", "Не указан токен регистрации")
   }
@@ -212,6 +228,16 @@ async function cancelRegistrationToken(token) {
 
   if (!snapshot.exists) {
     throw new HttpsError("not-found", "Ссылка на регистрацию не найдена")
+  }
+
+  // Multi-tenancy Phase 2 ownership check. Self-service tokens (teacherId:
+  // null, see createSelfServiceToken's own note) can't be owned by anyone
+  // yet — cancelling one of those is left permitted for now rather than
+  // permanently unreachable, since Phase 3's bot routing hasn't assigned
+  // them an owner.
+  const tokenTeacherId = snapshot.data().teacherId ?? null
+  if (tokenTeacherId && tokenTeacherId !== teacherId) {
+    throw new HttpsError("permission-denied", "Not your student")
   }
 
   await tokenRef.delete()
@@ -225,4 +251,8 @@ module.exports = {
   completeRegistration,
   getRegistrationTokenStatus,
   cancelRegistrationToken,
+  // Multi-tenancy Phase 3: reused by core/teachers.js for slug generation —
+  // same transliteration/slugify shape a student id's slug half already
+  // needed, no reason to maintain a second Cyrillic transliteration map.
+  slugify,
 }

@@ -2,10 +2,16 @@
 // importable from functions/ (separate deployable package), so this is the
 // canonical copy for backend use; keep both in sync if the logic changes.
 
-// Tutor's schedule.dayOfWeek/time are always Moscow wall-clock values,
-// regardless of the Cloud Functions runtime's own local timezone — the
-// computed instant must be correct in absolute (UTC) terms.
-const SCHEDULE_TIME_ZONE = "Europe/Moscow"
+// Full-rewrite note: schedule.dayOfWeek/time used to be interpreted as
+// fixed Moscow wall-clock values regardless of anyone's actual timezone —
+// an explicit architectural decision that's since been reversed. The
+// teacher sets the schedule, so "HH:MM" is now interpreted in *the
+// teacher's own* saved timezone (teachers/{uid}.timezone); every caller
+// below takes that timezone as an explicit parameter instead of a
+// module-level constant. DEFAULT_TIME_ZONE only exists as the technical
+// fallback for a teacher who somehow has no timezone saved at all yet —
+// never as a "schedule data uses Moscow" special case.
+const DEFAULT_TIME_ZONE = "Europe/Moscow"
 
 function getZonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -43,7 +49,11 @@ function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-function getNextLessonDateForSlot(slot) {
+// timeZone is the *teacher's* saved timezone (teachers/{uid}.timezone) —
+// the schedule is theirs to set, so "HH:MM" is interpreted as their local
+// wall-clock time, not a fixed Moscow assumption. Falls back to
+// DEFAULT_TIME_ZONE only if the caller has no resolved value at all.
+function getNextLessonDateForSlot(slot, timeZone = DEFAULT_TIME_ZONE) {
   if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
   }
@@ -54,15 +64,15 @@ function getNextLessonDateForSlot(slot) {
   }
 
   const now = new Date()
-  const nowInMoscow = getZonedParts(now, SCHEDULE_TIME_ZONE)
+  const nowZoned = getZonedParts(now, timeZone)
   // A calendar date's day-of-week doesn't depend on time-of-day or zone
-  // offset, so reading it off a UTC-midnight Date built from Moscow's
+  // offset, so reading it off a UTC-midnight Date built from the zoned
   // year/month/day is safe.
-  const mskWeekday = new Date(Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day)).getUTCDay()
-  const daysUntil = (slot.dayOfWeek - mskWeekday + 7) % 7
+  const zonedWeekday = new Date(Date.UTC(nowZoned.year, nowZoned.month - 1, nowZoned.day)).getUTCDay()
+  const daysUntil = (slot.dayOfWeek - zonedWeekday + 7) % 7
 
   const candidateDay = new Date(
-    Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day + daysUntil),
+    Date.UTC(nowZoned.year, nowZoned.month - 1, nowZoned.day + daysUntil),
   )
 
   let candidate = zonedTimeToUtc(
@@ -71,7 +81,7 @@ function getNextLessonDateForSlot(slot) {
     candidateDay.getUTCDate(),
     hours,
     minutes,
-    SCHEDULE_TIME_ZONE,
+    timeZone,
   )
 
   if (candidate <= now) {
@@ -118,9 +128,9 @@ function normalizeScheduleSlots(data) {
 
 // Earliest next occurrence across every slot — used wherever only a single
 // "next lesson" date is needed (e.g. the collapsed schedule display).
-function getNextLessonDate(scheduleSlots) {
+function getNextLessonDate(scheduleSlots, timeZone = DEFAULT_TIME_ZONE) {
   const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
-  const dates = slots.map(getNextLessonDateForSlot).filter(Boolean)
+  const dates = slots.map((slot) => getNextLessonDateForSlot(slot, timeZone)).filter(Boolean)
 
   if (dates.length === 0) {
     return null
@@ -136,10 +146,10 @@ function getNextLessonDate(scheduleSlots) {
 // calling this with count === scheduleSlots.length is guaranteed to return
 // exactly one entry per slot (a slot's second occurrence is always >= 7
 // days out, i.e. always later than any other slot's first).
-function getUpcomingLessonDates(scheduleSlots, count) {
+function getUpcomingLessonDates(scheduleSlots, count, timeZone = DEFAULT_TIME_ZONE) {
   const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
   const pointers = slots
-    .map((slot, index) => ({ index, date: getNextLessonDateForSlot(slot) }))
+    .map((slot, index) => ({ index, date: getNextLessonDateForSlot(slot, timeZone) }))
     .filter((pointer) => pointer.date)
 
   const results = []
@@ -155,12 +165,12 @@ function getUpcomingLessonDates(scheduleSlots, count) {
 
 const RESCHEDULE_DATE_PATTERN = /^(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})$/
 
-// Parses a student-typed "ДД.ММ ЧЧ:ММ" reschedule request as Moscow
-// wall-clock time (matching how schedule.time is interpreted everywhere
-// else), rolling over to next year if that day/month has already passed
-// this year. Shared by both bot adapters so the fiddly timezone math only
-// lives in one place.
-function parseRescheduleDateInput(text) {
+// Parses a student-typed "ДД.ММ ЧЧ:ММ" reschedule request as wall-clock
+// time in the *student's* own saved timezone (they're the one typing it),
+// rolling over to next year if that day/month has already passed this
+// year. Shared by both bot adapters so the fiddly timezone math only lives
+// in one place.
+function parseRescheduleDateInput(text, timeZone = DEFAULT_TIME_ZONE) {
   const match = RESCHEDULE_DATE_PATTERN.exec(text.trim())
   if (!match) {
     return null
@@ -177,11 +187,11 @@ function parseRescheduleDateInput(text) {
   }
 
   const now = new Date()
-  const nowInMoscow = getZonedParts(now, SCHEDULE_TIME_ZONE)
+  const nowZoned = getZonedParts(now, timeZone)
 
-  let candidate = zonedTimeToUtc(nowInMoscow.year, month, day, hour, minute, SCHEDULE_TIME_ZONE)
+  let candidate = zonedTimeToUtc(nowZoned.year, month, day, hour, minute, timeZone)
   if (candidate < now) {
-    candidate = zonedTimeToUtc(nowInMoscow.year + 1, month, day, hour, minute, SCHEDULE_TIME_ZONE)
+    candidate = zonedTimeToUtc(nowZoned.year + 1, month, day, hour, minute, timeZone)
   }
 
   return candidate
@@ -192,7 +202,7 @@ module.exports = {
   getNextLessonDateForSlot,
   getUpcomingLessonDates,
   normalizeScheduleSlots,
-  SCHEDULE_TIME_ZONE,
+  DEFAULT_TIME_ZONE,
   getZonedParts,
   zonedTimeToUtc,
   parseRescheduleDateInput,

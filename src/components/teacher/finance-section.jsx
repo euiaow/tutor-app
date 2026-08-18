@@ -14,6 +14,8 @@ import {
   TeacherDialogDescription,
   TeacherDialogTitle,
 } from "@/components/teacher/theme-ui"
+import { useTimeZone } from "@/lib/user-prefs-context"
+import { auth } from "@/firebase/firebase"
 
 // Same danger/warn/ok split as getBalanceColorClass used to encode via
 // hardcoded Tailwind red/amber/emerald classes, expressed through the
@@ -78,10 +80,10 @@ function AddPaymentDialog({ studentId, open, onOpenChange }) {
   )
 }
 
-function formatLedgerDate(date) {
+function formatLedgerDate(date, timeZone) {
   if (!date) return "—"
   return date.toLocaleDateString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     day: "numeric",
     month: "long",
     hour: "2-digit",
@@ -90,6 +92,7 @@ function formatLedgerDate(date) {
 }
 
 function LedgerEntryRow({ entry }) {
+  const timeZone = useTimeZone()
   const isPayment = entry.type === "payment"
 
   return (
@@ -100,7 +103,7 @@ function LedgerEntryRow({ entry }) {
         </p>
         {entry.note ? <p className="truncate text-xs text-muted-foreground">{entry.note}</p> : null}
       </div>
-      <span className="shrink-0 text-xs text-muted-foreground">{formatLedgerDate(entry.createdAt)}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatLedgerDate(entry.createdAt, timeZone)}</span>
     </li>
   )
 }
@@ -163,7 +166,10 @@ export function FinanceSection({ students }) {
   const [incomeLessons, setIncomeLessons] = useState([])
 
   useEffect(() => {
-    const unsub = subscribeToIncomeLessons(setIncomeLessons, (error) => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsub = subscribeToIncomeLessons(uid, setIncomeLessons, (error) => {
       console.error("Failed to load income lessons:", error)
     })
 

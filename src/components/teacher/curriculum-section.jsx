@@ -22,6 +22,7 @@ import {
   getCurriculumTemplates,
   updateCurriculumTemplate,
 } from "@/firebase/curriculum"
+import { auth } from "@/firebase/firebase"
 
 const EXAM_TARGET_OPTIONS = [
   { value: "ege", label: "ЕГЭ" },
@@ -341,8 +342,11 @@ export function CurriculumSection() {
   const [dialogOpen, setDialogOpen] = useState(false)
 
   function reload() {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     setLoading(true)
-    getCurriculumTemplates()
+    getCurriculumTemplates(uid)
       .then((data) => {
         setTemplates(data)
         setError("")

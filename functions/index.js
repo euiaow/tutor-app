@@ -48,7 +48,7 @@ const {
   updateVideoCallAvailability,
 } = require("./reminders")
 const { createTeacherConnectToken } = require("./core/teacherConnect")
-const { deleteStudent } = require("./core/students")
+const { deleteStudent, updateStudentSettings } = require("./core/students")
 const { addPayment } = require("./core/finance")
 const {
   assignCurriculumTemplate,
@@ -57,6 +57,8 @@ const {
   removePersonalTopic,
   markTopicsCovered,
 } = require("./core/curriculum")
+const { assertOwnsStudent, assertOwnsTemplate } = require("./core/tenancy")
+const { generateTeacherSlug, findTeacherBySlug } = require("./core/teachers")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -76,11 +78,22 @@ function getGoogleOAuthRedirectUri() {
   return `https://${GOOGLE_OAUTH_REGION}-${projectId}.cloudfunctions.net/${GOOGLE_OAUTH_CALLBACK_NAME}`
 }
 
+// Multi-tenancy Phase 1: this callable had no request.auth check at all
+// before — harmless in the single-teacher world (a minted token still needs
+// a real completeRegistration call to do anything), but once the token must
+// carry a teacherId to stamp onto the resulting student doc, an auth check
+// becomes load-bearing rather than optional (there's no uid to read
+// otherwise). Added here as a necessary consequence of Phase 1, not scope
+// creep.
 exports.generateRegistrationLink = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
   const { studentName } = request.data ?? {}
 
   try {
-    const token = await createRegistrationToken(studentName)
+    const token = await createRegistrationToken(studentName, request.auth.uid)
     return { token }
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -92,11 +105,19 @@ exports.generateRegistrationLink = onCall(async (request) => {
   }
 })
 
+// Multi-tenancy Phase 2: same missing-auth-check gap as
+// generateRegistrationLink above, plus an explicit ownership check (this
+// function is named directly in the Phase 2 spec) — a teacher may only
+// cancel their own invite links, never another teacher's.
 exports.cancelRegistrationToken = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
   const { token } = request.data ?? {}
 
   try {
-    await cancelRegistrationToken(token)
+    await cancelRegistrationToken(token, request.auth.uid)
     return { success: true }
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -118,6 +139,7 @@ exports.deleteStudent = onCall(
     const { studentId } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       await deleteStudent(studentId)
       return { success: true }
     } catch (error) {
@@ -141,6 +163,7 @@ exports.updateHomeworkAssignment = onCall(
     const { studentId, lessonId, text, files } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       await updateHomeworkAssignment(studentId, lessonId, { text, files })
       return { success: true }
     } catch (error) {
@@ -164,6 +187,7 @@ exports.addLessonMaterial = onCall(
     const { studentId, lessonId, material } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       await addLessonMaterial(studentId, lessonId, material)
       return { success: true }
     } catch (error) {
@@ -187,6 +211,7 @@ exports.createExtraLesson = onCall(
     const { studentId, date } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       const result = await createExtraLesson(studentId, new Date(date))
       return { success: true, ...result }
     } catch (error) {
@@ -240,6 +265,7 @@ exports.addPayment = onCall(
     const { studentId, lessonsCount, note } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       const newBalance = await addPayment(studentId, lessonsCount, note)
       return { success: true, newBalance }
     } catch (error) {
@@ -261,6 +287,8 @@ exports.assignCurriculumTemplate = onCall(async (request) => {
   const { studentId, templateId } = request.data ?? {}
 
   try {
+    await assertOwnsStudent(studentId, request.auth.uid)
+    await assertOwnsTemplate(templateId, request.auth.uid)
     return await assignCurriculumTemplate(studentId, templateId)
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -289,6 +317,23 @@ exports.setStudentGoal = onCall(async (request) => {
   }
 })
 
+// Student-facing, no request.auth check — same trust model as
+// setStudentGoal above (studentId knowledge). Multi-tenancy Phase 4a.
+exports.updateStudentSettings = onCall(async (request) => {
+  const { studentId, timezone, colorTheme } = request.data ?? {}
+
+  try {
+    return await updateStudentSettings(studentId, { timezone, colorTheme })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to update student settings", error)
+    throw new HttpsError("internal", "Не удалось сохранить настройки")
+  }
+})
+
 // Teacher-only (unlike setStudentGoal above) — editing a student's program
 // is a teacher action, not a student one.
 exports.addPersonalTopic = onCall(async (request) => {
@@ -299,6 +344,7 @@ exports.addPersonalTopic = onCall(async (request) => {
   const { studentId, title, minScoreRequired, type } = request.data ?? {}
 
   try {
+    await assertOwnsStudent(studentId, request.auth.uid)
     return await addPersonalTopic(studentId, { title, minScoreRequired, type })
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -318,6 +364,7 @@ exports.removePersonalTopic = onCall(async (request) => {
   const { studentId, itemId, type } = request.data ?? {}
 
   try {
+    await assertOwnsStudent(studentId, request.auth.uid)
     return await removePersonalTopic(studentId, { itemId, type })
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -337,6 +384,7 @@ exports.markTopicsCovered = onCall(async (request) => {
   const { studentId, lessonId, topicIds, prototypeIds, rating } = request.data ?? {}
 
   try {
+    await assertOwnsStudent(studentId, request.auth.uid)
     return await markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating })
   } catch (error) {
     if (error instanceof HttpsError) {
@@ -360,6 +408,7 @@ exports.ensureUpcomingLesson = onCall(async (request) => {
   }
 
   try {
+    await assertOwnsStudent(studentId, request.auth.uid)
     const lessonId = await ensureUpcomingLesson(studentId)
     return { lessonId }
   } catch (error) {
@@ -388,6 +437,7 @@ exports.getNearestUpcomingLesson = onCall(async (request) => {
     // lesson doc via subscribeToLesson, which already knows how to decode
     // Firestore Timestamps; returning the raw lesson object here would mean
     // hand-rolling that decoding a second time for no benefit.
+    await assertOwnsStudent(studentId, request.auth.uid)
     const lesson = await getNearestUpcomingLesson(studentId)
     return { lessonId: lesson?.id ?? null }
   } catch (error) {
@@ -410,6 +460,7 @@ exports.completeLesson = onCall(
     const { studentId, lessonId, attendance, homeworkDone, rating } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
       return { success: true }
     } catch (error) {
@@ -440,6 +491,9 @@ exports.proposeReschedule = onCall(
     }
 
     try {
+      if (role === "teacher") {
+        await assertOwnsStudent(studentId, request.auth.uid)
+      }
       const date = new Date(proposedDate)
       const rescheduleStatus = await proposeReschedule(studentId, lessonId, date, role)
       return { rescheduleStatus }
@@ -467,6 +521,9 @@ exports.confirmReschedule = onCall(
     }
 
     try {
+      if (role === "teacher") {
+        await assertOwnsStudent(studentId, request.auth.uid)
+      }
       await confirmReschedule(studentId, lessonId, role)
       return { success: true }
     } catch (error) {
@@ -514,6 +571,9 @@ exports.proposeCancellation = onCall(
     }
 
     try {
+      if (role === "teacher") {
+        await assertOwnsStudent(studentId, request.auth.uid)
+      }
       const cancellationStatus = await proposeCancellation(studentId, lessonId, role)
       return { cancellationStatus }
     } catch (error) {
@@ -543,6 +603,9 @@ exports.confirmCancellation = onCall(
     }
 
     try {
+      if (confirmedBy === "teacher") {
+        await assertOwnsStudent(studentId, request.auth.uid)
+      }
       await confirmCancellation(studentId, lessonId, confirmedBy)
       return { success: true }
     } catch (error) {
@@ -569,6 +632,7 @@ exports.cancelLessonDirectly = onCall(
     const { studentId, lessonId } = request.data ?? {}
 
     try {
+      await assertOwnsStudent(studentId, request.auth.uid)
       await cancelLessonDirectly(studentId, lessonId)
       return { success: true }
     } catch (error) {
@@ -616,7 +680,7 @@ exports.generateTeacherConnectToken = onCall(async (request) => {
   const { platform } = request.data ?? {}
 
   try {
-    return await createTeacherConnectToken(platform)
+    return await createTeacherConnectToken(request.auth.uid, platform)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -624,6 +688,43 @@ exports.generateTeacherConnectToken = onCall(async (request) => {
 
     logger.error("Failed to generate teacher connect token", error)
     throw new HttpsError("internal", "Не удалось создать ссылку подключения")
+  }
+})
+
+// Multi-tenancy Phase 3: called once from App.jsx's TeacherRoute bootstrap,
+// only when teachers/{uid} doesn't exist yet — needs admin-SDK read access
+// across every teacher's doc to check slug uniqueness, which the per-teacher
+// Firestore Rules (Phase 2) deliberately don't grant a single signed-in
+// teacher via a direct client query.
+exports.generateTeacherSlug = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { name } = request.data ?? {}
+
+  try {
+    const slug = await generateTeacherSlug(name || request.auth.uid)
+    return { slug }
+  } catch (error) {
+    logger.error("Failed to generate teacher slug", error)
+    throw new HttpsError("internal", "Не удалось сгенерировать адрес страницы")
+  }
+})
+
+// Public — no request.auth. Backs the /app/:slug landing page: a
+// prospective student has no Firebase Auth session at all. Only the
+// minimal public fields cross the wire (see core/teachers.js's
+// findTeacherBySlug), never the full teachers/{uid} profile.
+exports.getTeacherBySlug = onCall(async (request) => {
+  const { slug } = request.data ?? {}
+
+  try {
+    const teacher = await findTeacherBySlug(slug)
+    return { teacher }
+  } catch (error) {
+    logger.error("Failed to look up teacher by slug", error)
+    throw new HttpsError("internal", "Не удалось найти страницу")
   }
 })
 
@@ -719,7 +820,7 @@ exports.startGoogleOAuth = onCall(
     await db
       .collection(OAUTH_STATES_COLLECTION)
       .doc(state)
-      .set({ createdAt: FieldValue.serverTimestamp() })
+      .set({ teacherId: request.auth.uid, createdAt: FieldValue.serverTimestamp() })
 
     const authUrl = getAuthUrl(getGoogleOAuthRedirectUri(), state)
 
@@ -749,7 +850,7 @@ exports.googleOAuthCallback = onRequest(
       return
     }
 
-    const createdAt = stateSnapshot.data().createdAt
+    const { createdAt, teacherId } = stateSnapshot.data()
     await stateRef.delete()
 
     const ageMs = Date.now() - (createdAt?.toMillis() ?? 0)
@@ -759,13 +860,19 @@ exports.googleOAuthCallback = onRequest(
       return
     }
 
+    if (!teacherId) {
+      logger.error("Google OAuth callback: oauthStates doc has no teacherId (pre-multi-tenancy state?)")
+      res.status(400).send("Не удалось определить преподавателя для подключения")
+      return
+    }
+
     try {
       const client = buildOAuthClient(getGoogleOAuthRedirectUri())
       const { tokens } = await client.getToken(String(code))
 
-      await saveTokens(tokens)
+      await saveTokens(teacherId, tokens)
 
-      logger.info("Google Calendar connected successfully")
+      logger.info("Google Calendar connected successfully", { teacherId })
     } catch (error) {
       logger.error("Failed to exchange Google OAuth code for tokens", error)
       res.status(500).send("Не удалось подключить Google Calendar")
@@ -781,7 +888,7 @@ exports.getGoogleCalendarStatus = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
   }
 
-  const connected = await isConnected()
+  const connected = await isConnected(request.auth.uid)
 
   return { connected }
 })
@@ -794,7 +901,7 @@ exports.disconnectGoogleCalendar = onCall(
     }
 
     try {
-      await disconnectGoogleCalendar()
+      await disconnectGoogleCalendar(request.auth.uid)
       return { success: true }
     } catch (error) {
       logger.error("Failed to disconnect Google Calendar", error)
@@ -813,7 +920,7 @@ exports.getCalendarEmbedInfo = onCall(
     logger.info("getCalendarEmbedInfo called", { uid: request.auth?.uid })
 
     try {
-      const client = await getAuthorizedClient()
+      const client = await getAuthorizedClient(request.auth.uid)
       const oauth2 = google.oauth2({ version: "v2", auth: client })
       const { data } = await oauth2.userinfo.get()
 
@@ -909,6 +1016,15 @@ exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
       return
     }
 
+    if (!after.teacherId) {
+      // Multi-tenancy Phase 1: legacy student doc predating the teacherId
+      // backfill (Phase 5) — skip rather than sync against no known
+      // teacher's calendar. Loud on purpose: this should only ever fire for
+      // pre-Phase-5 data, never for a newly created student.
+      logger.warn("Google Calendar sync: skip, student has no teacherId (pre-Phase-5 legacy doc)", { studentId })
+      return
+    }
+
     if (afterSlots.length === 0) {
       const existingEventIds = before?.googleEventIds ?? {}
       const legacyEventId = before?.googleEventId ?? null
@@ -923,7 +1039,7 @@ exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
 
       for (const eventId of eventIdsToDelete) {
         try {
-          await deleteLessonEvent(eventId)
+          await deleteLessonEvent(after.teacherId, eventId)
         } catch (error) {
           logger.error("Google Calendar sync: delete failed", { studentId, action: "delete", eventId, error })
         }
@@ -934,7 +1050,7 @@ exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
     }
 
     try {
-      await syncScheduleSlots(studentId, after, afterSnapshot.ref)
+      await syncScheduleSlots(after.teacherId, studentId, after, afterSnapshot.ref)
       logger.info("Google Calendar sync: slots synced", { studentId, slotCount: afterSlots.length })
     } catch (error) {
       logger.error("Google Calendar sync: failed", { studentId, error })

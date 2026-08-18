@@ -18,6 +18,7 @@ const STUDENTS_COLLECTION = "students"
 
 const deleteStudentCallable = httpsCallable(functions, "deleteStudent")
 const setStudentGoalCallable = httpsCallable(functions, "setStudentGoal")
+const updateStudentSettingsCallable = httpsCallable(functions, "updateStudentSettings")
 
 export function mapStudentDoc(id, data) {
   return {
@@ -42,6 +43,8 @@ export function mapStudentDoc(id, data) {
     curriculumSourceTemplateId: data.curriculumSourceTemplateId ?? null,
     targetScore: data.targetScore ?? null,
     examDate: data.examDate ?? null,
+    timezone: data.timezone ?? null,
+    colorTheme: data.colorTheme ?? null,
   }
 }
 
@@ -61,11 +64,18 @@ export function subscribeToStudent(studentId, onData, onError) {
   )
 }
 
-export function subscribeToStudents(onData, onError) {
+// Multi-tenancy: students/{id}'s Firestore Rule is intentionally
+// `allow read: if true` (an unauthenticated student needs to read their own
+// card by id — see CLAUDE.md's architecture note), so Rules can never scope
+// this list down on their own the way they will for lessons/
+// curriculumProgress/balanceLedger/curriculumTemplates once Phase 2's draft
+// rules are published. teacherId filtering has to live in the query itself.
+export function subscribeToStudents(teacherId, onData, onError) {
   const ref = collection(db, STUDENTS_COLLECTION)
+  const studentsQuery = query(ref, where("teacherId", "==", teacherId))
 
   return onSnapshot(
-    ref,
+    studentsQuery,
     (snapshot) => {
       const students = snapshot.docs.map((document) =>
         mapStudentDoc(document.id, document.data()),
@@ -127,6 +137,12 @@ export async function setStudentGoal(studentId, targetScore, examDate) {
     targetScore: targetScore === "" || targetScore === null ? null : Number(targetScore),
     examDate: examDate ? examDate.toISOString() : null,
   })
+}
+
+// Student-facing, no request.auth — same trust model (studentId knowledge)
+// as setStudentGoal above. Multi-tenancy Phase 4a.
+export async function updateStudentSettings(studentId, { timezone, colorTheme }) {
+  await updateStudentSettingsCallable({ studentId, timezone, colorTheme })
 }
 
 // Backend does the real work (Google Calendar event, lessons subcollection

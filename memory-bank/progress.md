@@ -240,11 +240,130 @@
   `window.confirm`→custom dialog for registration deletion, Финансы
   "Оплачено" font size, and `TeacherLogin`'s visual redesign (matching the
   student `LoginScreen`'s grain background + glass card, rose accent
-  instead of orange) — all session 10, see `activeContext.md`.
+  instead of orange) — all session 10, see `changelog/2026-08-august.md`.
+- **Google Calendar disconnect (session 11)** — `disconnectGoogleCalendar`
+  callable mirrors the existing bot-disconnect UX: best-effort token
+  revoke with Google, deletes `integrations/googleCalendar`, batch-clears
+  every student's `googleEventIds` so a reconnect (same or different
+  Google account) creates fresh calendar events instead of erroring on
+  stale ids. Frontend confirmation dialog matches `DeleteStudentDialog`'s
+  shape. See [[systemPatterns]]/[[activeContext]] for the deploy-gap bug
+  this surfaced (function was written but never actually deployed) and
+  its own new failure-class writeup in [[techContext]].
+- **Student PIN (`accessCode`) shown on the teacher's card (session
+  11)** — "Пароль" row added to `student-row.jsx`'s expanded block;
+  required adding `accessCode` to `mapStudentDoc`, which had been
+  silently omitting it the same way `platform`/`telegramChatId`/etc. were
+  once omitted (session 7). See [[systemPatterns]].
+- **`ContactButton` native-app handoff fix (session 11)** — "Написать" now
+  navigates via a real `<a href>` (new `ContactLink` component) instead of
+  a scripted `window.open()`, so mobile browsers reliably hand off to the
+  installed Telegram/VK app via custom scheme / App Link instead of
+  opening the in-browser fallback. `getContactUrl` unchanged. Not yet
+  verified on a real device — see [[activeContext]].
+- **Mobile-layout pass (session 11)** — teacher header hides its text
+  block below `md:`; Финансы, Ожидают регистрации, and (in a same-session
+  follow-up) Ученики rows all switched from a squeeze-prone single-line
+  `flex-wrap` row to `flex-col`/`sm:flex-row` (full name on top, content
+  below on mobile); Финансы gained mobile-only "Оплачено:"/"Ставка:"
+  inline labels; "Посмотреть все уроки" (student page) and "Следующие
+  уроки" (teacher's Ученики list) both shrink to shorter mobile-only
+  labels below `sm:`. Desktop layout untouched in every case. See
+  [[systemPatterns]] for the reusable row-stacking pattern this
+  established.
+- **Telegram-only contact-editing UX (session 11)** — teacher can now type
+  a bare Telegram username (with light forgiving parsing for `@handle` or
+  a pasted `t.me/...` link) instead of a full URL when overriding a
+  student's contact link; VK/other platforms still take a full URL,
+  unchanged. `students/{id}.contactUrl` storage format is unchanged —
+  only the teacher-facing input format changed. New helpers in
+  `src/lib/contact.js`: `extractTelegramUsername`/`buildTelegramContactUrl`.
+
+- **Multi-tenancy (session 12)** — the app is now genuinely multi-teacher,
+  not single-teacher-with-scaffolding: Phases 1–3 (per-teacher slugs,
+  `/app/:slug` public landing, per-teacher bot self-service signup,
+  `teacherConnectTokens`) confirmed intact post-crash; Phase 4a adds a
+  per-user Settings dialog (timezone + pink/amber color theme) for both
+  teacher and student, backed by `teachers/{uid}.timezone`/`.colorTheme`
+  and `students/{id}.timezone`/`.colorTheme`. A hardcoded-single-teacher
+  login bug (`TEACHER_EMAIL` constant in `TeacherLogin.jsx`) that silently
+  blocked every teacher but the first from logging in was found and fixed
+  in the same session. See [[activeContext]] for full detail; scope
+  boundary in `projectbrief.md` updated to reflect this.
+- **Firestore Rules published this session, no longer a permissive
+  placeholder** — surfaced (and fixed) a real tenant-isolation bug class:
+  six list/collectionGroup queries across the app (students, pending
+  registration tokens, curriculum templates, upcoming/completed/income
+  lessons, curriculum progress summaries) had no explicit `teacherId`
+  filter and relied on Rules to scope them down — which Rules structurally
+  cannot do for `students` (its own Rule is `allow read: if true`) and,
+  it turns out, *rejects the whole query* rather than filtering silently
+  for the collectionGroup ones once a real ownership check is in place.
+  All six fixed with explicit `.where("teacherId", "==", uid)`; new
+  composite Firestore indexes added for the `lessons` collectionGroup
+  queries. See [[systemPatterns]] for the reusable pattern and
+  [[techContext]] for the Rules-status change and the single-field-index
+  `fieldOverrides` gotcha this surfaced.
+- **Timezone handling fully reworked (session 12)** — every date a user
+  types or reads is now interpreted/displayed in *their own* saved
+  timezone, with `Europe/Moscow` only as a no-value fallback, no data-type
+  exceptions. This reverses an earlier decision (kept in this same
+  session) that schedule slots were permanently Moscow wall-clock time —
+  schedule is now interpreted in the *teacher's* timezone specifically
+  (they're the one setting it), reschedule/extra-lesson forms in the
+  *actor's* timezone, and every one of the ~15 bot-message builders in
+  `botMessages.js` in the *recipient's* timezone, resolved centrally by
+  `createNotification`. See [[activeContext]] for the full list of files
+  touched and [[systemPatterns]] for the reusable conversion helpers.
+- **Extra-lesson Google Calendar sync bug fixed (session 12)** —
+  `confirmReschedule`/`confirmCancellation`/`cancelLessonDirectly` used to
+  default to slot 0's recurring calendar event for any lesson without a
+  real `slotIndex`, silently missing (or wrongly touching) an extra
+  lesson's own event. Fixed with a shared `resolveLessonEventId` helper.
+- **ExamRadar "no data yet" state fixed (session 12)** — a goal just set
+  with zero lesson history used to render as `status: "red"` /
+  "Критическое отставание" with only the comment text patched to sound
+  calmer; now has its own `no_data` status with a neutral color token.
+- Curriculum topic picker in `HomeworkLessonDialog`'s upcoming mode
+  (session 12) — optional dropdown of uncovered `curriculumProgress`
+  topics above the free-text "Тема урока" field, fills the field as an
+  editable default when a program is assigned.
+- `MyGoalCard` now branches by `examTarget` (session 12) — "Целевая
+  оценка" 2–5 for ОГЭ vs. the original "Целевой балл" 0–100 for ЕГЭ.
 
 ## Known issues / open items
 
 - No automated test suite in the repo.
+- **Still nothing committed to git — 67 uncommitted files as of session
+  12**, the largest pile yet (all of multi-tenancy Phase 4a + the full
+  timezone rewrite). Standing risk flagged every session since session 9's
+  regression scare; worth raising explicitly with the user.
+- **VK bot connect status indicator and the video-call link save/read
+  path — plausibly affected by the same session-12 Rules-publish event
+  that broke six other queries, not independently confirmed either way.**
+  `TeacherBotConnectStatus` now surfaces its read error visibly instead of
+  silently defaulting to "не подключён" (was `console.error`-only before);
+  next session should check what error code it actually shows, if any.
+  See [[activeContext]].
+- `notifications/` collection has the same list-query tenant-isolation
+  shape as the six fixed this session, but was explicitly left alone per
+  user instruction — a known, deliberately-deferred gap, not forgotten.
+- **Third deploy-failure-mode class (session 11), distinct from the other
+  two below: a function can be fully written and correct but never
+  actually included in a `firebase deploy --only functions...` command**
+  — happens when work spans turns that included an explicit "don't
+  deploy yet" instruction and a later deploy only targeted `hosting`.
+  Surfaces identically to the other two classes (generic `internal`
+  error) but diagnosed differently: check `firebase functions:list` for
+  the function's presence *before* checking secrets arrays or IAM
+  bindings. See [[techContext]].
+- **Session 11 items deployed but not yet manually verified by the
+  user**: `disconnectGoogleCalendar`'s actual disconnect→reconnect flow;
+  `ContactButton`'s native-app handoff (needs a real phone, can't be
+  checked from this environment at all); the mobile-layout pass at
+  ~375px across all five touched areas; the Telegram username
+  contact-editing form's 4-point checklist. See [[activeContext]] for
+  each item's exact verification steps.
 - **New infra-level failure class found session 10, distinct from the
   missing-secrets bug (session 5): a Cloud Function's Cloud Run service
   can silently lose its `allUsers`/`roles/run.invoker` IAM binding**,

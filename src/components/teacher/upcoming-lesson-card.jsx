@@ -25,24 +25,18 @@ import {
   rejectCancellation,
 } from "@/firebase/lessons"
 import { formatLessonDateTime } from "@/lib/schedule"
+import { useTimeZone } from "@/lib/user-prefs-context"
+import { localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
 
 // Shared by TeacherDashboard.jsx's "Ближайшие уроки" (all students) and
 // student-row.jsx's UpcomingLessonsListDialog (one student's next few weeks)
 // — moved out of TeacherDashboard.jsx so both can reuse the exact same row/
 // dialog logic instead of two copies drifting apart.
 
-// datetime-local inputs want "YYYY-MM-DDTHH:mm" in the device's local
-// timezone, not UTC — offsetting by getTimezoneOffset() before calling
-// toISOString() (which is always UTC) gets that local wall-clock string.
-function toDatetimeLocal(date) {
-  const offset = date.getTimezoneOffset() * 60000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
-
-function formatRescheduleDate(date) {
+function formatRescheduleDate(date, timeZone) {
   if (!date) return ""
   return date.toLocaleString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -56,8 +50,9 @@ function formatRescheduleDate(date) {
 // the lesson's current date fresh each time, without needing an effect to
 // resync state that React already owns.
 export function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+  const timeZone = useTimeZone()
   const [initialDatePart, initialTimePart] = initialDate
-    ? toDatetimeLocal(initialDate).split("T")
+    ? utcDateToLocalInput(initialDate, timeZone).split("T")
     : ["", ""]
   const [date, setDate] = useState(initialDatePart)
   const [time, setTime] = useState(initialTimePart)
@@ -80,7 +75,7 @@ export function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
     setSubmitting(true)
     setError("")
     try {
-      const proposedDate = new Date(`${date}T${time}:00`)
+      const proposedDate = localInputsToUtcDate(date, time, timeZone)
       await proposeReschedule(studentId, lessonId, proposedDate)
       handleOpenChange(false)
     } catch (err) {
@@ -127,6 +122,7 @@ export function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
 }
 
 export function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+  const timeZone = useTimeZone()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [cancelDirectly, setCancelDirectly] = useState(false)
@@ -164,8 +160,8 @@ export function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOp
         <TeacherDialogTitle>Отменить урок</TeacherDialogTitle>
         <TeacherDialogDescription>
           {cancelDirectly
-            ? `Урок${lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""} будет отменён сразу, без запроса подтверждения у ученика.`
-            : `Вы уверены, что хотите предложить отменить урок${lessonDate ? ` ${formatRescheduleDate(lessonDate)}` : ""}?`}
+            ? `Урок${lessonDate ? ` ${formatRescheduleDate(lessonDate, timeZone)}` : ""} будет отменён сразу, без запроса подтверждения у ученика.`
+            : `Вы уверены, что хотите предложить отменить урок${lessonDate ? ` ${formatRescheduleDate(lessonDate, timeZone)}` : ""}?`}
         </TeacherDialogDescription>
 
         <label className="mt-4 flex items-start gap-2.5 text-sm text-ink">
@@ -200,6 +196,7 @@ export function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOp
 }
 
 export function UpcomingLessonCard({ lesson, studentName, student }) {
+  const timeZone = useTimeZone()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
@@ -325,16 +322,16 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
                 {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
                   <>
                     <span className="line-through">
-                      {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                      {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
                     </span>
                     <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
                     <span className="font-semibold text-foreground">
-                      {formatLessonDateTime(lesson.rescheduleProposedDate)}
+                      {formatLessonDateTime(lesson.rescheduleProposedDate, timeZone)}
                     </span>
                   </>
                 ) : (
                   <>
-                    {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date)}
+                    {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
                     {lesson.rescheduled ? <span className="ml-1 font-semibold text-rose-deep">перенесён</span> : null}
                   </>
                 )}

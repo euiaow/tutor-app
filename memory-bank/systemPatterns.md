@@ -142,13 +142,18 @@ src/
   `googleEventIds` map is keyed by slot index and has no slot to key an
   extra lesson under.
 - **`mapStudentDoc` (`src/firebase/students.js`) now exposes
-  `platform`/`telegramChatId`/`vkPeerId`/`contactUrl`** — previously the
-  client-side student object silently dropped these Firestore fields even
-  though they exist on the doc (only used server-side for bot routing
-  before). Added when building `getContactUrl` (`src/lib/contact.js`),
-  since without them there was nothing to derive a contact link from
-  client-side. Any future feature reading a student's bot-linkage should
-  read it off the mapped object rather than re-querying Firestore directly.
+  `platform`/`telegramChatId`/`vkPeerId`/`contactUrl`/`accessCode`** —
+  previously the client-side student object silently dropped these
+  Firestore fields even though they exist on the doc. `platform`/
+  `telegramChatId`/`vkPeerId`/`contactUrl` were added when building
+  `getContactUrl` (`src/lib/contact.js`); `accessCode` (the student's
+  no-auth login PIN) was added in session 11 to power a "Пароль" display
+  on the teacher's student card, hitting the exact same gap a second time.
+  **`mapStudentDoc`'s explicit field list, not Firestore itself, is the
+  actual gate on whether a field reaches the UI** — any future feature
+  reading a new student field must check this function first, since a
+  field existing on the Firestore doc is not sufficient for the client
+  object to expose it.
 - **No shadcn `DropdownMenu` existed before `ContactButton`** — built the
   smallest usable wrapper (`src/components/ui/dropdown-menu.jsx`) directly
   on `@base-ui/react`'s `Menu` primitive, the same library `dialog.jsx` and
@@ -473,6 +478,155 @@ src/
   keyboard that needs to encode more than one Firestore id in
   `callback_data` should budget for this limit up front, not discover it
   after building the keyboard.**
+
+- **An unexpectedly large or feature-*regressing* uncommitted diff should
+  be diffed against recent commit history before being treated as new
+  work.** Session 11 opened with one uncommitted file
+  (`homework-lesson-dialog.jsx`) whose diff, read at face value, looked
+  like a plausible-if-ugly rewrite (generic shadcn `Dialog` instead of the
+  themed one, missing curriculum checklist, missing cancelled-lesson
+  block). `git diff <candidate-commit> -- <file>` against a few recent
+  commits found an exact match to a commit from ~8 commits back — it was
+  a silent revert, not new work. **Any time a working-tree diff looks like
+  it's *removing* already-shipped functionality, check
+  `git log --oneline -- <file>` and diff against a few candidates before
+  assuming the diff is intentional** — this project's git history (see
+  [[techContext]]) makes that check cheap and it caught real lost work
+  here.
+- **A real `<a href>` (not a programmatic `window.open()`) is required for
+  reliable native-app handoff on mobile.** `ContactButton`/
+  `ContactIconButton` (`contact-button.jsx`) originally routed "Написать"
+  through `openExternalLink` (`src/lib/telegramWebApp.js`), whose
+  non-Mini-App fallback is `window.open(url, "_blank", ...)` — mobile
+  browsers don't reliably hand a *scripted* `window.open()` call off to an
+  installed app via a custom scheme (`tg://user?id=...`) or App/Universal
+  Link, only a genuine user click on a real anchor element does. Fixed
+  with a new `ContactLink` component: renders a real `<a href={url}
+  target="_blank" rel="noopener noreferrer">`, but still intercepts the
+  click (`e.preventDefault()` + `window.Telegram.WebApp.openLink(url)`)
+  specifically inside the Telegram Mini App, since that's the SDK's own
+  sanctioned navigation path, not the bug. **Any future "open this
+  contact/external link" button must render as (or programmatically click)
+  a real `<a href>`, never call `window.open()` directly from an
+  `onClick`** — `openExternalLink` itself is unchanged and still used
+  elsewhere (video-call buttons, `PublicLanding.jsx`); this fix only
+  applies to the two contact-button call sites so far.
+- **Mobile row-squeeze fix: `flex-col` + `sm:flex-row`, `sm:truncate`
+  instead of unconditional `truncate`, `sm:contents` for mobile-only inline
+  labels.** Established across three list rows this session
+  (`finance-section.jsx`, `pending-registrations.jsx`,
+  `student-row.jsx`'s collapsed row) that used to be a single
+  `flex-wrap items-center` row with a `flex-1 min-w-0` name/label column
+  next to a `shrink-0` button/value group — that combination never
+  actually wraps on a narrow screen (the flex-1 side just shrinks/
+  truncates instead), which reads as "the row squeezed instead of
+  stacking." Fix: the row container becomes `flex flex-col gap-*
+  sm:flex-row sm:flex-wrap sm:items-center sm:gap-*`; the identifying
+  name/label keeps `truncate` only via `sm:truncate` (full text on
+  mobile, truncated again once the desktop single-line layout kicks in);
+  secondary content (progress bar, buttons, values) lands in a second
+  block that's naturally full-width on mobile and rejoins the row at
+  `sm:`+. For adding an inline label next to a value that should only
+  show on mobile (Финансы's "Оплачено:"/"Ставка:"), wrap `<label
+  span>+<value span>` in an outer `<span className="flex items-center
+  gap-1.5 sm:contents">` — `sm:contents` makes the wrapper disappear from
+  layout at `sm:`+ so the value span rejoins the desktop row exactly as
+  before (same fixed width/alignment classes), while the label
+  (`sm:hidden`) only ever shows below that breakpoint. **Reach for this
+  exact shape (not a fresh one-off) the next time a list row squeezes
+  instead of stacking on mobile.**
+
+- **A `students/{id}`-style Rule that's intentionally `allow read: if true`
+  (for an unauthenticated actor to read their own doc) means Rules can
+  *never* scope a `list` query on that collection down by owner — the
+  `teacherId` filter has to live explicitly in the client query itself,
+  every time, not be assumed to come free from the security rule.**
+  Confirmed twice this session (session 12): `subscribeToStudents()` and
+  `subscribeToPendingRegistrationTokens()` were both plain unfiltered list
+  queries. Fixed by adding `.where("teacherId", "==", teacherId)`
+  explicitly and making `teacherId` a required first param on both. Any
+  future list query against a collection whose Rule has to stay open for
+  an unauthenticated read must follow this same shape.
+- **A `collectionGroup`/list query whose security rule checks
+  `resource.data.teacherId` is rejected outright (the whole query, not a
+  silent per-document filter) unless the query itself is provably scoped
+  on that same field via an explicit `where`.** Confirmed via real
+  `permission-denied` browser-console errors (session 12, right after
+  Firestore Rules were published for the first time — see
+  [[techContext]]): `getCurriculumTemplates`, `subscribeToUpcomingLessons`,
+  `subscribeToCompletedLessons`, `subscribeToIncomeLessons`,
+  `getAllCompletedLessons`, `getAllCurriculumProgressByStudent`
+  (collectionGroup `curriculumProgress`) all had this shape and all threw
+  identically. Fixed uniformly: every one of these now takes `teacherId`
+  as an explicit param and adds `where("teacherId", "==", teacherId)`
+  alongside its existing filters — a lesson's own `teacherId` field
+  (denormalized onto every lesson doc since multi-tenancy Phase 1) makes
+  this possible without an extra join. **Any new list/collectionGroup
+  query added to this app must include this filter from the start**, not
+  discover the gap only after Rules enforcement catches it.
+- **Firestore composite indexes and single-field indexes are configured in
+  two different places in `firestore.indexes.json` — mixing them up 400s.**
+  Adding `teacherId` as a query field alongside `status`/`date` on the
+  `lessons` collectionGroup needed a real composite index entry under
+  `"indexes"`. But `curriculumProgress`'s query (`teacherId ==` alone, no
+  `orderBy`) is a *single-field* equality filter — submitting it as an
+  `"indexes"` entry got a real `HTTP 400: this index is not necessary,
+  configure using single field index controls` from the Firestore API.
+  Single-field collectionGroup index config belongs under
+  `"fieldOverrides"` instead (`{collectionGroup, fieldPath, indexes: [{order,
+  queryScope: "COLLECTION_GROUP"}]}`). Rule of thumb: a query filter on
+  exactly one field with no `orderBy`/second field never needs a composite
+  index entry.
+- **Timezone conversion for user-entered date/time input is centralized in
+  `src/lib/timezone.js`** (`localInputsToUtcDate`/`datetimeLocalToUtcDate`/
+  `utcDateToLocalInput`), reusing the project's existing hand-rolled
+  `zonedTimeToUtc`/`getZonedParts` math from `src/lib/schedule.js` (now
+  exported) rather than adding `date-fns-tz` as a dependency — the
+  existing code already implements the identical algorithm the library
+  would (re-measure the zone's offset at a guessed instant, correct for
+  it). Every form where a user types a date/time (reschedule proposal on
+  either dashboard, the extra-lesson dialog) converts through these,
+  interpreting the input as wall-clock time in *that user's own* saved
+  timezone (`teachers/{uid}.timezone`/`students/{id}.timezone`, via
+  `useTimeZone()` — see below), never the device's timezone. Established
+  session 12, reversing an earlier same-session decision that schedule
+  slots were permanently Moscow wall-clock time.
+- **`src/lib/user-prefs-context.jsx`'s `UserPrefsProvider`/`useTimeZone`/
+  `useThemeClass`** is the shared per-viewer-preference context both
+  dashboards mount near their root (resolved from the signed-in user's own
+  `timezone`/`colorTheme` profile fields, with `Europe/Moscow`/no-theme-
+  class fallbacks for a profile that's never opened Settings) — every
+  component that formats a date for display or needs the current color
+  theme's scope class reads these hooks instead of receiving props
+  threaded down manually. Falls back safely (device timezone / no theme
+  class) if called outside a Provider, though that should never happen in
+  practice.
+- **`functions/core/notifier.js`'s `createNotification` resolves the
+  *recipient's* timezone itself and accepts `text` as either a plain
+  string or a `(timeZone) => string` builder function** — added session 12
+  so the ~15 message-builders in `botMessages.js` that format a lesson
+  date/time can render in each recipient's own saved timezone, including
+  the common case where the *same event* fires one notification to the
+  student and a separate one to the teacher and the two are in different
+  zones (previously one shared pre-built string was reused for both).
+  Resolution: `target: "student"` reads `studentData.timezone` (the same
+  student-doc read this funnel already did for teacherId resolution, now
+  reused rather than doubled), `target: "teacher"` reads
+  `teachers/{teacherId}.timezone`. Falls back to `Europe/Moscow` only as a
+  no-value-saved-yet default, same as the frontend's identical fallback in
+  `lib/timezone.js`.
+- **`resolveLessonEventId(lesson, student)`** (`functions/core/lessons.js`)
+  is the one place that decides which Google Calendar event id a given
+  lesson doc's reschedule/cancellation should touch — added session 12
+  after confirming `confirmReschedule`/`confirmCancellation`/
+  `cancelLessonDirectly` were all independently defaulting `slotIndex` to
+  `0` and reading `student.googleEventIds[0]` for any lesson lacking a
+  real slot index, which for an extra (unscheduled) lesson either found
+  nothing or silently touched **slot 0's own recurring event** instead of
+  the extra lesson's. Returns `lesson.googleEventId` directly when
+  `lesson.isExtraLesson`, the slot-indexed lookup otherwise. Any future
+  code resolving a lesson's calendar event id must use this, not
+  re-derive the slot-index lookup inline.
 
 ## Component relationships
 

@@ -7,8 +7,10 @@ const { db } = require("./firestore")
 const GOOGLE_OAUTH_CLIENT_ID = defineSecret("GOOGLE_OAUTH_CLIENT_ID")
 const GOOGLE_OAUTH_CLIENT_SECRET = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET")
 
-const INTEGRATIONS_COLLECTION = "integrations"
+const TEACHERS_COLLECTION = "teachers"
+const INTEGRATIONS_SUBCOLLECTION = "integrations"
 const GOOGLE_CALENDAR_DOC_ID = "googleCalendar"
+const STUDENTS_COLLECTION = "students"
 // userinfo.email is required so getCalendarEmbedInfo can resolve the
 // connected account's email via oauth2("v2").userinfo.get() — a
 // calendar-only token can't authenticate against that endpoint at all
@@ -18,8 +20,12 @@ const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ]
 
-function getIntegrationRef() {
-  return db.collection(INTEGRATIONS_COLLECTION).doc(GOOGLE_CALENDAR_DOC_ID)
+// Multi-tenancy Phase 1: moved from the old singleton integrations/googleCalendar
+// to a per-teacher path — every function here now takes teacherId explicitly
+// (see functions/index.js's callers, which source it from request.auth.uid or,
+// for the Firestore trigger, from the student doc's own teacherId).
+function getIntegrationRef(teacherId) {
+  return db.collection(TEACHERS_COLLECTION).doc(teacherId).collection(INTEGRATIONS_SUBCOLLECTION).doc(GOOGLE_CALENDAR_DOC_ID)
 }
 
 function buildOAuthClient(redirectUri) {
@@ -44,7 +50,7 @@ function getAuthUrl(redirectUri, state) {
   return authUrl
 }
 
-async function saveTokens(tokens) {
+async function saveTokens(teacherId, tokens) {
   const { refresh_token: refreshToken, access_token: accessToken, expiry_date: expiryDate } = tokens
 
   const data = {
@@ -60,13 +66,13 @@ async function saveTokens(tokens) {
     data.refresh_token = refreshToken
   }
 
-  await getIntegrationRef().set(data, { merge: true })
+  await getIntegrationRef(teacherId).set(data, { merge: true })
 
-  logger.info("Google Calendar tokens saved", { hasRefreshToken: Boolean(refreshToken) })
+  logger.info("Google Calendar tokens saved", { teacherId, hasRefreshToken: Boolean(refreshToken) })
 }
 
-async function getAuthorizedClient() {
-  const snapshot = await getIntegrationRef().get()
+async function getAuthorizedClient(teacherId) {
+  const snapshot = await getIntegrationRef(teacherId).get()
   const data = snapshot.exists ? snapshot.data() : null
 
   if (!data || !data.refresh_token) {
@@ -75,6 +81,7 @@ async function getAuthorizedClient() {
 
   // TEMP diagnostics: only presence/shape, never the token values themselves.
   logger.info("getAuthorizedClient: stored token shape", {
+    teacherId,
     hasRefreshToken: Boolean(data.refresh_token),
     hasAccessToken: Boolean(data.access_token),
     hasExpiryDate: Boolean(data.expiry_date),
@@ -90,8 +97,8 @@ async function getAuthorizedClient() {
   })
 
   client.on("tokens", (tokens) => {
-    saveTokens(tokens).catch((error) => {
-      logger.error("Failed to persist refreshed Google Calendar tokens", error)
+    saveTokens(teacherId, tokens).catch((error) => {
+      logger.error("Failed to persist refreshed Google Calendar tokens", { teacherId, error })
     })
   })
 
@@ -101,29 +108,30 @@ async function getAuthorizedClient() {
   // Authorization header.
   try {
     const { token } = await client.getAccessToken()
-    logger.info("getAuthorizedClient: getAccessToken resolved", { hasToken: Boolean(token) })
+    logger.info("getAuthorizedClient: getAccessToken resolved", { teacherId, hasToken: Boolean(token) })
   } catch (error) {
-    logger.error("getAuthorizedClient: getAccessToken failed", error)
+    logger.error("getAuthorizedClient: getAccessToken failed", { teacherId, error })
     throw error
   }
 
   return client
 }
 
-async function isConnected() {
-  const snapshot = await getIntegrationRef().get()
+async function isConnected(teacherId) {
+  const snapshot = await getIntegrationRef(teacherId).get()
   return Boolean(snapshot.exists && snapshot.data().refresh_token)
 }
 
-// Clears both the stored tokens and every student's stale googleEventIds —
-// without the latter, reconnecting (especially under a different Google
-// account) would try to update events by ids that no longer exist instead
-// of creating fresh ones. Token revocation with Google is best-effort: a
-// failure there (already-revoked token, network hiccup) must never block
-// the local cleanup, which is the part that actually matters for a clean
-// reconnect.
-async function disconnectGoogleCalendar() {
-  const integrationSnapshot = await getIntegrationRef().get()
+// Clears both the stored tokens and every one of THIS teacher's students'
+// stale googleEventIds (scoped by teacherId — a multi-tenant deployment must
+// never touch another teacher's students here) — without the latter,
+// reconnecting (especially under a different Google account) would try to
+// update events by ids that no longer exist instead of creating fresh ones.
+// Token revocation with Google is best-effort: a failure there (already-
+// revoked token, network hiccup) must never block the local cleanup, which
+// is the part that actually matters for a clean reconnect.
+async function disconnectGoogleCalendar(teacherId) {
+  const integrationSnapshot = await getIntegrationRef(teacherId).get()
   const refreshToken = integrationSnapshot.exists ? integrationSnapshot.data().refresh_token : null
 
   if (refreshToken) {
@@ -131,15 +139,15 @@ async function disconnectGoogleCalendar() {
       const client = buildOAuthClient()
       client.setCredentials({ refresh_token: refreshToken })
       await client.revokeToken(refreshToken)
-      logger.info("Google Calendar token revoked with Google")
+      logger.info("Google Calendar token revoked with Google", { teacherId })
     } catch (error) {
-      logger.warn("Failed to revoke Google Calendar token with Google (continuing anyway)", error)
+      logger.warn("Failed to revoke Google Calendar token with Google (continuing anyway)", { teacherId, error })
     }
   }
 
-  await getIntegrationRef().delete()
+  await getIntegrationRef(teacherId).delete()
 
-  const studentsSnapshot = await db.collection("students").get()
+  const studentsSnapshot = await db.collection(STUDENTS_COLLECTION).where("teacherId", "==", teacherId).get()
   const batch = db.batch()
   studentsSnapshot.docs.forEach((studentDoc) => {
     batch.update(studentDoc.ref, {
@@ -149,7 +157,7 @@ async function disconnectGoogleCalendar() {
   })
   await batch.commit()
 
-  logger.info("Google Calendar disconnected", { studentsCleared: studentsSnapshot.size })
+  logger.info("Google Calendar disconnected", { teacherId, studentsCleared: studentsSnapshot.size })
 }
 
 module.exports = {

@@ -97,6 +97,29 @@ export function computeRadarMetrics({ examDate, targetScore, topics, prototypes,
   const currentPace = recentCompleted / paceCappedWeeks
   const paceRatio = currentPace / neededPace
 
+  // Zero history (nothing completed in the pace window — e.g. a program
+  // assigned days ago, or a goal just set with no lessons done yet) makes
+  // pace meaningless: paceRatio would be exactly 0, which used to fall
+  // straight into "red" below even though there's no actual evidence of
+  // falling behind, just no data yet. Its own status, not a "red" that
+  // buildRadarComment used to patch over with different text while the
+  // color/title stayed red — that was the actual bug (text and status
+  // disagreeing), not just the wrong copy.
+  if (currentPace === 0 && recentCompleted === 0) {
+    return {
+      status: "no_data",
+      daysLeft,
+      topicsLeft,
+      requiredTotal,
+      completedRequired,
+      weeksLeft,
+      neededPace,
+      currentPace,
+      recentCompleted,
+      paceRatio,
+    }
+  }
+
   // Judgment call — thresholds weren't in the spec text at all (fully cut
   // off); reverse-engineered from the original mock data's three examples
   // (good: 2.8 vs 2.5 → ratio ~1.12, warn: 1.8 vs 2.5 → ~0.72, bad: 0.8 vs
@@ -138,16 +161,12 @@ export function buildRadarComment(metrics, targetScore) {
     return `Последняя неделя перед экзаменом. Осталось тем: ${metrics.topicsLeft}. Сосредоточься на том, что ещё не закрыто, а не на скорости — в темпе на этом отрезке смысла нет.`
   }
 
-  // green / yellow / red — pace-based, but pace is meaningless with zero
-  // history (e.g. a program assigned days ago) — a currentPace of 0 with
-  // nothing completed in the pace window isn't "red", it's "too early to
-  // tell", so it gets its own text instead of reading as an alarming
-  // (and false) worst-case status.
-  const { currentPace, neededPace, recentCompleted, topicsLeft, daysLeft } = metrics
-  if (currentPace === 0 && recentCompleted === 0) {
+  if (status === "no_data") {
     return "Пока рано судить о темпе — начни проходить темы, и здесь появится реальная картина."
   }
 
+  // green / yellow / red — pace-based.
+  const { currentPace, neededPace, topicsLeft, daysLeft } = metrics
   const pace = round1(currentPace)
   const needed = round1(neededPace)
 

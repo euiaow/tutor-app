@@ -1,7 +1,7 @@
 const logger = require("firebase-functions/logger")
 const { Timestamp } = require("firebase-admin/firestore")
 const { db } = require("./core/firestore")
-const { getZonedParts, zonedTimeToUtc, normalizeScheduleSlots, SCHEDULE_TIME_ZONE } = require("./core/schedule")
+const { getZonedParts, zonedTimeToUtc, normalizeScheduleSlots } = require("./core/schedule")
 const { ensureUpcomingLesson } = require("./core/lessons")
 const { createNotification } = require("./core/notifier")
 const botMessages = require("./core/botMessages")
@@ -9,6 +9,12 @@ const botMessages = require("./core/botMessages")
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
 const PRE_LESSON_THROTTLE_MS = 30 * 60 * 1000
+// Only for two things: (1) the day-boundary window below, tied to the
+// dailyReminderMidday cron's own fixed 9:00 Europe/Moscow trigger — not a
+// user's display preference, so it's pinned regardless of anyone's saved
+// timezone; (2) the technical fallback for a recipient with no timezone
+// saved on their profile yet (see botMessages.js's identical default).
+const DEFAULT_TIME_ZONE = "Europe/Moscow"
 
 function lessonsRef(studentId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION)
@@ -17,13 +23,13 @@ function lessonsRef(studentId) {
 // Midnight (00:00) in Moscow for the given instant, as an actual UTC
 // instant — used to build Moscow calendar-day query windows.
 function moscowMidnight(date) {
-  const parts = getZonedParts(date, SCHEDULE_TIME_ZONE)
-  return zonedTimeToUtc(parts.year, parts.month, parts.day, 0, 0, SCHEDULE_TIME_ZONE)
+  const parts = getZonedParts(date, DEFAULT_TIME_ZONE)
+  return zonedTimeToUtc(parts.year, parts.month, parts.day, 0, 0, DEFAULT_TIME_ZONE)
 }
 
 function isSameMoscowDay(a, b) {
-  const partsA = getZonedParts(a, SCHEDULE_TIME_ZONE)
-  const partsB = getZonedParts(b, SCHEDULE_TIME_ZONE)
+  const partsA = getZonedParts(a, DEFAULT_TIME_ZONE)
+  const partsB = getZonedParts(b, DEFAULT_TIME_ZONE)
   return partsA.year === partsB.year && partsA.month === partsB.month && partsA.day === partsB.day
 }
 
@@ -105,7 +111,8 @@ async function dailyReminderMidday() {
         continue
       }
 
-      const message = botMessages.REMINDER_MIDDAY_SUMMARY(lessonsInWindow, now)
+      const timeZone = student.timezone || DEFAULT_TIME_ZONE
+      const message = botMessages.REMINDER_MIDDAY_SUMMARY(lessonsInWindow, now, timeZone)
       const { delivered } = await createNotification({
         target: "student",
         studentId,
@@ -172,7 +179,8 @@ async function dailyReminderPreLesson() {
         }
 
         const assignmentText = lesson.homework?.assignment?.text ?? ""
-        const message = botMessages.buildPreLessonMessage(date, assignmentText)
+        const timeZone = student.timezone || DEFAULT_TIME_ZONE
+        const message = botMessages.buildPreLessonMessage(date, assignmentText, timeZone)
 
         const { delivered } = await createNotification({
           target: "student",

@@ -16,10 +16,15 @@ export async function cancelRegistrationToken(token) {
   await cancelRegistrationTokenCallable({ token })
 }
 
-export function subscribeToPendingRegistrationTokens(onData, onError) {
+// Same reasoning as subscribeToStudents (src/firebase/students.js) — this
+// is a flat, whole-collection query with no per-document owner to lean on
+// server-side yet, so teacherId filtering belongs in the query itself
+// rather than relying solely on the not-yet-published Rules.
+export function subscribeToPendingRegistrationTokens(teacherId, onData, onError) {
   const pendingQuery = query(
     collection(db, REGISTRATION_TOKENS_COLLECTION),
     where("status", "==", "pending"),
+    where("teacherId", "==", teacherId),
   )
 
   return onSnapshot(

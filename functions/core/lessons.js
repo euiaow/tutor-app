@@ -4,7 +4,7 @@ const { getStorage } = require("firebase-admin/storage")
 const { HttpsError } = require("firebase-functions/v2/https")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
-const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
+const { normalizeScheduleSlots, getUpcomingLessonDates, DEFAULT_TIME_ZONE } = require("./schedule")
 const botMessages = require("./botMessages")
 const { rescheduleLessonEvent, deleteLessonEvent, createExtraLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
@@ -15,6 +15,16 @@ const LESSONS_SUBCOLLECTION = "lessons"
 
 function lessonsRef(studentId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION)
+}
+
+// The schedule is the teacher's own — "HH:MM" is interpreted in their
+// saved timezone (see core/schedule.js's full-rewrite note), so every
+// caller computing an actual occurrence date from scheduleSlots needs this
+// first.
+async function getTeacherTimeZone(teacherId) {
+  if (!teacherId) return DEFAULT_TIME_ZONE
+  const snapshot = await db.collection("teachers").doc(teacherId).get()
+  return snapshot.exists ? snapshot.data().timezone || DEFAULT_TIME_ZONE : DEFAULT_TIME_ZONE
 }
 
 function emptyHomework() {
@@ -28,9 +38,10 @@ function emptyHomework() {
 // live off scheduleSlots at income-calculation time) so a later schedule
 // edit can't retroactively change what a past/current week's income
 // calculation sees for an already-created draft.
-function createUpcomingDraft(studentId, slotIndex, date, durationMinutes) {
+function createUpcomingDraft(studentId, teacherId, slotIndex, date, durationMinutes) {
   return lessonsRef(studentId).add({
     status: "upcoming",
+    teacherId: teacherId ?? null,
     date: Timestamp.fromDate(date),
     slotIndex,
     durationMinutes: durationMinutes ?? 60,
@@ -91,7 +102,9 @@ async function ensureUpcomingLesson(studentId) {
     [...bucketUpcomingBySlot(existingUpcoming).entries()].map(([slotIndex, doc]) => [slotIndex, doc.id]),
   )
 
-  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
+  const teacherId = studentSnapshot.data().teacherId ?? null
+  const teacherTimeZone = await getTeacherTimeZone(teacherId)
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length, teacherTimeZone)
 
   for (const occurrence of occurrences) {
     if (idsBySlot.has(occurrence.slotIndex)) {
@@ -99,6 +112,7 @@ async function ensureUpcomingLesson(studentId) {
     }
     const draft = await createUpcomingDraft(
       studentId,
+      teacherId,
       occurrence.slotIndex,
       occurrence.date,
       scheduleSlots[occurrence.slotIndex]?.durationMinutes,
@@ -175,7 +189,9 @@ async function syncUpcomingLessonToSchedule(studentId) {
 
   const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").get()
   const bySlot = bucketUpcomingBySlot(existingUpcoming)
-  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
+  const teacherId = studentSnapshot.data().teacherId ?? null
+  const teacherTimeZone = await getTeacherTimeZone(teacherId)
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length, teacherTimeZone)
   const idsBySlot = new Map()
 
   for (const occurrence of occurrences) {
@@ -184,6 +200,7 @@ async function syncUpcomingLessonToSchedule(studentId) {
     if (!existingDoc) {
       const draft = await createUpcomingDraft(
         studentId,
+        teacherId,
         occurrence.slotIndex,
         occurrence.date,
         scheduleSlots[occurrence.slotIndex]?.durationMinutes,
@@ -266,7 +283,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "assignment_added",
-      text: botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText),
+      text: (tz) => botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText, tz),
       lessonId,
     })
   } else if (textChanged) {
@@ -274,7 +291,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "assignment_updated",
-      text: botMessages.ASSIGNMENT_UPDATED(lessonDate, assignmentText),
+      text: (tz) => botMessages.ASSIGNMENT_UPDATED(lessonDate, assignmentText, tz),
       lessonId,
     })
   }
@@ -284,9 +301,10 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "material_added",
-      text: botMessages.ASSIGNMENT_FILES_ADDED(
+      text: (tz) => botMessages.ASSIGNMENT_FILES_ADDED(
         lessonDate,
-        addedFiles.map((file) => file.title)
+        addedFiles.map((file) => file.title),
+        tz,
       ),
       lessonId,
     })
@@ -326,7 +344,7 @@ async function addLessonMaterial(studentId, lessonId, material) {
     target: "student",
     studentId,
     type: "material_added",
-    text: botMessages.MATERIAL_ADDED(lessonDate, material.title),
+    text: (tz) => botMessages.MATERIAL_ADDED(lessonDate, material.title, tz),
     lessonId,
   })
 }
@@ -352,9 +370,11 @@ async function createExtraLesson(studentId, date) {
   }
 
   const student = studentSnapshot.data()
+  const teacherId = student.teacherId ?? null
 
   const lessonRef = await lessonsRef(studentId).add({
     status: "upcoming",
+    teacherId,
     date: Timestamp.fromDate(date),
     isExtraLesson: true,
     slotIndex: null,
@@ -366,7 +386,7 @@ async function createExtraLesson(studentId, date) {
 
   logger.info("createExtraLesson: lesson created", { studentId, lessonId: lessonRef.id })
 
-  const googleEventId = await createExtraLessonEvent(student, date, 60)
+  const googleEventId = await createExtraLessonEvent(teacherId, student, date, 60)
   if (googleEventId) {
     await lessonRef.update({ googleEventId })
   }
@@ -375,7 +395,7 @@ async function createExtraLesson(studentId, date) {
     target: "student",
     studentId,
     type: "extra_lesson_assigned",
-    text: botMessages.EXTRA_LESSON_ASSIGNED(date),
+    text: (tz) => botMessages.EXTRA_LESSON_ASSIGNED(date, tz),
     lessonId: lessonRef.id,
   })
 
@@ -480,6 +500,25 @@ async function deleteProposalMessages(lesson, context) {
   }
 }
 
+// Extra (unscheduled) lessons store their own googleEventId directly on the
+// lesson doc (createExtraLesson above) — slotIndex: null, so they're never
+// keyed into student.googleEventIds by slot the way a recurring lesson is.
+// confirmReschedule/confirmCancellation/cancelLessonDirectly used to always
+// go straight for student.googleEventIds[slotIndex] (defaulting slotIndex
+// to 0 for any lesson without a real slotIndex), which for an extra lesson
+// either found nothing or, worse, found and touched slot 0's *recurring*
+// event instead of the extra lesson's own — the calendar event a teacher
+// actually meant to move/delete was silently left untouched. One shared
+// helper so all three call sites resolve this the same way instead of
+// duplicating (and potentially re-diverging on) the same branch.
+function resolveLessonEventId(lesson, student) {
+  if (lesson?.isExtraLesson) {
+    return lesson.googleEventId ?? null
+  }
+  const slotIndex = typeof lesson?.slotIndex === "number" ? lesson.slotIndex : 0
+  return student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+}
+
 function assertRescheduleActor(value) {
   if (value !== "teacher" && value !== "student") {
     throw new HttpsError("invalid-argument", "Некорректная роль участника переноса")
@@ -532,7 +571,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
       target: "student",
       studentId,
       type: "reschedule_proposed_to_student",
-      text: botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate),
+      text: (tz) => botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate, tz),
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -549,7 +588,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
       target: "teacher",
       studentId,
       type: "reschedule_proposed_to_teacher",
-      text: botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate),
+      text: (tz) => botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate, tz),
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -615,21 +654,23 @@ async function confirmReschedule(studentId, lessonId, confirmedBy) {
   await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const newDate = proposedDate.toDate()
-  const message = botMessages.RESCHEDULE_CONFIRMED(newDate)
+  const buildMessage = (tz) => botMessages.RESCHEDULE_CONFIRMED(newDate, tz)
 
-  await createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: message, lessonId })
-  await createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: message, lessonId })
+  await createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId })
+  await createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId })
 
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
-  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
-  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+  const eventId = resolveLessonEventId(lesson, student)
 
   if (eventId && originalDate) {
     try {
-      const durationMinutes = normalizeScheduleSlots(student)[slotIndex]?.durationMinutes ?? 60
-      await rescheduleLessonEvent(eventId, originalDate, newDate, durationMinutes)
+      const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
+      const durationMinutes = lesson.isExtraLesson
+        ? (lesson.durationMinutes ?? 60)
+        : (normalizeScheduleSlots(student)[slotIndex]?.durationMinutes ?? 60)
+      await rescheduleLessonEvent(student?.teacherId ?? null, eventId, originalDate, newDate, durationMinutes)
     } catch (error) {
       logger.error("confirmReschedule: failed to update Google Calendar event", {
         studentId,
@@ -671,13 +712,13 @@ async function cancelReschedule(studentId, lessonId) {
 
   await deleteProposalMessages(lesson, { studentId, lessonId })
 
-  const message = botMessages.RESCHEDULE_REJECTED(originalDate)
+  const buildMessage = (tz) => botMessages.RESCHEDULE_REJECTED(originalDate, tz)
 
   // Notify whoever originally proposed — the other side is the one acting.
   if (initiator === "teacher") {
-    await createNotification({ target: "teacher", studentId, type: "reschedule_rejected", text: message, lessonId })
+    await createNotification({ target: "teacher", studentId, type: "reschedule_rejected", text: buildMessage, lessonId })
   } else if (initiator === "student") {
-    await createNotification({ target: "student", studentId, type: "reschedule_rejected", text: message, lessonId })
+    await createNotification({ target: "student", studentId, type: "reschedule_rejected", text: buildMessage, lessonId })
   }
 }
 
@@ -727,7 +768,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
       target: "student",
       studentId,
       type: "cancellation_proposed_to_student",
-      text: botMessages.CANCELLATION_PROPOSED_TO_STUDENT(lessonDate),
+      text: (tz) => botMessages.CANCELLATION_PROPOSED_TO_STUDENT(lessonDate, tz),
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -744,7 +785,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
       target: "teacher",
       studentId,
       type: "cancellation_proposed_to_teacher",
-      text: botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate),
+      text: (tz) => botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate, tz),
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -787,12 +828,11 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
-  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
-  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+  const eventId = resolveLessonEventId(lesson, student)
 
   if (eventId) {
     try {
-      await deleteLessonEvent(eventId)
+      await deleteLessonEvent(student?.teacherId ?? null, eventId)
     } catch (error) {
       logger.error("confirmCancellation: failed to delete Google Calendar event", {
         studentId,
@@ -820,10 +860,10 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
   await deleteProposalMessages(lesson, { studentId, lessonId })
 
   const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
-  const message = botMessages.CANCELLATION_CONFIRMED(lessonDate)
+  const buildMessage = (tz) => botMessages.CANCELLATION_CONFIRMED(lessonDate, tz)
 
-  await createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: message, lessonId })
-  await createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: message, lessonId })
+  await createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId })
+  await createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId })
 }
 
 // One-way cancellation — teacher cancels outright, no cancellationStatus/
@@ -851,12 +891,11 @@ async function cancelLessonDirectly(studentId, lessonId) {
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
-  const slotIndex = typeof lesson.slotIndex === "number" ? lesson.slotIndex : 0
-  const eventId = student?.googleEventIds?.[String(slotIndex)] ?? student?.googleEventId ?? null
+  const eventId = resolveLessonEventId(lesson, student)
 
   if (eventId) {
     try {
-      await deleteLessonEvent(eventId)
+      await deleteLessonEvent(student?.teacherId ?? null, eventId)
     } catch (error) {
       logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
         studentId,
@@ -875,7 +914,7 @@ async function cancelLessonDirectly(studentId, lessonId) {
     target: "student",
     studentId,
     type: "lesson_cancelled_by_teacher",
-    text: botMessages.LESSON_CANCELLED_BY_TEACHER(lessonDate),
+    text: (tz) => botMessages.LESSON_CANCELLED_BY_TEACHER(lessonDate, tz),
     lessonId,
   })
 }
@@ -995,7 +1034,7 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
     target: "teacher",
     studentId,
     type: "homework_submitted",
-    text: botMessages.HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate),
+    text: (tz) => botMessages.HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate, tz),
     lessonId,
   })
   await createNotification({

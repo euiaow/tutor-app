@@ -20,13 +20,19 @@ import { round1, buildRadarComment } from "@/lib/examRadar"
 // informational (time is short), not a pace judgment. done reuses green
 // (goal met), matching the earlier instruction to keep it "в той же
 // зелёной гамме что green". past has no color token at all — deliberately
-// neutral/flat rather than any status tint.
+// neutral/flat rather than any status tint. no_data (zero pace history —
+// see computeRadarMetrics in lib/examRadar.js) gets its own explicit muted
+// token rather than falling through to `null`, which used to produce an
+// invalid `color-mix(in oklab, null 12%, transparent)` CSS value — not a
+// crash, just a silently-broken/undefined-looking plaque instead of an
+// actually neutral one.
 const STATUS_COLOR = {
   green: "var(--status-good)",
   done: "var(--status-good)",
   yellow: "var(--status-warn)",
   final_week: "var(--status-warn)",
   red: "var(--status-bad)",
+  no_data: "var(--muted-foreground)",
 }
 
 const STATUS_LABEL = {
@@ -36,6 +42,7 @@ const STATUS_LABEL = {
   done: "Цель достигнута 🎉",
   past: "Дата экзамена уже прошла",
   final_week: "Последняя неделя — темп больше не считаем, просто закрывай оставшееся",
+  no_data: "Пока нет данных",
 }
 
 function daysWord(n) {

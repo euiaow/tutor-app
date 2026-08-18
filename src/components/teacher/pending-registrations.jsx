@@ -16,6 +16,8 @@ import {
   subscribeToPendingRegistrationTokens,
 } from "@/firebase/registration"
 import { buildRegistrationMessages } from "@/lib/registration-links"
+import { useTimeZone } from "@/lib/user-prefs-context"
+import { auth } from "@/firebase/firebase"
 
 // Same shape as student-row.jsx's DeleteStudentDialog — reused by pattern,
 // not by import, since that one is private to student-row.jsx and keyed off
@@ -75,12 +77,13 @@ function CancelRegistrationDialog({ token, studentName, open, onOpenChange }) {
   )
 }
 
-function formatDate(timestamp) {
+function formatDate(timestamp, timeZone) {
   if (!timestamp?.toDate) {
     return "только что"
   }
 
   return timestamp.toDate().toLocaleString("ru-RU", {
+    timeZone,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -90,6 +93,7 @@ function formatDate(timestamp) {
 }
 
 function PendingRegistrationItem({ item }) {
+  const timeZone = useTimeZone()
   const [copiedChannel, setCopiedChannel] = useState(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const { telegram: telegramMessage, vk: vkMessage } = buildRegistrationMessages(item.token)
@@ -108,7 +112,7 @@ function PendingRegistrationItem({ item }) {
     <li className="glass-tile flex flex-col gap-3 rounded-[1.5rem] px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="min-w-0 w-full sm:w-auto sm:flex-1">
         <p className="font-semibold text-ink sm:truncate">{item.studentName}</p>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">Ссылка создана {formatDate(item.createdAt)}</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">Ссылка создана {formatDate(item.createdAt, timeZone)}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -160,7 +164,11 @@ export function PendingRegistrations() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
     const unsubscribe = subscribeToPendingRegistrationTokens(
+      uid,
       (data) => {
         setTokens(data)
         setLoading(false)

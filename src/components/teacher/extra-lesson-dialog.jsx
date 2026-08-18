@@ -13,22 +13,24 @@ import {
   teacherInputCls,
 } from "@/components/teacher/theme-ui"
 import { createExtraLesson } from "@/firebase/lessons"
+import { useTimeZone } from "@/lib/user-prefs-context"
+import { datetimeLocalToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
+import { getZonedParts, zonedTimeToUtc } from "@/lib/schedule"
 
-function toDatetimeLocal(d) {
-  const offset = d.getTimezoneOffset() * 60000
-  return new Date(d - offset).toISOString().slice(0, 16)
-}
-
-function defaultDatetimeLocal() {
-  const d = new Date()
-  d.setHours(d.getHours() + 1, 0, 0, 0)
-  return toDatetimeLocal(d)
+// "Top of the next hour" in the teacher's own timezone, not the device's —
+// e.g. 14:35 Novosibirsk should default to 15:00 Novosibirsk regardless of
+// what zone the teacher's browser happens to be running in.
+function defaultDatetimeLocal(timeZone) {
+  const parts = getZonedParts(new Date(), timeZone)
+  const rounded = zonedTimeToUtc(parts.year, parts.month, parts.day, parts.hour + 1, 0, timeZone)
+  return utcDateToLocalInput(rounded, timeZone)
 }
 
 export function ExtraLessonDialog({ students }) {
+  const timeZone = useTimeZone()
   const [open, setOpen] = useState(false)
   const [studentId, setStudentId] = useState("")
-  const [dateInput, setDateInput] = useState(defaultDatetimeLocal)
+  const [dateInput, setDateInput] = useState(() => defaultDatetimeLocal(timeZone))
   const [status, setStatus] = useState("idle")
   const [error, setError] = useState("")
 
@@ -36,7 +38,7 @@ export function ExtraLessonDialog({ students }) {
 
   function reset() {
     setStudentId("")
-    setDateInput(defaultDatetimeLocal())
+    setDateInput(defaultDatetimeLocal(timeZone))
     setStatus("idle")
     setError("")
   }
@@ -54,7 +56,7 @@ export function ExtraLessonDialog({ students }) {
     setError("")
 
     try {
-      await createExtraLesson(studentId, new Date(dateInput))
+      await createExtraLesson(studentId, datetimeLocalToUtcDate(dateInput, timeZone))
       setOpen(false)
       reset()
     } catch (err) {

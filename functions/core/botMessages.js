@@ -43,34 +43,47 @@ function INVALID_TOKEN() {
 Попроси репетитора прислать новую ссылку.`
 }
 
+// Multi-tenancy Phase 3: self-service signup now always needs a specific
+// teacher's slug ("/start signup_{slug}" on Telegram, "регистрация-{slug}"
+// on VK) — these two cover the cases where that slug is missing or wrong,
+// distinct from INVALID_TOKEN above (which is about an already-issued,
+// already-used registration token, not a signup slug).
+function SIGNUP_LINK_INVALID() {
+  return "Ссылка недействительна, обратитесь к вашему репетитору."
+}
+
+function SIGNUP_NEEDS_TEACHER_LINK() {
+  return "Уточните у репетитора точную ссылку или код для регистрации."
+}
+
 function HOMEWORK_RECEIVED() {
   return "✅ Домашка получена! Репетитор увидит её перед уроком."
 }
 
-function HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate) {
-  return `📝 ${studentName} прислал(а) домашнее задание к уроку ${formatMoscowDateTime(lessonDate)}`
+function HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate, timeZone) {
+  return `📝 ${studentName} прислал(а) домашнее задание к уроку ${formatMoscowDateTime(lessonDate, timeZone)}`
 }
 
-function ASSIGNMENT_ADDED(lessonDate, assignmentText) {
+function ASSIGNMENT_ADDED(lessonDate, assignmentText, timeZone) {
   const tail = assignmentText ? assignmentText : "Проверь личный кабинет"
-  return `📚 Репетитор добавил задание к уроку ${formatMoscowDateTime(lessonDate)}: ${tail}`
+  return `📚 Репетитор добавил задание к уроку ${formatMoscowDateTime(lessonDate, timeZone)}: ${tail}`
 }
 
-function MATERIAL_ADDED(lessonDate, materialTitle) {
-  return `📎 К уроку ${formatMoscowDateTime(lessonDate)} добавлен новый материал: ${materialTitle}`
+function MATERIAL_ADDED(lessonDate, materialTitle, timeZone) {
+  return `📎 К уроку ${formatMoscowDateTime(lessonDate, timeZone)} добавлен новый материал: ${materialTitle}`
 }
 
-function EXTRA_LESSON_ASSIGNED(lessonDate) {
-  return `📌 Репетитор назначил(а) дополнительный урок: ${formatMoscowDateTime(lessonDate)}`
+function EXTRA_LESSON_ASSIGNED(lessonDate, timeZone) {
+  return `📌 Репетитор назначил(а) дополнительный урок: ${formatMoscowDateTime(lessonDate, timeZone)}`
 }
 
-function ASSIGNMENT_UPDATED(lessonDate, assignmentText) {
-  return `✏️ Репетитор изменил задание к уроку ${formatMoscowDateTime(lessonDate)}: ${assignmentText}`
+function ASSIGNMENT_UPDATED(lessonDate, assignmentText, timeZone) {
+  return `✏️ Репетитор изменил задание к уроку ${formatMoscowDateTime(lessonDate, timeZone)}: ${assignmentText}`
 }
 
-function ASSIGNMENT_FILES_ADDED(lessonDate, fileTitles) {
+function ASSIGNMENT_FILES_ADDED(lessonDate, fileTitles, timeZone) {
   const word = fileTitles.length > 1 ? "файлы" : "файл"
-  return `📎 Репетитор прикрепил ${word} к уроку ${formatMoscowDateTime(lessonDate)}: ${fileTitles.join(", ")}`
+  return `📎 Репетитор прикрепил ${word} к уроку ${formatMoscowDateTime(lessonDate, timeZone)}: ${fileTitles.join(", ")}`
 }
 
 function HOMEWORK_NO_LESSON() {
@@ -103,14 +116,19 @@ function TEACHER_CONNECT_INVALID() {
   return "Ссылка недействительна или устарела, сгенерируйте новую в панели"
 }
 
-function formatMoscowDateTime(date) {
+// timeZone defaults to Europe/Moscow purely as a technical safety net for a
+// recipient with no timezone saved on their profile yet (see
+// lib/timezone.js's identical default on the frontend) — every real caller
+// now passes the actual recipient's own resolved timezone (createNotification
+// in core/notifier.js resolves it per-target before calling any of these).
+function formatMoscowDateTime(date, timeZone = "Europe/Moscow") {
   if (!date) {
     return "—"
   }
 
-  const datePart = date.toLocaleDateString("ru-RU", { timeZone: "Europe/Moscow", day: "numeric", month: "long" })
+  const datePart = date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
   const timePart = date.toLocaleTimeString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
   })
@@ -118,20 +136,20 @@ function formatMoscowDateTime(date) {
   return `${datePart}, ${timePart}`
 }
 
-function RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, newDate) {
-  return `📅 Репетитор предлагает перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}`
+function RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, newDate, timeZone) {
+  return `📅 Репетитор предлагает перенести урок ${formatMoscowDateTime(oldDate, timeZone)} на ${formatMoscowDateTime(newDate, timeZone)}`
 }
 
-function RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, newDate) {
-  return `📅 ${studentName} просит перенести урок ${formatMoscowDateTime(oldDate)} на ${formatMoscowDateTime(newDate)}`
+function RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, newDate, timeZone) {
+  return `📅 ${studentName} просит перенести урок ${formatMoscowDateTime(oldDate, timeZone)} на ${formatMoscowDateTime(newDate, timeZone)}`
 }
 
-function RESCHEDULE_CONFIRMED(newDate) {
-  return `✅ Перенос урока подтверждён. Новое время: ${formatMoscowDateTime(newDate)}`
+function RESCHEDULE_CONFIRMED(newDate, timeZone) {
+  return `✅ Перенос урока подтверждён. Новое время: ${formatMoscowDateTime(newDate, timeZone)}`
 }
 
-function RESCHEDULE_REJECTED(originalDate) {
-  return `❌ Перенос урока отклонён. Урок остаётся ${formatMoscowDateTime(originalDate)}`
+function RESCHEDULE_REJECTED(originalDate, timeZone) {
+  return `❌ Перенос урока отклонён. Урок остаётся ${formatMoscowDateTime(originalDate, timeZone)}`
 }
 
 function RESCHEDULE_ASK_DATE() {
@@ -240,23 +258,23 @@ function RESCHEDULE_KEYBOARDS_FOR_TEACHER(lessonId, studentId) {
   }
 }
 
-function CANCELLATION_PROPOSED_TO_STUDENT(lessonDate) {
-  return `🔴 Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate)}`
+function CANCELLATION_PROPOSED_TO_STUDENT(lessonDate, timeZone) {
+  return `🔴 Репетитор предлагает отменить урок ${formatMoscowDateTime(lessonDate, timeZone)}`
 }
 
-function CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate) {
-  return `🔴 ${studentName} просит отменить урок ${formatMoscowDateTime(lessonDate)}`
+function CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate, timeZone) {
+  return `🔴 ${studentName} просит отменить урок ${formatMoscowDateTime(lessonDate, timeZone)}`
 }
 
-function CANCELLATION_CONFIRMED(lessonDate) {
-  return `❌ Урок ${formatMoscowDateTime(lessonDate)} отменён`
+function CANCELLATION_CONFIRMED(lessonDate, timeZone) {
+  return `❌ Урок ${formatMoscowDateTime(lessonDate, timeZone)} отменён`
 }
 
 // One-way teacher cancellation (cancelLessonDirectly) — a plain
 // announcement, not a proposal, so unlike CANCELLATION_PROPOSED_TO_STUDENT
 // this never gets a reply keyboard attached.
-function LESSON_CANCELLED_BY_TEACHER(lessonDate) {
-  return `❌ Урок ${formatMoscowDateTime(lessonDate)} отменён репетитором.`
+function LESSON_CANCELLED_BY_TEACHER(lessonDate, timeZone) {
+  return `❌ Урок ${formatMoscowDateTime(lessonDate, timeZone)} отменён репетитором.`
 }
 
 function CANCELLATION_REJECTED() {
@@ -355,17 +373,17 @@ function toDate(lessonDate) {
   return typeof lessonDate?.toDate === "function" ? lessonDate.toDate() : lessonDate
 }
 
-function moscowDayKey(date) {
-  return date.toLocaleDateString("en-CA", { timeZone: "Europe/Moscow" })
+function moscowDayKey(date, timeZone = "Europe/Moscow") {
+  return date.toLocaleDateString("en-CA", { timeZone })
 }
 
-function dayLabel(date, now) {
-  return moscowDayKey(date) === moscowDayKey(now) ? "Сегодня" : "Завтра"
+function dayLabel(date, now, timeZone = "Europe/Moscow") {
+  return moscowDayKey(date, timeZone) === moscowDayKey(now, timeZone) ? "Сегодня" : "Завтра"
 }
 
-function formatMoscowTime(date) {
+function formatMoscowTime(date, timeZone = "Europe/Moscow") {
   return date.toLocaleTimeString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
   })
@@ -373,12 +391,15 @@ function formatMoscowTime(date) {
 
 // lessons: [{ date, assignmentText }], sorted ascending, all falling within
 // "the rest of today + all of tomorrow" (see reminders.js) — so dayLabel
-// only ever needs to distinguish those two days.
-function REMINDER_MIDDAY_SUMMARY(lessons, now) {
+// only ever needs to distinguish those two days. timeZone is the
+// *recipient's* own saved timezone (reminders.js resolves it from
+// students/{id}.timezone, falling back to Europe/Moscow) — the reminder
+// text should read in the student's own local time, not the tutor's.
+function REMINDER_MIDDAY_SUMMARY(lessons, now, timeZone = "Europe/Moscow") {
   if (lessons.length === 1) {
     const { date, assignmentText } = lessons[0]
-    const label = dayLabel(date, now).toLowerCase()
-    const time = formatMoscowTime(toDate(date))
+    const label = dayLabel(date, now, timeZone).toLowerCase()
+    const time = formatMoscowTime(toDate(date), timeZone)
     const tail = assignmentText
       ? `Задание: ${assignmentText}\nЕсли готово — пришли фото домашки сюда в чат.`
       : "Проверь, есть ли домашнее задание — если есть, пришли фото сюда в чат."
@@ -386,15 +407,15 @@ function REMINDER_MIDDAY_SUMMARY(lessons, now) {
   }
 
   const lines = lessons.map(({ date, assignmentText }) => {
-    const label = dayLabel(date, now)
-    const time = formatMoscowTime(toDate(date))
+    const label = dayLabel(date, now, timeZone)
+    const time = formatMoscowTime(toDate(date), timeZone)
     return `- ${label} в ${time}${assignmentText ? ` — ${assignmentText}` : ""}`
   })
 
   return `🔔 Ближайшие уроки:\n${lines.join("\n")}\nНе забудь домашку — пришли фото сюда если готова.`
 }
 
-function buildPreLessonMessage(lessonDate, homeworkText) {
+function buildPreLessonMessage(lessonDate, homeworkText, timeZone = "Europe/Moscow") {
   const now = new Date()
   const lessonTime = toDate(lessonDate)
   const diffMs = lessonTime - now
@@ -410,7 +431,7 @@ function buildPreLessonMessage(lessonDate, homeworkText) {
   }
 
   const lessonTimeFormatted = lessonTime.toLocaleString("ru-RU", {
-    timeZone: "Europe/Moscow",
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
   })
@@ -434,6 +455,8 @@ module.exports = {
   PIN_SAVED,
   INVALID_PIN,
   INVALID_TOKEN,
+  SIGNUP_LINK_INVALID,
+  SIGNUP_NEEDS_TEACHER_LINK,
   HOMEWORK_RECEIVED,
   HOMEWORK_SUBMITTED_TO_TEACHER,
   ASSIGNMENT_ADDED,

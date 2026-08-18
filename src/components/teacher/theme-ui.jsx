@@ -3,6 +3,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useThemeClass } from "@/lib/user-prefs-context"
 
 // Shared visual language for the rose/pink "teacher-theme" scope, ported
 // from "redesign teacher v1" (rosy-reflections-main). Every piece here is
@@ -130,6 +131,13 @@ export function TeacherDialogContent({ className, children, wide = false, elevat
   // path for every teacher dialog at once, instead of the previous
   // approach of trying to detect-and-undo the jump after the fact.
   const popupRef = useRef(null)
+  // Multi-tenancy Phase 4a: "teacher-theme" (pink) or "amber-scope" (the
+  // teacher-scoped token set with the student page's own hues) — whichever
+  // the teacher picked in Settings. Portaled elements need this applied
+  // directly to themselves (see index.css's .teacher-theme doc comment),
+  // not just inherited from an ancestor, since a Portal moves them out of
+  // TeacherDashboard's DOM subtree entirely.
+  const themeClass = useThemeClass() || "teacher-theme"
 
   return (
     <DialogPrimitive.Portal>
@@ -143,7 +151,8 @@ export function TeacherDialogContent({ className, children, wide = false, elevat
       <DialogPrimitive.Backdrop
         forceRender={elevated}
         className={cn(
-          "teacher-theme fixed inset-0 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+          themeClass,
+          "fixed inset-0 bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
           elevated ? "z-[110]" : "z-[100]",
         )}
       />
@@ -151,7 +160,8 @@ export function TeacherDialogContent({ className, children, wide = false, elevat
         ref={popupRef}
         initialFocus={popupRef}
         className={cn(
-          "teacher-theme glass-panel fixed top-1/2 left-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
+          themeClass,
+          "glass-panel fixed top-1/2 left-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
           elevated ? "z-[111]" : "z-[101]",
           wide ? "max-w-2xl" : "max-w-lg",
           className,
@@ -233,6 +243,7 @@ export function TeacherPopoverTrigger(props) {
 
 export function TeacherPopoverContent({ className, children, align = "center", sideOffset = 8, ...props }) {
   const popupRef = useRef(null)
+  const themeClass = useThemeClass() || "teacher-theme"
 
   return (
     <PopoverPrimitive.Portal>
@@ -246,7 +257,8 @@ export function TeacherPopoverContent({ className, children, align = "center", s
           ref={popupRef}
           initialFocus={popupRef}
           className={cn(
-            "teacher-theme glass-panel w-72 rounded-[1.25rem] p-4 outline-none data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+            themeClass,
+            "glass-panel w-72 rounded-[1.25rem] p-4 outline-none data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
             className,
           )}
           {...props}

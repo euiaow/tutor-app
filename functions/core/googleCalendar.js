@@ -1,10 +1,27 @@
 const { google } = require("googleapis")
 const logger = require("firebase-functions/logger")
 const { getAuthorizedClient } = require("./googleAuth")
-const { getNextLessonDateForSlot, normalizeScheduleSlots, getZonedParts, SCHEDULE_TIME_ZONE } = require("./schedule")
+const { getNextLessonDateForSlot, normalizeScheduleSlots, getZonedParts, DEFAULT_TIME_ZONE } = require("./schedule")
+const { db } = require("./firestore")
 
 const CALENDAR_ID = "primary"
-const CALENDAR_TIME_ZONE = SCHEDULE_TIME_ZONE
+// Purely an internal reference frame for the floating-dateTime round-trip
+// below (toFloatingDateTime always re-derives wall-clock parts from an
+// already-absolute Date through this same zone, then tags the request with
+// the identical zone) — any IANA zone works here with equal correctness,
+// since the two values are only ever interpreted together. Not user-facing:
+// Google Calendar always displays event times per the viewer's own Google
+// Account timezone setting regardless of what's sent here (see
+// SettingsDialog's hint text). Left as Europe/Moscow rather than threading
+// a real per-teacher zone through purely for internal consistency, since
+// there is no correctness reason to change it.
+const CALENDAR_TIME_ZONE = DEFAULT_TIME_ZONE
+
+async function getTeacherTimeZone(teacherId) {
+  if (!teacherId) return DEFAULT_TIME_ZONE
+  const snapshot = await db.collection("teachers").doc(teacherId).get()
+  return snapshot.exists ? snapshot.data().timezone || DEFAULT_TIME_ZONE : DEFAULT_TIME_ZONE
+}
 
 // Google Calendar's event colorId palette is a fixed 1-11 set (not
 // arbitrary hex), so this maps subject codes to the closest match for the
@@ -40,8 +57,8 @@ function toFloatingDateTime(date) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00`
 }
 
-function buildEventResourceForSlot(student, slot) {
-  const start = getNextLessonDateForSlot(slot)
+function buildEventResourceForSlot(student, slot, teacherTimeZone) {
+  const start = getNextLessonDateForSlot(slot, teacherTimeZone)
   if (!start) {
     return null
   }
@@ -68,18 +85,23 @@ function isNotFoundError(error) {
   return error?.code === 404 || error?.response?.status === 404
 }
 
-async function getCalendarOrNull() {
+async function getCalendarOrNull(teacherId) {
+  if (!teacherId) {
+    logger.warn("Google Calendar sync skipped: no teacherId (legacy student predating multi-tenancy Phase 1/5)")
+    return null
+  }
+
   try {
-    const client = await getAuthorizedClient()
+    const client = await getAuthorizedClient(teacherId)
     return google.calendar({ version: "v3", auth: client })
   } catch (error) {
-    logger.warn("Google Calendar not connected, skipping sync", { message: error.message })
+    logger.warn("Google Calendar not connected, skipping sync", { teacherId, message: error.message })
     return null
   }
 }
 
-async function createEventFromResource(resource) {
-  const calendar = await getCalendarOrNull()
+async function createEventFromResource(teacherId, resource) {
+  const calendar = await getCalendarOrNull(teacherId)
   if (!calendar) {
     return null
   }
@@ -92,8 +114,8 @@ async function createEventFromResource(resource) {
   return response.data.id
 }
 
-async function updateEventFromResource(eventId, resource) {
-  const calendar = await getCalendarOrNull()
+async function updateEventFromResource(teacherId, eventId, resource) {
+  const calendar = await getCalendarOrNull(teacherId)
   if (!calendar) {
     return
   }
@@ -113,7 +135,7 @@ async function updateEventFromResource(eventId, resource) {
   }
 }
 
-async function createExtraLessonEvent(student, date, durationMinutes = 60) {
+async function createExtraLessonEvent(teacherId, student, date, durationMinutes = 60) {
   const end = new Date(date.getTime() + durationMinutes * 60 * 1000)
 
   const resource = {
@@ -123,7 +145,7 @@ async function createExtraLessonEvent(student, date, durationMinutes = 60) {
     colorId: colorIdForStudent(student),
   }
 
-  return createEventFromResource(resource)
+  return createEventFromResource(teacherId, resource)
 }
 
 // Diffs a student's current scheduleSlots against their existing
@@ -131,16 +153,17 @@ async function createExtraLessonEvent(student, date, durationMinutes = 60) {
 // and creates/updates/deletes events so the calendar ends up with exactly
 // one recurring event per slot. Writes the rebuilt map back onto the
 // student doc itself.
-async function syncScheduleSlots(studentId, student, studentRef) {
+async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
   const scheduleSlots = normalizeScheduleSlots(student)
   const existingEventIds = student.googleEventIds ?? {}
   const nextEventIds = {}
+  const teacherTimeZone = await getTeacherTimeZone(teacherId)
 
   for (let index = 0; index < scheduleSlots.length; index += 1) {
     const key = String(index)
     const slot = scheduleSlots[index]
     const existingEventId = existingEventIds[key] ?? null
-    const resource = buildEventResourceForSlot(student, slot)
+    const resource = buildEventResourceForSlot(student, slot, teacherTimeZone)
 
     if (!resource) {
       logger.warn("syncScheduleSlots: cannot build event, invalid slot", { studentId, slotIndex: index })
@@ -152,7 +175,7 @@ async function syncScheduleSlots(studentId, student, studentRef) {
 
     if (existingEventId) {
       try {
-        await updateEventFromResource(existingEventId, resource)
+        await updateEventFromResource(teacherId, existingEventId, resource)
         nextEventIds[key] = existingEventId
         logger.info("syncScheduleSlots: updated event", { studentId, slotIndex: index, eventId: existingEventId })
       } catch (error) {
@@ -168,7 +191,7 @@ async function syncScheduleSlots(studentId, student, studentRef) {
     }
 
     try {
-      const eventId = await createEventFromResource(resource)
+      const eventId = await createEventFromResource(teacherId, resource)
       if (eventId) {
         nextEventIds[key] = eventId
         logger.info("syncScheduleSlots: created event", { studentId, slotIndex: index, eventId })
@@ -185,7 +208,7 @@ async function syncScheduleSlots(studentId, student, studentRef) {
       continue
     }
     try {
-      await deleteLessonEvent(eventId)
+      await deleteLessonEvent(teacherId, eventId)
       logger.info("syncScheduleSlots: deleted stale event", { studentId, slotIndex: key, eventId })
     } catch (error) {
       logger.warn("syncScheduleSlots: failed to delete stale event, skipping", { studentId, slotIndex: key, error })
@@ -201,12 +224,12 @@ async function syncScheduleSlots(studentId, student, studentRef) {
 // instances() endpoint and patches just that instance's start/end. Patching
 // the master event directly (as updateEventFromResource does) would shift
 // the entire weekly series, not just this one lesson.
-async function rescheduleLessonEvent(eventId, originalDate, newDate, durationMinutes) {
+async function rescheduleLessonEvent(teacherId, eventId, originalDate, newDate, durationMinutes) {
   if (!eventId || !originalDate || !newDate) {
     return
   }
 
-  const calendar = await getCalendarOrNull()
+  const calendar = await getCalendarOrNull(teacherId)
   if (!calendar) {
     return
   }
@@ -249,8 +272,8 @@ async function rescheduleLessonEvent(eventId, originalDate, newDate, durationMin
   }
 }
 
-async function deleteLessonEvent(eventId) {
-  const calendar = await getCalendarOrNull()
+async function deleteLessonEvent(teacherId, eventId) {
+  const calendar = await getCalendarOrNull(teacherId)
   if (!calendar) {
     return
   }

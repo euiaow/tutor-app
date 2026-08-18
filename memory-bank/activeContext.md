@@ -1,307 +1,241 @@
 # Active Context
 
-_Last updated: 2026-08-02 (session 10)_
+_Last updated: 2026-08-18 (session 12)_
 
 ## Current work focus
 
-**Still nothing committed to git.** Same long-running pattern as every
-prior session — deploys go straight from the working tree via `firebase
-deploy`, git history lags behind. Not re-flagging this as newly alarming
-each session going forward unless the user asks about it; just a standing
-fact to remember.
+**Still nothing committed to git.** Same standing fact as every prior
+session — 67 files uncommitted after this session's work, all deployed
+straight from source via `firebase deploy`. This is now a very large pile
+(all of multi-tenancy Phase 4a + the full timezone rewrite below); worth
+raising with the user again next session.
 
-`activeContext.md` was trimmed this session: everything through session 9
-was already duplicated in `changelog/2026-07-july.md`
-(sessions 2–8) and has now also been fully moved out — session 9 lives in
-the new `changelog/2026-08-august.md`. This file now keeps only the most
-recent session inline; see `changelog/index.md` for the archive index.
+Session 11's full narrative moved to `changelog/2026-08-august.md` this
+session — this file now keeps only session 12 inline.
 
-### Session 10 — domain finalization, teacher↔student bot notification parity, cancellation-history fix, several UI polish requests
+### Session 12 — multi-tenancy Phase 4a (settings/timezone/theme), second-teacher login bug, full timezone-handling rewrite, Firestore Rules published (tenant-isolation fallout)
 
-A long, many-part session. Grouped by theme, not strictly chronological.
+The session opened with a post-crash diagnosis (computer crashed mid-Phase-3
+last session) — confirmed Phases 1–3 of multi-tenancy (teacher slugs,
+`/app/:slug`, per-teacher bot signup, `teacherConnectTokens`) were intact
+and undamaged, then moved on to new work.
 
-**1. Domain finalized everywhere.** `PLACEHOLDER_DOMAIN` (telegram.js/
-vk.js, student registration-completion link) and `APP_URL`
-(`functions/index.js`, Google OAuth callback redirect) both replaced with
-the real `https://princessschool-e678c.web.app`. No more localhost/
-placeholder strings anywhere in `functions/`.
+**1. Multi-tenancy Phase 4a — per-user settings (timezone + color theme).**
+New `SettingsDialog` component (`src/components/settings-dialog.jsx`,
+`variant="teacher"|"student"`) — gear icon in both dashboard headers opens
+it. Teacher settings write directly to `teachers/{uid}` (`updateDoc`, same
+teacher-owns-their-own-doc trust as the rest of the app); student settings
+go through a new `updateStudentSettings` callable (no `request.auth`,
+same trust model as every other student-facing callable — see
+`functions/core/students.js`). New shared context
+(`src/lib/user-prefs-context.jsx`, `UserPrefsProvider`/`useTimeZone`/
+`useThemeClass`) threads the resolved timezone/theme class down through
+both dashboards without prop-drilling. Color theme: teacher can pick
+"pink" (`.teacher-theme`, original) or "amber" — a new `.amber-scope` CSS
+block in `index.css` mirroring `.teacher-theme`'s exact variable shape but
+with the student page's amber hues (values lifted from the existing
+`:root` tokens, not new colors); student can do the reverse. Portaled
+dialogs (`theme-ui.jsx`'s `TeacherDialogContent`/`TeacherPopoverContent`,
+`ui/dialog.jsx`'s `DialogContent`) all read the resolved theme class via
+`useThemeClass()` instead of hardcoding `"teacher-theme"`, since Base UI's
+`Portal` moves them outside the themed DOM subtree.
 
-**2. Bot proposal-message deletion sync — now bidirectional (student side
-this session, teacher side added later same session).** Problem: when a
-reschedule/cancellation proposal's bot message (with Подтвердить/Отклонить
-buttons) gets answered through a *different* channel than it was sent on
-(e.g. proposed via Telegram bot, answered on the website), the bot message
-was left dangling with live-looking buttons.
-- `lesson.proposalMessage: {platform, chatId, messageId}` — set when
-  `proposeReschedule`/`proposeCancellation` sends a **student**-facing
-  keyboard (`core/lessons.js`). New `deleteMessage(chatId, messageId)` in
-  both `adapters/telegram.js` (Bot API `deleteMessage`) and `adapters/
-  vk.js` (`messages.delete` with `delete_for_all: 1`) — wrapped in
-  try/catch, logged as `warn` on failure (message too old, already
-  deleted), never throws. `deleteProposalMessages` (`core/lessons.js`,
-  originally singular, generalized later this session — see #5) is called
-  from **all four** resolution paths (`confirmReschedule`,
-  `cancelReschedule`, `confirmCancellation`, `rejectCancellation`) — same
-  code runs whether the resolution came from a bot button press or a
-  website click, so there's exactly one deletion code path, not two to
-  keep in sync.
-- `sendReminderToStudent` (`core/reminderUtils.js`) changed its return
-  shape from `boolean` to `{platform, chatId, messageId} | false` so the
-  message id could be captured; `createNotification` (`core/notifier.js`)
-  surfaces it as `sentMessage` in its return value, only populated for
-  the reschedule/cancellation-proposal call sites that pass
-  `telegramReplyMarkup`/`vkKeyboard`.
+**2. Second-teacher login bug — real, not cosmetic.** `TeacherLogin.jsx`
+had a hardcoded `TEACHER_EMAIL` constant left over from the single-teacher
+era — the login form only ever took a password, always calling
+`signInTeacher(TEACHER_EMAIL, password)` regardless of whose password was
+typed. A second teacher's real password against the wrong fixed email
+always failed as "неверный пароль", never as a wrong-email problem.
+Removed the constant, added an email `<input>` to the form (same
+`glass-tile` visual style as the password field — the two used to differ
+in font size, `text-lg` vs `text-2xl`, fixed as part of the same pass).
 
-**3. Teacher bot connect via one-time tokens — replaces the old
-manual-Firestore-doc setup entirely.** Audited first (per explicit
-instruction): no `TEACHER_SECRET`/`/teacher {code}` mechanism existed in
-code at all — nothing to remove, built fresh.
-- New `functions/core/teacherConnect.js`: `teacherConnectTokens/{token}`
-  (`platform`, `status: "pending"|"used"`, `createdAt`, 10-min TTL checked
-  inline, no cron needed), `createTeacherConnectToken(platform)` (called
-  from new callable `generateTeacherConnectToken`, `request.auth`-gated —
-  the only step here that needs to be a callable, since anyone with the
-  client SDK could otherwise mint tokens directly),
-  `resolveTeacherConnectToken(token, platform, chatIdentity)` (called from
-  inside the bot adapters, marks the token used, writes onto
-  `integrations/teacherContact`).
-- **`integrations/teacherContact` schema changed** from the old
-  `{platform, chatId}` (one channel only) to `{telegramChatId, vkPeerId}`
-  — the teacher can now have **both** channels connected simultaneously.
-  `teacherNotifier.js`'s `sendMessageToTeacher` sends to every connected
-  channel, not just one.
-- `telegram.js`: `/start teacher_{token}` branch, checked first in
-  `handleStart` (unambiguous prefix). `vk.js`: no deep-link equivalent, so
-  a free-text code is checked in `handleNoSessionMessage` **after** the
-  student-registration-token check and self-service-signup check fail —
-  explicit `teacherConnectTokens` lookup, not a guess by format (both
-  token kinds come from the same random-string generator).
-- Frontend: new `src/components/teacher/teacher-bot-connect.jsx`
-  (`TeacherBotConnectStatus`), wired into the notifications-bell dialog,
-  under the notification list. Two independent rows (Telegram/ВК). **Not
-  connected**: whole row is a Popover trigger ("не подключён" +
-  "Подключить →"), Popover shows connect instructions (Telegram: button
-  opens the deep link; VK: code fetched immediately on open, shown large
-  with a copy button, plus a clickable link to the VK community chat).
-  **Connected**: status text + a separate always-visible "Сбросить
-  подключение" text link **directly in the row** (not hidden behind
-  another click) that opens a confirmation Dialog (see #6) —
-  `disconnectTeacherPlatform(platform)` is a direct client `setDoc` merge
-  (admin-only config, no server validation needed, matches the project's
-  existing "direct write unless a callable is specifically needed"
-  convention).
+**3. Tenant-isolation bug class found and fixed across the app — list
+queries with no explicit `teacherId` filter.** `students/{id}`'s Firestore
+Rule is intentionally `allow read: if true` (an unauthenticated student
+needs to read their own card by id) — this means Rules can **never**
+scope down a `students` list query on their own, no matter what the rule
+for a single-doc read says. `subscribeToStudents()` and
+`subscribeToPendingRegistrationTokens()` were both plain unfiltered list
+queries relying on this non-existent Rules protection. Fixed by adding
+`.where("teacherId", "==", uid)` explicitly to both queries (now take
+`teacherId` as a required first param) — this class of fix is now the
+standing pattern (see `systemPatterns.md`).
 
-**4. Major infra discovery: Cloud Run IAM invoker binding can silently go
-missing, independent of the known missing-secrets bug class (session 5).**
-Two unrelated-looking bugs (`cancelLessonDirectly` "internal" error,
-`cancelRegistrationToken` deletion silently doing nothing) turned out to
-be the **same root cause**: `firebase functions:log` showed zero real
-invocation traces for either — only deploy/startup noise — meaning the
-client's call never reached the function's own code at all. One instance's
-log eventually showed the real signal: `"The request was not
-authenticated... Empty Authorization header value"` — a Cloud Run
-IAM-layer rejection, happening *before* the Cloud Functions runtime (let
-alone the exported handler) ever runs. Normally `firebase deploy` grants
-`allUsers`+`roles/run.invoker` automatically on every successful deploy;
-the working theory is that a deploy interrupted mid-way by the CPU-quota
-flake (see [[techContext]]) can leave a function's Cloud Run service
-without ever getting that binding applied, and it doesn't self-heal on a
-later *successful* deploy of a *different* function.
-- **Fix, and a real gotcha**: `gcloud run services
-  add-iam-policy-binding <service> --region=us-central1
-  --member=allUsers --role=roles/run.invoker`. **Cloud Run service names
-  are always the lowercased Cloud Function name** (`cancelLessonDirectly`
-  → `cancellessondirectly`) — the user's first attempt used the camelCase
-  function name and got `NOT_FOUND`. Confirmed by checking real log
-  resource labels, which are always already-lowercased.
-- Wrote a Cloud Shell batch script (given directly to the user, not run by
-  Claude — no gcloud in this environment) enumerating every `onCall`/
-  `onRequest` export from `index.js` (30 at the time), checking
-  `get-iam-policy` for `allUsers`, fixing any missing ones in one pass.
-  **`onSchedule`/`onDocumentWritten` functions must NOT get this binding**
-  — they're invoked by Cloud Scheduler/Eventarc via a dedicated service
-  account, not publicly, and making them public would be a real (if minor)
-  security regression, not a fix. User ran the script, confirmed working.
-- **If a function is confirmed deployed (`firebase functions:list` shows
-  it) but a client call fails generically with `internal` and
-  `firebase functions:log --only <name>` shows no real invocation trace at
-  all** — check this class of bug first, before assuming a code bug. Same
-  diagnostic signature both times it was found this session.
+**4. Firestore Rules got published this session** (previously a draft/
+permissive state — see `techContext.md`'s updated framing) and immediately
+surfaced **five more instances of the exact same missing-filter bug**,
+this time as real `permission-denied` errors in the browser console
+(diagnosed from the actual console text, not guessed): `getCurriculumTemplates`,
+`subscribeToUpcomingLessons`, `subscribeToCompletedLessons`,
+`subscribeToIncomeLessons` (Финансы), `getAllCompletedLessons`, and
+`getAllCurriculumProgressByStudent` (collectionGroup `curriculumProgress`).
+**Root-cause mechanism, confirmed via the actual error text**: a
+`collectionGroup`/list query whose security rule checks
+`resource.data.teacherId` is rejected **outright** — the whole query, not
+a silent per-document filter — unless the query itself is provably scoped
+on that same field via an explicit `where`. All six fixed the same way;
+every call site across `TeacherDashboard.jsx`, `curriculum-section.jsx`,
+`student-row.jsx`, `finance-section.jsx` updated to pass
+`auth.currentUser.uid`. `notifications/` was explicitly left alone per
+user instruction — a known, deliberately-deferred gap, not forgotten.
+- Adding `teacherId` to the `lessons` collectionGroup queries needed new
+  composite indexes (`teacherId ASC, status ASC, date ASC/DESC`) — added
+  to `firestore.indexes.json` and deployed via
+  `firebase deploy --only firestore:indexes`.
+- **Gotcha**: the `curriculumProgress` collectionGroup query only filters
+  on one field (`teacherId ==`) with no `orderBy` — Firestore's API
+  rejected a plain `indexes: [...]` entry for this with `HTTP 400: this
+  index is not necessary, configure using single field index controls`.
+  Single-field-only collectionGroup filters must go under
+  `fieldOverrides`, not `indexes`, in `firestore.indexes.json` — a
+  composite-index entry with exactly one field is invalid.
 
-**5. Teacher notification buttons for propose-to-teacher — parity with the
-student side (#2).** Previously, when a *student* proposed a reschedule/
-cancellation, the teacher got a plain-text bot notification with no
-buttons at all — had to go to the website to respond. Now sends an
-interactive keyboard too, to every connected channel at once (#3 made this
-possible — 0, 1, or 2 messages per proposal).
-- New `botMessages.RESCHEDULE_KEYBOARDS_FOR_TEACHER`/
-  `CANCELLATION_KEYBOARDS_FOR_TEACHER(lessonId, studentId)` — unlike the
-  student-facing keyboards, Telegram's `callback_data` must carry **both**
-  ids explicitly (`t_confirm_resch_<lessonId>_<studentId>`, kept to a
-  short prefix to stay under Telegram's 64-byte `callback_data` limit once
-  both Firestore auto-ids are appended — a real constraint hit here for
-  the first time in this codebase) since the teacher's chat has no student
-  doc to resolve identity through the way a student's own chat does.
-- `sendMessageToTeacher` (`teacherNotifier.js`) now takes
-  `{telegramReplyMarkup, vkKeyboard}` options and returns an **array** of
-  `{platform, chatId, messageId}` (0–2 entries), not a single object like
-  the student-facing `sendReminderToStudent` — the teacher can have both
-  channels connected. `createNotification` surfaces this as
-  `sentMessages` (plural) alongside the existing singular `sentMessage`.
-- `lesson.teacherProposalMessage: Array<{platform, chatId, messageId}>` —
-  sibling field to `proposalMessage`, same deletion lifecycle.
-  `deleteProposalMessages` (renamed from `deleteProposalMessage`, #2) now
-  handles both the single student message and the teacher array in one
-  pass.
-- `telegram.js`'s `handleCallbackQuery` and `vk.js`'s `handleCallbackEvent`
-  gained matching `teacher_*` branches, checked before the student-side
-  ones, calling `confirmReschedule(...， "teacher")` etc. directly (no
-  chat-identity lookup needed, ids come from the callback payload).
+**5. Full timezone-handling rewrite** — explicit reversal of a prior
+architectural decision (Phase 4a's first pass had kept "schedule slots are
+always Moscow wall-clock time" as a fixed invariant; the user later called
+this a mistake and asked for a full pass). New principle, applied
+everywhere: **a user always enters and always sees time in their own
+saved timezone** (`teachers/{uid}.timezone` / `students/{id}.timezone`),
+falling back to `Europe/Moscow` only as a technical default for a profile
+with no timezone saved yet — never as a data-type-specific special case.
+- Schedule slots (`functions/core/schedule.js`): `getNextLessonDateForSlot`/
+  `getNextLessonDate`/`getUpcomingLessonDates` now take the *teacher's*
+  timezone as a parameter (resolved from `teachers/{teacherId}.timezone`
+  in `core/lessons.js`/`core/googleCalendar.js`) instead of a hardcoded
+  `SCHEDULE_TIME_ZONE` constant (renamed `DEFAULT_TIME_ZONE`, now purely a
+  fallback).
+- Reschedule proposals (teacher: `upcoming-lesson-card.jsx`; student:
+  `StudentDashboard.jsx`'s `ProposeRescheduleDialog`) and the extra-lesson
+  form (`extra-lesson-dialog.jsx`) all convert form input through the
+  *actor's* own timezone now, via three new helpers in `src/lib/timezone.js`
+  (`localInputsToUtcDate`/`datetimeLocalToUtcDate`/`utcDateToLocalInput`) —
+  these reuse the project's existing hand-rolled `zonedTimeToUtc`/
+  `getZonedParts` math (already in `src/lib/schedule.js`, now exported)
+  rather than adding `date-fns-tz` as a new dependency, since the existing
+  code is algorithmically the same technique.
+- Bot messages: all ~15 message-builder functions in
+  `functions/core/botMessages.js` (`formatMoscowDateTime` and every
+  `RESCHEDULE_*`/`CANCELLATION_*`/`ASSIGNMENT_*`/`MATERIAL_ADDED`/
+  `EXTRA_LESSON_ASSIGNED`/`HOMEWORK_SUBMITTED_TO_TEACHER`) now take an
+  explicit `timeZone` param. Central resolution point:
+  `createNotification` (`functions/core/notifier.js`) now resolves the
+  *recipient's* timezone itself (`teachers/{teacherId}.timezone` for
+  `target:"teacher"`, `studentData.timezone` for `target:"student"`) and
+  accepts `text` as either a plain string or a `(timeZone) => string`
+  builder — every call site in `core/lessons.js` that used to build one
+  shared message string for both a student- and teacher-facing
+  notification of the same event now passes a builder, so each recipient's
+  copy renders in *their own* timezone even when the two differ.
+  `parseRescheduleDateInput` (student typing "ДД.ММ ЧЧ:ММ" to a bot) now
+  interprets that text in the student's own saved timezone too.
+- Exam date (`MyGoalCard`) deliberately left untouched — date-only field,
+  fixed noon, not a timezone concern.
 
-**6. Base UI `Dialog.Backdrop` discovery: a "nested" dialog skips its own
-backdrop by default.** The bot-disconnect confirmation dialog (#3), opened
-from inside the already-open notifications-bell dialog, rendered with no
-dimming/blur behind it at all. Root cause, found by reading
-`node_modules/@base-ui/react/dialog/backdrop/DialogBackdrop.js` directly:
-`enabled: forceRender || !nested` — Base UI auto-detects "this Dialog.Root
-has an ancestor Dialog.Root already open" via React context (not something
-opted into) and skips rendering `Backdrop` at all unless `forceRender` is
-explicitly passed, on the assumption the outer dialog's own backdrop is
-enough. **Fix**: new `elevated` boolean prop on `TeacherDialogContent`
-(`theme-ui.jsx`) — bumps Backdrop/Popup from `z-[100]`/`z-[101]` to
-`z-[110]`/`z-[111]` *and* passes `forceRender={elevated}` to the Backdrop.
-**Any future "confirmation dialog opened from inside another already-open
-TeacherDialog" needs `elevated` — without it, Base UI silently produces no
-backdrop at all, not just a z-index problem.**
+**6. VK bot "not connected" indicator investigated (not conclusively
+fixed).** Diagnosis showed the read path (`subscribeToTeacherContact`,
+`src/firebase/teacherConnect.js`) and the write path (bot connect token
+redemption, `resolveTeacherConnectToken`) already agree on the same
+correct path — `teachers/{teacherId}/integrations/teacherContact` — so
+the original "two migrated-at-different-times paths" hypothesis was
+wrong. Most likely explanation given the Rules-publish timing (see #4
+above): a `permission-denied` on this one-doc read, previously swallowed
+silently by `subscribeToTeacherContact`'s `onError` (just `console.error`).
+Fixed the swallowing — `TeacherBotConnectStatus` now surfaces the error
+code visibly instead of defaulting to "не подключён" — but whether the
+underlying Rules gap is actually the cause is **still unconfirmed**, since
+this doc's Rule (unlike the six list queries above) isn't obviously tied
+to a missing query filter. Needs the user to actually see what error code
+now shows up.
 
-**7. Popover z-index fix, same underlying class of bug as #6.**
-`TeacherPopoverContent`'s Positioner was `z-[100]` — same level as
-`TeacherDialogContent`'s Backdrop, so a Popover opened from a trigger
-living inside an open Dialog rendered *behind* the Dialog's own Popup
-(`z-[101]`). Bumped to `z-[110]` (Popovers should always be topmost
-regardless of what they're opened from).
+**7. Video call link save/read — path confirmed correct, not yet
+retested against published Rules.** `VideoCallSettings.jsx` writes and
+`StudentDashboard.jsx` reads both use the same
+`teachers/{teacherId}/integrations/videoCall` path
+(`src/firebase/videoCall.js`) — no path mismatch found. Given the Rules
+publish, this may turn out to have the same silent-permission-denied
+symptom as #6; not yet independently retested this session.
 
-**8. `UpcomingLessonsListDialog` — student-row's lesson button now shows
-every upcoming lesson, not just the nearest one.** Button renamed
-"Следующий урок" → "Следующие уроки" (`student-row.jsx`). Now that a
-student can have multiple weekly schedule slots, jumping straight to the
-single soonest lesson hid the rest. New
-`src/components/teacher/upcoming-lessons-list-dialog.jsx`: queries
-`subscribeToAllUpcomingLessons(studentId)` (already scoped to one student,
-no `collectionGroup`), filters client-side to a 21-day window on top of
-that function's own existing 45-min past-due grace period, renders each
-lesson via `UpcomingLessonCard`.
-- **Extraction**: `UpcomingLessonCard`, `RescheduleDialog`,
-  `CancelLessonDialog` (plus their two small helpers) moved out of
-  `TeacherDashboard.jsx` into new `src/components/teacher/
-  upcoming-lesson-card.jsx`, so "Ближайшие уроки" (all students) and the
-  new per-student dialog share one implementation instead of duplicating
-  ~350 lines of row/dialog logic. `TeacherDashboard.jsx` now just imports
-  `UpcomingLessonCard`.
+**8. Google Calendar per-subject event colors — already implemented,
+no fix needed.** Diagnosed rather than assumed: `colorIdForStudent`
+(`core/googleCalendar.js`) already maps subject → Google's fixed 1–11
+`colorId` palette and is already passed into both `buildEventResourceForSlot`
+and `createExtraLessonEvent`'s API calls.
 
-**9. Cancellation-history fix — the two cancellation paths now behave
-identically.** `confirmCancellation` (two-sided, student-confirmed) used
-to `lessonRef.delete()` the doc outright; `cancelLessonDirectly` (teacher
-one-sided) already set `status: "cancelled"` and kept the doc. Changed
-`confirmCancellation` to match `cancelLessonDirectly`'s shape exactly —
-only the "how the lesson gets closed out" line changed, Calendar-event
-deletion and both-sides notifications untouched.
-- **History queries needed zero changes** — audited every history view
-  (`LessonHistoryDialog`/`LessonHistory` preview on the student page,
-  `StudentLessonHistoryModal` on the teacher's per-student view) and all
-  three already filtered `status !== "upcoming"`, which is inclusive of
-  `"cancelled"` by construction. Only the *display* needed updating:
-  `lesson-history.jsx`'s local `Badge` gained a `cancelled` tone
-  (`bg-destructive/10 text-destructive`) shown instead of attendance/
-  homework/rating badges (hidden entirely for a cancelled lesson — not
-  meaningful, the lesson never happened); `StudentLessonHistoryModal`'s row
-  gained the same signal via `TeacherStatusBadge tone="red"` (the
-  *teacher*-realm badge component, deliberately not the student-realm
-  local `Badge` — these two badge systems are intentionally separate per
-  session 9's own note, kept that way here too).
-- `HomeworkLessonDialog` also gained an `isCancelled` guard
-  (`lesson?.status === "cancelled"`) — opening a cancelled lesson (now
-  reachable via "Открыть" in the teacher's history modal, previously
-  impossible since cancelled docs never existed) shows a compact read-only
-  "Отменён" block instead of the normal editable-upcoming-lesson form; the
-  "Урок прошёл" footer button is hidden for it too.
-- Deployed just `confirmCancellation` (the only backend change) — first
-  deploy attempt of the whole session that succeeded on the very first
-  try, no CPU-quota retry needed.
+**9. Extra-lesson Google Calendar sync bug — confirmed and fixed.**
+`confirmReschedule`/`confirmCancellation`/`cancelLessonDirectly`
+(`core/lessons.js`) all defaulted `slotIndex` to `0` and looked up
+`student.googleEventIds[slotIndex]` unconditionally — for an extra
+(unscheduled) lesson (`isExtraLesson: true, slotIndex: null`), this
+either found nothing or, worse, silently touched **slot 0's recurring
+event** instead. Fixed with one shared helper, `resolveLessonEventId(lesson,
+student)`, used in all three places — returns `lesson.googleEventId`
+directly for an extra lesson, the slot-indexed lookup otherwise. Also
+fixed `confirmReschedule`'s `durationMinutes` calc for the same reason
+(was reading `scheduleSlots[0]`, now reads `lesson.durationMinutes` for
+an extra lesson).
 
-**10. Weekly income audit — confirmed correct, no fix needed.**
-`subscribeToIncomeLessons` (`src/firebase/lessons.js`) queries
-`where("status", "in", ["upcoming", "completed"])` — structurally excludes
-`"cancelled"` by omission (stronger than an explicit `!== "cancelled"`
-check: cancelled lessons are never even fetched). Already correctly
-included both this-week `upcoming` and already-`completed` lessons before
-this session's `confirmCancellation` fix (#9) — that fix didn't require
-any change here, just confirmed the existing filter still holds.
+**10. ExamRadar "no history yet" status/color desync — confirmed and
+fixed.** `computeRadarMetrics` (`src/lib/examRadar.js`) used to fall
+through to `status: "red"` for the zero-pace-history case (a goal just
+set, nothing completed yet), with `buildRadarComment` patching in
+different, calmer text for that case — the status/color itself stayed
+red/"Критическое отставание" regardless. Added a dedicated `"no_data"`
+status. In `exam-radar.jsx`, `STATUS_COLOR["no_data"]` was previously
+absent entirely, resolving to `null` and producing invalid CSS
+(`color-mix(in oklab, null 12%, transparent)`) — added an explicit
+`var(--muted-foreground)` token and a "Пока нет данных" label.
 
-**11. Smaller UI-only requests, all deployed via hosting:**
-- **Video call availability window**: new `updateVideoCallAvailability`
-  (`functions/reminders.js` + `index.js`, `onSchedule("*/5 * * * *")`, no
-  secrets — never sends a bot message) sets
-  `lesson.videoCallAvailable: boolean` true within `[now-10min,
-  now+60min]` of the lesson's effective date. Student's "Подключиться"
-  button is now always visible (was previously always-enabled if a global
-  URL was set, a real security/UX gap since the same link is shared across
-  every student) but `disabled` until this flag is true, caption switches
-  between "Ссылка активна" / "Станет доступна ближе к началу урока".
-- **Curriculum template score field**: `ege` default 70/step 10 (was 0,
-  no step), `oge` default 4/step 1 — native number-input spinner arrows
-  restored just for this one field via a new scoped `.spinner-visible`
-  CSS class (`index.css`), not by removing the app-wide arrow-hiding rule
-  (which stays in effect for every other number input).
-- **`window.confirm`/`window.alert` replaced** in
-  `pending-registrations.jsx` with the same custom-dialog pattern as
-  `DeleteStudentDialog` (`student-row.jsx`) — root cause of "delete
-  doesn't work" here was the same IAM-invoker bug as #4, not the dialog
-  mechanism itself, but the dialog was still worth replacing on its own
-  merits (matches the rest of the app's confirm-dialog convention).
-- **Финансы "Оплачено" number**: `text-sm` → `text-lg` for faster
-  at-a-glance reading.
-- **Registration invite dialog** ("Добавить ученика"): now copies the same
-  ready-made invite text already used in "Ожидают регистрации" (two
-  buttons, VK/Telegram) instead of showing a raw link to copy. New shared
-  `buildRegistrationMessages(token)` in `src/lib/registration-links.js`
-  used by both places. Deleted now-dead `copyable-link.jsx`.
-- **`TeacherLogin` redesigned** to match the student `LoginScreen`'s
-  visual system (grain/blob decorative background, `glass-panel` card,
-  same layout/copy structure) with the teacher's rose `--gradient-orb`
-  accent instead of the student page's orange `--gradient-warm`. Kept the
-  actual input as a single password field, not `PinInput`'s 4-digit grid —
-  teacher auth is real Firebase email+password (`signInTeacher`), porting
-  a 4-box PIN UI would break on any real password longer than 4
-  characters; this is a functional constraint, not a visual-parity gap.
+**11. Smaller fixes bundled in the same pass**: curriculum topic/prototype
+`TruncatedList` limit in the teacher's expanded student row raised from 3
+to 5; `HomeworkLessonDialog`'s "Сохранить"/"Сохранить и завершить урок"
+recolored to the accent `SolidBtn`, "Урок прошёл" recolored to neutral
+`GhostBtn` (previously all three shared one ambiguous styling); settings
+gear icon in the teacher header restyled to match the circular
+`glass-tile` shape already used by the notification bell and video-call
+icon; a topic picker (uncovered `curriculumProgress` items, shown only if
+a program is assigned) added above the free-text "Тема урока" field in
+`HomeworkLessonDialog`'s upcoming mode, selecting fills the text field as
+an editable default rather than locking it; `MyGoalCard` branches on
+`examTarget === "oge"` — "Целевая оценка" label, 2–5 range, step 1,
+default 4, vs. ЕГЭ's unchanged "Целевой балл" 0–100 (`setStudentGoal`'s
+existing `Math.max(0, Math.min(100, ...))` clamp already accommodates
+2–5 without any backend change).
 
-**Deploy notes**: the CPU-quota flake (see [[techContext]]) hit hard and
-repeatedly this session — one batch failed **19 functions at once**. Every
-single failure was eventually resolved via the established one-at-a-time
-`firebase deploy --only functions:<name>` retry loop; zero functions were
-left stuck. Several `firebase deploy --only hosting` runs for the
-UI-only items, all clean first try.
+**Deploy notes**: functions + hosting deployed together twice this
+session (`firebase deploy --only functions,hosting`), both clean on the
+attempted run (one earlier attempt in a related sub-session hit the
+already-documented CLI source-load timeout flake, succeeded on retry).
+Firestore indexes deployed separately (`--only firestore:indexes`), one
+redeploy needed after the single-field `fieldOverrides` correction above.
 
 ## Loose ends / things to check next session
 
-- **The Cloud Shell IAM-fix script (#4) was run once, covering the 30
-  `onCall`/`onRequest` functions that existed at that point.** Any new
-  `onCall`/`onRequest` function added later needs the same check if it
-  ever shows the "internal error, zero real invocation logs" symptom —
-  don't assume a fresh deploy always self-heals the invoker binding.
-- **Student "Отменить урок" button (flagged unresolved since session 4)**
-  — never explicitly re-tested this session, but the IAM-invoker bug class
-  found in #4 is exactly the kind of failure that would produce this
-  symptom (client call apparently does nothing, no server-side trace).
-  Plausibly already fixed as a side effect of the Cloud Shell script; needs
-  an explicit re-test before removing this from known issues for real.
-- None of this session's teacher-notification-button flow (#5) has been
-  manually verified end-to-end by a real bot conversation (student
-  proposes → teacher sees buttons in both connected channels → pressing
-  one resolves it → the other channel's message also disappears).
-- `UpcomingLessonsListDialog` (#8) not yet manually verified against a
-  real multi-slot student (two lessons/week, confirm both show up within
-  the 3-week window).
-- Cancelled-lesson display (#9) not yet manually verified against a real
-  cancelled lesson in both the student's own history and the teacher's
-  per-student history modal.
+- **VK bot connect status (#6) and video-call link save (#7) — still not
+  conclusively confirmed fixed.** Both are plausible casualties of the
+  same Rules-publish event that broke the six list queries in #4, but
+  neither has been independently verified against the *actual* error code
+  now surfacing (VkBotConnectStatus at least now shows one instead of
+  silently defaulting to "не подключён" — read what it says next time).
+- **Firestore index build status not independently confirmable from this
+  environment** — `gcloud` isn't installed, and `firebase firestore:indexes`
+  only echoes the *configured* indexes, not their Building/Enabled state.
+  User needs to check Firebase Console → Firestore → Indexes directly if
+  a `failed-precondition` recurs shortly after an index deploy.
+- **The uncommitted pile is now very large** (67 files) — all of Phase 4a
+  plus the full timezone rewrite plus the tenant-isolation fixes are
+  sitting only in the working tree / deployed-from-source, same standing
+  risk flagged every session since session 9's regression scare. Worth
+  raising explicitly.
+- Session 11's still-open items carried forward unresolved (see
+  `changelog/2026-08-august.md` for detail): `ContactButton` native-app
+  handoff not verified on a real phone, mobile-layout pass not visually
+  confirmed at ~375px, Telegram username contact-editing UX not manually
+  walked through, `disconnectGoogleCalendar`'s actual disconnect→reconnect
+  flow not manually verified, curriculum templates feature never verified
+  end-to-end, student "Отменить урок" button long-flagged-unresolved
+  (possibly fixed as a side effect of the session 10 IAM fix, never
+  re-tested).
+- `notifications/` collection's list-query tenant isolation is a known,
+  deliberately-deferred gap (explicit user instruction this session) —
+  don't fix it opportunistically without being asked.
