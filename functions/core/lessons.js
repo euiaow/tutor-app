@@ -386,18 +386,44 @@ async function createExtraLesson(studentId, date) {
 
   logger.info("createExtraLesson: lesson created", { studentId, lessonId: lessonRef.id })
 
-  const googleEventId = await createExtraLessonEvent(teacherId, student, date, 60)
-  if (googleEventId) {
-    await lessonRef.update({ googleEventId })
-  }
+  // Calendar sync and the student notification are independent of each
+  // other (neither reads the other's result) — run them concurrently
+  // instead of back-to-back. Calendar failure is secondary to "the lesson
+  // exists" (already committed above), so it's caught and logged here
+  // rather than allowed to fail the whole call — same reasoning
+  // confirmReschedule/confirmCancellation already apply to their own
+  // Calendar calls.
+  const calendarPromise = createExtraLessonEvent(teacherId, student, date, 60)
+    .then(async (googleEventId) => {
+      if (googleEventId) {
+        await lessonRef.update({ googleEventId })
+      }
+    })
+    .catch((error) => {
+      logger.error("createExtraLesson: failed to create Google Calendar event", {
+        studentId,
+        lessonId: lessonRef.id,
+        error,
+      })
+    })
 
-  await createNotification({
+  const notificationPromise = createNotification({
     target: "student",
     studentId,
     type: "extra_lesson_assigned",
     text: (tz) => botMessages.EXTRA_LESSON_ASSIGNED(date, tz),
     lessonId: lessonRef.id,
+    teacherId,
   })
+
+  const [, notificationResult] = await Promise.allSettled([calendarPromise, notificationPromise])
+  if (notificationResult.status === "rejected") {
+    logger.error("createExtraLesson: createNotification failed", {
+      studentId,
+      lessonId: lessonRef.id,
+      error: notificationResult.reason,
+    })
+  }
 
   return { lessonId: lessonRef.id }
 }
@@ -582,7 +608,8 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
     }
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
-    const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
+    const studentData = studentSnapshot.exists ? studentSnapshot.data() : null
+    const studentName = studentData?.name ?? "Ученик"
     const keyboards = botMessages.RESCHEDULE_KEYBOARDS_FOR_TEACHER(lessonId, studentId)
     const { sentMessages } = await createNotification({
       target: "teacher",
@@ -590,6 +617,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
       type: "reschedule_proposed_to_teacher",
       text: (tz) => botMessages.RESCHEDULE_PROPOSED_TO_TEACHER(studentName, oldDate, proposedDate, tz),
       lessonId,
+      teacherId: studentData?.teacherId ?? null,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
@@ -614,53 +642,86 @@ async function confirmReschedule(studentId, lessonId, confirmedBy) {
   assertRescheduleActor(confirmedBy)
 
   const lessonRef = lessonsRef(studentId).doc(lessonId)
-  const snapshot = await lessonRef.get()
-  if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Урок не найден")
-  }
-  const lesson = snapshot.data()
-
   const expectedStatus = confirmedBy === "teacher" ? "pending_teacher" : "pending_student"
-  if (lesson.rescheduleStatus !== expectedStatus) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Нельзя подтвердить собственное предложение о переносе, либо перенос уже обработан",
-    )
-  }
+
+  // Read-check-write used to be three separate steps, which meant two
+  // near-simultaneous confirms (e.g. the student confirming from both the
+  // lesson banner and the notification panel at once) could both read
+  // "still pending" before either committed its write — both would then
+  // proceed to send notifications and touch Calendar. A Firestore
+  // transaction makes the read+check+write atomic: a second transaction
+  // racing the same document is forced to retry, re-reads the now-updated
+  // status, and correctly throws failed-precondition instead of duplicating
+  // the whole confirm flow. `lesson` below is the PRE-update snapshot data,
+  // same shape every call site after this already expected.
+  const lesson = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(lessonRef)
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Урок не найден")
+    }
+    const lessonData = snapshot.data()
+
+    if (lessonData.rescheduleStatus !== expectedStatus) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Нельзя подтвердить собственное предложение о переносе, либо перенос уже обработан",
+      )
+    }
+    if (!lessonData.rescheduleProposedDate) {
+      throw new HttpsError("failed-precondition", "Нет предложенной даты переноса")
+    }
+
+    // `date` itself moves to the confirmed time (not just rescheduledDate)
+    // so every other system that reads it — reminders' date-range queries,
+    // the "Ближайшие уроки" ordering, etc. — picks up the real lesson time.
+    // rescheduled/rescheduledDate stay set as the "this was moved" audit
+    // trail the UI badges off of.
+    transaction.update(lessonRef, {
+      date: lessonData.rescheduleProposedDate,
+      rescheduledDate: lessonData.rescheduleProposedDate,
+      rescheduleStatus: "confirmed",
+      rescheduled: true,
+      proposalMessage: null,
+      teacherProposalMessage: null,
+    })
+
+    return lessonData
+  })
 
   const proposedDate = lesson.rescheduleProposedDate
-  if (!proposedDate) {
-    throw new HttpsError("failed-precondition", "Нет предложенной даты переноса")
-  }
-
   const originalDate = lesson.date?.toDate?.() ?? null
-
-  // `date` itself moves to the confirmed time (not just rescheduledDate) so
-  // every other system that reads it — reminders' date-range queries, the
-  // "Ближайшие уроки" ordering, etc. — picks up the real lesson time.
-  // rescheduled/rescheduledDate stay set as the "this was moved" audit trail
-  // the UI badges off of.
-  await lessonRef.update({
-    date: proposedDate,
-    rescheduledDate: proposedDate,
-    rescheduleStatus: "confirmed",
-    rescheduled: true,
-    proposalMessage: null,
-    teacherProposalMessage: null,
-  })
 
   logger.info("confirmReschedule: reschedule confirmed", { studentId, lessonId, confirmedBy })
 
-  await deleteProposalMessages(lesson, { studentId, lessonId })
+  // deleteProposalMessages (bot cleanup, never throws) and the student read
+  // (needed below for both notifications' teacherId and the Calendar
+  // resolution) don't depend on each other — run them together instead of
+  // sequentially, and reuse this one read everywhere below instead of
+  // re-reading the student doc a second time for Calendar resolution.
+  const [, studentSnapshot] = await Promise.all([
+    deleteProposalMessages(lesson, { studentId, lessonId }),
+    db.collection(STUDENTS_COLLECTION).doc(studentId).get(),
+  ])
+  const student = studentSnapshot.exists ? studentSnapshot.data() : null
+  const teacherId = student?.teacherId ?? null
 
   const newDate = proposedDate.toDate()
   const buildMessage = (tz) => botMessages.RESCHEDULE_CONFIRMED(newDate, tz)
 
-  await createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId })
-  await createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId })
-
-  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
-  const student = studentSnapshot.exists ? studentSnapshot.data() : null
+  // Notifying the student and the teacher are independent of each other —
+  // parallelize with allSettled (not all()) so one side's failure can never
+  // swallow the other's already-in-flight send, and log-only rather than
+  // throw since the reschedule itself (the write above) already succeeded.
+  const [studentNotifResult, teacherNotifResult] = await Promise.allSettled([
+    createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId, teacherId }),
+    createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId, teacherId }),
+  ])
+  if (studentNotifResult.status === "rejected") {
+    logger.error("confirmReschedule: student notification failed", { studentId, lessonId, error: studentNotifResult.reason })
+  }
+  if (teacherNotifResult.status === "rejected") {
+    logger.error("confirmReschedule: teacher notification failed", { studentId, lessonId, error: teacherNotifResult.reason })
+  }
 
   const eventId = resolveLessonEventId(lesson, student)
 
@@ -779,7 +840,8 @@ async function proposeCancellation(studentId, lessonId, initiator) {
     }
   } else {
     const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
-    const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
+    const studentData = studentSnapshot.exists ? studentSnapshot.data() : null
+    const studentName = studentData?.name ?? "Ученик"
     const keyboards = botMessages.CANCELLATION_KEYBOARDS_FOR_TEACHER(lessonId, studentId)
     const { sentMessages } = await createNotification({
       target: "teacher",
@@ -787,6 +849,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
       type: "cancellation_proposed_to_teacher",
       text: (tz) => botMessages.CANCELLATION_PROPOSED_TO_TEACHER(studentName, lessonDate, tz),
       lessonId,
+      teacherId: studentData?.teacherId ?? null,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
     })
@@ -811,45 +874,59 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
   assertCancellationActor(confirmedBy)
 
   const lessonRef = lessonsRef(studentId).doc(lessonId)
-  const snapshot = await lessonRef.get()
-  if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Урок не найден")
-  }
-  const lesson = snapshot.data()
-
   const expectedStatus = confirmedBy === "teacher" ? "pending_teacher" : "pending_student"
-  if (lesson.cancellationStatus !== expectedStatus) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Нельзя подтвердить собственное предложение об отмене, либо отмена уже обработана",
-    )
-  }
+
+  // Same atomic read-check-write fix as confirmReschedule above — see its
+  // comment for the full reasoning. `lesson` is the PRE-update snapshot
+  // data, same shape every call site below already expected.
+  const lesson = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(lessonRef)
+    if (!snapshot.exists) {
+      throw new HttpsError("not-found", "Урок не найден")
+    }
+    const lessonData = snapshot.data()
+
+    if (lessonData.cancellationStatus !== expectedStatus) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Нельзя подтвердить собственное предложение об отмене, либо отмена уже обработана",
+      )
+    }
+
+    // Marked "cancelled" rather than deleted — same as the one-way
+    // cancelLessonDirectly path below — so it still shows up in lesson
+    // history instead of vanishing. The next occurrence of this slot still
+    // gets its own draft created lazily (dailyReminderMidday's
+    // ensureUpcomingDraftsForAllStudents, or whenever the teacher next opens
+    // this student's card), not eagerly here, so a cancellation doesn't
+    // immediately "resurrect" a lesson.
+    transaction.update(lessonRef, { status: "cancelled" })
+
+    return lessonData
+  })
 
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
   const eventId = resolveLessonEventId(lesson, student)
+  const teacherId = student?.teacherId ?? null
 
-  if (eventId) {
-    try {
-      await deleteLessonEvent(student?.teacherId ?? null, eventId)
-    } catch (error) {
-      logger.error("confirmCancellation: failed to delete Google Calendar event", {
-        studentId,
-        lessonId,
-        error,
+  // Calendar delete and cleaning up the bot proposal messages are
+  // independent of each other and of the status write above (already
+  // committed by the transaction) — run them together instead of one after
+  // another. Calendar is guarded so its failure can't take the cleanup down
+  // with it, same as every other Calendar call site in this file.
+  const calendarPromise = eventId
+    ? deleteLessonEvent(teacherId, eventId).catch((error) => {
+        logger.error("confirmCancellation: failed to delete Google Calendar event", {
+          studentId,
+          lessonId,
+          error,
+        })
       })
-    }
-  }
+    : Promise.resolve()
 
-  // Marked "cancelled" rather than deleted — same as the one-way
-  // cancelLessonDirectly path below — so it still shows up in lesson
-  // history instead of vanishing. The next occurrence of this slot still
-  // gets its own draft created lazily (dailyReminderMidday's
-  // ensureUpcomingDraftsForAllStudents, or whenever the teacher next opens
-  // this student's card), not eagerly here, so a cancellation doesn't
-  // immediately "resurrect" a lesson.
-  await lessonRef.update({ status: "cancelled" })
+  await Promise.all([calendarPromise, deleteProposalMessages(lesson, { studentId, lessonId })])
 
   logger.info("confirmCancellation: cancellation confirmed, lesson marked cancelled", {
     studentId,
@@ -857,13 +934,19 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
     confirmedBy,
   })
 
-  await deleteProposalMessages(lesson, { studentId, lessonId })
-
   const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
   const buildMessage = (tz) => botMessages.CANCELLATION_CONFIRMED(lessonDate, tz)
 
-  await createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId })
-  await createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId })
+  const [studentNotifResult, teacherNotifResult] = await Promise.allSettled([
+    createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId, teacherId }),
+    createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId, teacherId }),
+  ])
+  if (studentNotifResult.status === "rejected") {
+    logger.error("confirmCancellation: student notification failed", { studentId, lessonId, error: studentNotifResult.reason })
+  }
+  if (teacherNotifResult.status === "rejected") {
+    logger.error("confirmCancellation: teacher notification failed", { studentId, lessonId, error: teacherNotifResult.reason })
+  }
 }
 
 // One-way cancellation — teacher cancels outright, no cancellationStatus/
@@ -892,20 +975,23 @@ async function cancelLessonDirectly(studentId, lessonId) {
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
 
   const eventId = resolveLessonEventId(lesson, student)
+  const teacherId = student?.teacherId ?? null
 
-  if (eventId) {
-    try {
-      await deleteLessonEvent(student?.teacherId ?? null, eventId)
-    } catch (error) {
-      logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
-        studentId,
-        lessonId,
-        error,
+  // Calendar delete and the "cancelled" status write don't depend on each
+  // other — run them together (see confirmCancellation for the same
+  // pattern). Status write stays inside the await, so it's still fully
+  // resolved before this function returns.
+  const calendarPromise = eventId
+    ? deleteLessonEvent(teacherId, eventId).catch((error) => {
+        logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
+          studentId,
+          lessonId,
+          error,
+        })
       })
-    }
-  }
+    : Promise.resolve()
 
-  await lessonRef.update({ status: "cancelled" })
+  await Promise.all([calendarPromise, lessonRef.update({ status: "cancelled" })])
 
   logger.info("cancelLessonDirectly: lesson cancelled directly by teacher", { studentId, lessonId })
 
@@ -916,6 +1002,7 @@ async function cancelLessonDirectly(studentId, lessonId) {
     type: "lesson_cancelled_by_teacher",
     text: (tz) => botMessages.LESSON_CANCELLED_BY_TEACHER(lessonDate, tz),
     lessonId,
+    teacherId,
   })
 }
 
@@ -1026,24 +1113,39 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
     db.collection(STUDENTS_COLLECTION).doc(studentId).get(),
     lessonsRef(studentId).doc(lessonId).get(),
   ])
-  const studentName = studentSnapshot.exists ? studentSnapshot.data().name : "Ученик"
+  const studentData = studentSnapshot.exists ? studentSnapshot.data() : null
+  const studentName = studentData?.name ?? "Ученик"
+  const teacherId = studentData?.teacherId ?? null
   const lessonData = lessonSnapshot.exists ? lessonSnapshot.data() : null
   const lessonDate = lessonData?.rescheduledDate?.toDate?.() ?? lessonData?.date?.toDate?.() ?? null
 
-  await createNotification({
-    target: "teacher",
-    studentId,
-    type: "homework_submitted",
-    text: (tz) => botMessages.HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate, tz),
-    lessonId,
-  })
-  await createNotification({
-    target: "student",
-    studentId,
-    type: "homework_received",
-    text: botMessages.HOMEWORK_RECEIVED(),
-    lessonId,
-  })
+  // Notifying the teacher (submission arrived) and the student
+  // (confirmation it was received) are independent — see confirmReschedule
+  // for the same allSettled reasoning.
+  const [teacherNotifResult, studentNotifResult] = await Promise.allSettled([
+    createNotification({
+      target: "teacher",
+      studentId,
+      type: "homework_submitted",
+      text: (tz) => botMessages.HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate, tz),
+      lessonId,
+      teacherId,
+    }),
+    createNotification({
+      target: "student",
+      studentId,
+      type: "homework_received",
+      text: botMessages.HOMEWORK_RECEIVED(),
+      lessonId,
+      teacherId,
+    }),
+  ])
+  if (teacherNotifResult.status === "rejected") {
+    logger.error("recordHomeworkSubmission: teacher notification failed", { studentId, lessonId, error: teacherNotifResult.reason })
+  }
+  if (studentNotifResult.status === "rejected") {
+    logger.error("recordHomeworkSubmission: student notification failed", { studentId, lessonId, error: studentNotifResult.reason })
+  }
 
   return lessonId
 }

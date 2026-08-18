@@ -88,14 +88,21 @@ async function deductLessonFromBalance(studentId, lessonId) {
   const lowBalanceThreshold = student.lowBalanceThreshold ?? 1
   if (newBalance <= lowBalanceThreshold) {
     const studentName = student.name ?? "Ученик"
+    const teacherId = student.teacherId ?? null
 
-    await createNotification({
-      target: "teacher",
-      studentId,
-      type: "low_balance",
-      text: `💰 Баланс ${studentName} на исходе — осталось ${newBalance} занятий`,
-      lessonId,
-    })
+    // Teacher and (optional) student low-balance notifications are
+    // independent of each other — run together instead of one after the
+    // other, same reasoning as core/lessons.js's paired notification sites.
+    const notifications = [
+      createNotification({
+        target: "teacher",
+        studentId,
+        type: "low_balance",
+        text: `💰 Баланс ${studentName} на исходе — осталось ${newBalance} занятий`,
+        lessonId,
+        teacherId,
+      }),
+    ]
 
     if (student.autoRemindLowBalance === true) {
       const studentText =
@@ -103,13 +110,23 @@ async function deductLessonFromBalance(studentId, lessonId) {
           ? "Пакет занятий закончился. Свяжись, чтобы продлить, когда будет удобно."
           : `Осталось ${newBalance} занятие(-ий) в оплаченном пакете. Дай знать, если нужно продлить — буду рада продолжать с тобой заниматься! 🙂`
 
-      await createNotification({
-        target: "student",
-        studentId,
-        type: "low_balance",
-        text: studentText,
-        lessonId,
-      })
+      notifications.push(
+        createNotification({
+          target: "student",
+          studentId,
+          type: "low_balance",
+          text: studentText,
+          lessonId,
+          teacherId,
+        }),
+      )
+    }
+
+    const results = await Promise.allSettled(notifications)
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.error("deductLessonFromBalance: notification failed", { studentId, lessonId, error: result.reason })
+      }
     }
   }
 

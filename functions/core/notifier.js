@@ -48,6 +48,7 @@ async function createNotification({
   type,
   text,
   lessonId = null,
+  teacherId: providedTeacherId = null,
   telegramReplyMarkup,
   vkKeyboard,
 }) {
@@ -55,12 +56,20 @@ async function createNotification({
   // (see the `target === "teacher"` branch below) — pulled up front now so
   // it can also serve the student-timezone lookup, rather than reading the
   // student doc twice.
+  //
+  // `teacherId` is an optional perf shortcut: most call sites already have
+  // the student doc loaded in scope for other reasons by the time they call
+  // this. When passed, and the target is "teacher", the whole read below is
+  // skipped entirely — teacherId is all a "teacher" target ever needed the
+  // student doc for. A "student" target still needs the read regardless
+  // (studentData.timezone), so passing teacherId there saves nothing; it's
+  // harmless to pass anyway, callers don't need to know which case applies.
   let studentData = null
-  let teacherId = null
-  if (studentId) {
+  let teacherId = providedTeacherId
+  if (studentId && (target === "student" || !teacherId)) {
     const studentSnapshot = await db.collection("students").doc(studentId).get()
     studentData = studentSnapshot.exists ? studentSnapshot.data() : null
-    teacherId = studentData?.teacherId ?? null
+    teacherId = teacherId ?? (studentData?.teacherId ?? null)
   }
 
   const timeZone = await resolveRecipientTimeZone(target, studentData, teacherId)
@@ -71,6 +80,7 @@ async function createNotification({
   await ref.set({
     target,
     studentId,
+    teacherId,
     type,
     text: resolvedText,
     read: false,

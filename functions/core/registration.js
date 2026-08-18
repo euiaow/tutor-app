@@ -212,6 +212,7 @@ async function completeRegistration(token, fullName, accessCode, identity = null
       studentId,
       type: "self_service_registration",
       text: `🎓 Новый ученик зарегистрировался самостоятельно: ${fullName.trim()}. Заполни его предмет, ставку и программу в панели.`,
+      teacherId: tokenSnapshot.data().teacherId ?? null,
     })
   }
 
