@@ -444,8 +444,25 @@ function buildPreLessonMessage(lessonDate, homeworkText, timeZone = "Europe/Mosc
   )
 }
 
-function buildTenMinuteReminderMessage(homeworkText) {
-  return "🔔 Урок через 10 минут!" + (homeworkText ? "\nНе забудь домашку, если ещё не отправил(а)." : "")
+// Regression fix: this used to hardcode "через 10 минут" regardless of the
+// lesson's actual remaining time — dailyReminderTenMin's own window is
+// [now, now+15min], so "10 минут" could visibly be wrong by several
+// minutes. Restored to the same dynamic-diff pattern buildPreLessonMessage
+// already uses (diffMinutes computed from the real effective lesson date,
+// time formatted in the recipient's own timeZone) — this call site had
+// simply never been updated to take lessonDate/timeZone params when that
+// pattern was introduced elsewhere, an oversight rather than a deliberate
+// static message.
+function buildTenMinuteReminderMessage(lessonDate, homeworkText, timeZone = "Europe/Moscow") {
+  const now = new Date()
+  const lessonTime = toDate(lessonDate)
+  const diffMinutes = Math.max(0, Math.round((lessonTime - now) / 60000))
+  const lessonTimeFormatted = formatMoscowTime(lessonTime, timeZone)
+
+  return (
+    `🔔 Урок через ${diffMinutes} минут! (в ${lessonTimeFormatted})` +
+    (homeworkText ? "\nНе забудь домашку, если ещё не отправил(а)." : "")
+  )
 }
 
 module.exports = {

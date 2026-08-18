@@ -64,6 +64,15 @@ export function ExamRadar({
 }) {
   const [expanded, setExpanded] = useState(false)
 
+  // Same "Целевая оценка" (no "баллов") for ОГЭ vs. "Целевой балл: N баллов"
+  // for ЕГЭ that MyGoalCard (StudentDashboard.jsx) already applies to the
+  // goal-editing form — this component renders the same value read-only and
+  // needs the identical branching, not a shared constant, since the two
+  // components differ in every other way (label position, editability).
+  const isOge = examTarget === "oge"
+  const goalLabel = isOge ? "Целевая оценка" : "Целевой балл"
+  const goalValue = isOge ? `${targetScore}` : `${targetScore} баллов`
+
   const examLabel = `До ${formatExamTarget(examTarget)} по ${formatSubjects(subject)}`
   const { status, daysLeft, requiredTotal, completedRequired } = metrics
   const percent = requiredTotal > 0 ? Math.round((completedRequired / requiredTotal) * 100) : 0
@@ -99,7 +108,7 @@ export function ExamRadar({
 
       {isPast ? (
         <p className="mt-5 text-sm text-secondary-foreground">
-          Цель была: <b className="font-display">{targetScore} баллов</b>
+          {goalLabel} была: <b className="font-display">{goalValue}</b>
         </p>
       ) : (
         <div className="mt-5 flex flex-wrap items-end gap-x-4 gap-y-2">
@@ -108,7 +117,7 @@ export function ExamRadar({
           </p>
           <p className="ml-auto inline-flex items-center gap-2 text-sm text-secondary-foreground">
             <Target className="h-4 w-4 text-primary" aria-hidden="true" />
-            Цель: <b className="font-display">{targetScore} баллов</b>
+            {goalLabel}: <b className="font-display">{goalValue}</b>
           </p>
         </div>
       )}
@@ -177,14 +186,14 @@ export function ExamRadar({
             <div className={`mt-4 grid gap-6 ${requiredPrototypes.length > 0 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
               <CurriculumItemGroups
                 icon={BookOpen}
-                title={`Темы для ${targetScore} баллов`}
+                title={`Темы для ${goalValue}`}
                 covered={coveredTopics}
                 remaining={remainingTopics}
               />
               {requiredPrototypes.length > 0 ? (
                 <CurriculumItemGroups
                   icon={Layers}
-                  title={`Прототипы для ${targetScore} баллов`}
+                  title={`Прототипы для ${goalValue}`}
                   covered={coveredPrototypes}
                   remaining={remainingPrototypes}
                 />

@@ -45,7 +45,6 @@ const {
   dailyReminderMidday,
   dailyReminderPreLesson,
   dailyReminderTenMin,
-  updateVideoCallAvailability,
 } = require("./reminders")
 const { createTeacherConnectToken } = require("./core/teacherConnect")
 const { deleteStudent, updateStudentSettings } = require("./core/students")
@@ -760,14 +759,6 @@ exports.dailyReminderTenMin = onSchedule(
     await dailyReminderTenMin()
   },
 )
-
-// Every 5 minutes — maintains the videoCallAvailable flag on upcoming
-// lessons (see reminders.js). No secrets: this never sends a bot message,
-// only writes a Firestore field the student dashboard's video-call button
-// reads.
-exports.updateVideoCallAvailability = onSchedule("*/5 * * * *", async () => {
-  await updateVideoCallAvailability()
-})
 
 // Both secrets are needed even though this is the Telegram webhook: a
 // homework submission here can trigger a teacher notification, and the

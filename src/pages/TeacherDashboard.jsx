@@ -8,6 +8,7 @@ import {
   Loader2,
   LogOut,
   Play,
+  RefreshCw,
   Settings,
 } from "lucide-react"
 import { usePageTitle } from "@/lib/usePageTitle"
@@ -205,7 +206,10 @@ function TeacherNotificationsBell() {
   const hasUnread = notifications.some((notification) => !notification.read)
 
   useEffect(() => {
-    const unsubscribe = subscribeToTeacherNotifications(setNotifications, (firestoreError) => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsubscribe = subscribeToTeacherNotifications(uid, setNotifications, (firestoreError) => {
       console.error("Failed to load notifications:", firestoreError)
     })
 
@@ -334,6 +338,13 @@ export function TeacherDashboard() {
   const [embedUrl, setEmbedUrl] = useState(null)
   const [embedError, setEmbedError] = useState(null)
   const embedLoading = googleCalendarConnected === true && !embedUrl && !embedError
+  // Bumped on every manual refresh click, used as the iframe's `key` — a
+  // changed key forces React to unmount/remount the element (not just
+  // reassign its `src`), which reliably reloads the embed. No auto-refresh
+  // after actions (extra lesson/reschedule/cancel): Google's own indexing
+  // delay for embed updates is unpredictable, so a manual button is the
+  // actual fix, not a timer guessing at the delay.
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0)
   const [upcomingLessons, setUpcomingLessons] = useState([])
   const [completedLessons, setCompletedLessons] = useState([])
   const [completedVisibleCount] = useState(5)
@@ -610,7 +621,18 @@ export function TeacherDashboard() {
                 <p className="mt-1 text-xs text-muted-foreground">Google Calendar не подключён</p>
               ) : null}
             </div>
-            <ExtraLessonDialog students={students} />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCalendarRefreshKey((key) => key + 1)}
+                aria-label="Обновить календарь"
+                title="Обновить календарь"
+                className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-foreground/70 transition hover:text-rose-deep"
+              >
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </button>
+              <ExtraLessonDialog students={students} />
+            </div>
           </div>
 
           <DisconnectGoogleCalendarDialog
@@ -640,6 +662,7 @@ export function TeacherDashboard() {
               </div>
             ) : embedUrl ? (
               <iframe
+                key={calendarRefreshKey}
                 title="Google Calendar"
                 src={`${embedUrl}&mode=WEEK`}
                 style={{ border: 0, width: "100%", height: "600px" }}

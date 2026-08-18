@@ -67,7 +67,6 @@ function mapLessonDoc(id, studentId, data) {
     cancellationInitiator: data.cancellationInitiator ?? null,
     coveredTopics: Array.isArray(data.coveredTopics) ? data.coveredTopics : [],
     coveredPrototypes: Array.isArray(data.coveredPrototypes) ? data.coveredPrototypes : [],
-    videoCallAvailable: Boolean(data.videoCallAvailable),
   }
 }
 

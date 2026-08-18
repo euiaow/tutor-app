@@ -564,6 +564,25 @@ function NextLessonPlate({ studentId, hasSchedule }) {
     return () => unsub()
   }, [lesson?.teacherId])
 
+  // Client-only availability window (replaces the old server-maintained
+  // lesson.videoCallAvailable flag + its every-5-minutes Cloud Function —
+  // deliberately simplified: a plain time comparison against the lesson's
+  // own effective date, ticking every 30s while mounted, no server round
+  // trip). Active from 3 minutes before the lesson through 60 minutes after
+  // its start, matching the window the old scheduler used.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const videoCallActive = (() => {
+    const effectiveDate = lesson?.rescheduledDate ?? lesson?.date
+    if (!effectiveDate) return false
+    const msUntilStart = effectiveDate.getTime() - now.getTime()
+    return msUntilStart <= 3 * 60 * 1000 && msUntilStart >= -60 * 60 * 1000
+  })()
+
   async function handleHomeworkFileChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -786,13 +805,13 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                     Видеовстреча
                   </p>
                   <p className="mt-1 truncate text-sm text-secondary-foreground">
-                    {lesson.videoCallAvailable ? "Ссылка активна" : "Станет доступна ближе к началу урока"}
+                    {videoCallActive ? "Ссылка активна" : "Станет доступна за 3 минуты до начала"}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => openExternalLink(videoCallUrl)}
-                  disabled={!lesson.videoCallAvailable}
+                  disabled={!videoCallActive}
                   className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
                   style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
                 >

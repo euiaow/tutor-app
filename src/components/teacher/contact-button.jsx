@@ -52,24 +52,66 @@ function ContactLink({ url, className, title, ariaLabel, children }) {
   )
 }
 
+// A full https://t.me/... link (not the numeric tg://user?id=... form a
+// bot-registered student without a manual override falls back to) is the
+// only contactUrl shape this form re-derives a bare username from — every
+// other shape (vk.com link, tg://, a custom URL) round-trips through the
+// raw link field instead.
+function isTelegramUsernameLink(url) {
+  return /^https:\/\/t\.me\//i.test(url ?? "")
+}
+
+// Bare "t.me/username" / "vk.com/username" (no protocol) is a plausible
+// paste — add https:// so the stored contactUrl is always a real URL.
+// Anything else (already has a protocol, or an unrecognized shape) is
+// stored exactly as typed, per spec — never blocks unusual input.
+function normalizeRawLink(value) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^(t\.me|vk\.com)\//i.test(trimmed)) {
+    return `https://${trimmed}`
+  }
+  return trimmed
+}
+
 function EditContactUrlPopover({ student, children }) {
-  const isTelegram = student.platform === "telegram"
   const [open, setOpen] = useState(false)
-  const [value, setValue] = useState("")
+  const [linkValue, setLinkValue] = useState("")
+  const [usernameValue, setUsernameValue] = useState("")
   const [saving, setSaving] = useState(false)
 
   function handleOpenChange(nextOpen) {
     if (nextOpen) {
-      setValue(isTelegram ? extractTelegramUsername(student.contactUrl) : (student.contactUrl ?? ""))
+      if (isTelegramUsernameLink(student.contactUrl)) {
+        setUsernameValue(extractTelegramUsername(student.contactUrl))
+        setLinkValue("")
+      } else {
+        setUsernameValue("")
+        setLinkValue(student.contactUrl ?? "")
+      }
     }
     setOpen(nextOpen)
   }
 
   async function handleSave() {
     if (saving) return
+
+    // Telegram username field wins when filled — same reasoning as the
+    // old Telegram-only form: a bare username is easier to paste
+    // correctly than a full link. Both empty means "don't touch the
+    // existing value", not "clear it".
+    let nextContactUrl
+    if (usernameValue.trim()) {
+      nextContactUrl = buildTelegramContactUrl(usernameValue)
+    } else if (linkValue.trim()) {
+      nextContactUrl = normalizeRawLink(linkValue)
+    } else {
+      setOpen(false)
+      return
+    }
+
     setSaving(true)
     try {
-      const nextContactUrl = isTelegram ? buildTelegramContactUrl(value) : value.trim() || null
       await updateStudentContactUrl(student.id, nextContactUrl)
       setOpen(false)
     } catch (error) {
@@ -83,32 +125,30 @@ function EditContactUrlPopover({ student, children }) {
     <TeacherPopover open={open} onOpenChange={handleOpenChange}>
       {children}
       <TeacherPopoverContent>
-        {isTelegram ? (
-          <Field label="Username в Telegram">
-            <input
-              type="text"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              disabled={saving}
-              placeholder="username"
-              className={teacherInputCls}
-            />
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              Просто имя пользователя, например ivanov — без @ и без ссылки
-            </p>
-          </Field>
-        ) : (
-          <Field label="Ссылка для связи">
-            <input
-              type="url"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              disabled={saving}
-              placeholder="https://t.me/username или https://vk.com/username"
-              className={teacherInputCls}
-            />
-          </Field>
-        )}
+        <Field label="Ссылка">
+          <input
+            type="text"
+            value={linkValue}
+            onChange={(e) => setLinkValue(e.target.value)}
+            disabled={saving}
+            placeholder="https://t.me/username или https://vk.com/username"
+            className={teacherInputCls}
+          />
+        </Field>
+
+        <Field label="Telegram username (без ссылки)">
+          <input
+            type="text"
+            value={usernameValue}
+            onChange={(e) => setUsernameValue(e.target.value)}
+            disabled={saving}
+            placeholder="username"
+            className={teacherInputCls}
+          />
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Если заполнено — используется вместо поля "Ссылка", без @ и без ссылки
+          </p>
+        </Field>
 
         <TeacherModalFooter>
           <TeacherCancelBtn onClick={() => setOpen(false)} disabled={saving} />

@@ -29,10 +29,11 @@ function mapNotificationDoc(id, data) {
 // TeacherDashboard.jsx), since 20 most-recent notifications is small enough
 // to just filter client-side rather than running a second query for the
 // unread count.
-export function subscribeToTeacherNotifications(onData, onError, maxResults = 20) {
+export function subscribeToTeacherNotifications(teacherId, onData, onError, maxResults = 20) {
   const notificationsQuery = query(
     collection(db, "notifications"),
     where("target", "==", "teacher"),
+    where("teacherId", "==", teacherId),
     orderBy("createdAt", "desc"),
     fsLimit(maxResults),
   )

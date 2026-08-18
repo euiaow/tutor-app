@@ -106,9 +106,15 @@ async function createEventFromResource(teacherId, resource) {
     return null
   }
 
+  logger.info("createEventFromResource: sending", { requestColorId: resource.colorId, resource })
   const response = await calendar.events.insert({
     calendarId: CALENDAR_ID,
     requestBody: resource,
+  })
+  logger.info("createEventFromResource: Calendar API response", {
+    eventId: response.data.id,
+    responseColorId: response.data.colorId ?? null,
+    requestColorId: resource.colorId,
   })
 
   return response.data.id
@@ -121,10 +127,16 @@ async function updateEventFromResource(teacherId, eventId, resource) {
   }
 
   try {
-    await calendar.events.update({
+    logger.info("updateEventFromResource: sending", { eventId, requestColorId: resource.colorId, resource })
+    const response = await calendar.events.update({
       calendarId: CALENDAR_ID,
       eventId,
       requestBody: resource,
+    })
+    logger.info("updateEventFromResource: Calendar API response", {
+      eventId,
+      responseColorId: response.data.colorId ?? null,
+      requestColorId: resource.colorId,
     })
   } catch (error) {
     if (isNotFoundError(error)) {
