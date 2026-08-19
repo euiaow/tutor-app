@@ -4,6 +4,7 @@ import {
   AlertCircle,
   BookOpen,
   Check,
+  ChevronDown,
   ExternalLink,
   FileText,
   ListChecks,
@@ -13,7 +14,16 @@ import {
   X,
 } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
-import { GhostBtn, SolidBtn, TeacherDialog, teacherInputCls, teacherTextareaCls } from "@/components/teacher/theme-ui"
+import {
+  GhostBtn,
+  SolidBtn,
+  TeacherDialog,
+  TeacherPopover,
+  TeacherPopoverContent,
+  TeacherPopoverTrigger,
+  teacherInputCls,
+  teacherTextareaCls,
+} from "@/components/teacher/theme-ui"
 import {
   addLessonMaterial,
   completeLesson,
@@ -118,6 +128,76 @@ function CoveredMaterialChecklist({ label, items, selections, onChange, allCover
         ))}
       </div>
     </div>
+  )
+}
+
+// Designed replacement for the old plain <select> — grouped by "Темы"/
+// "Прототипы" subheadings (a prototype's title is just as valid a lesson
+// topic as a topic's own, so both lists feed the same picker now, not just
+// topics). Picking an item only fills the free-text field below; the
+// teacher can still edit it afterward — same as the old select's behavior.
+function ProgramTopicPicker({ program, programLabel, onSelect, disabled }) {
+  const [open, setOpen] = useState(false)
+  const topics = program?.topics?.filter((item) => !item.covered) ?? []
+  const prototypes = program?.prototypes?.filter((item) => !item.covered) ?? []
+
+  if (topics.length === 0 && prototypes.length === 0) return null
+
+  function handlePick(title) {
+    onSelect(title)
+    setOpen(false)
+  }
+
+  return (
+    <TeacherPopover open={open} onOpenChange={setOpen}>
+      <TeacherPopoverTrigger
+        disabled={disabled}
+        className={`${teacherInputCls} flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        <span className="truncate text-muted-foreground">
+          {programLabel ? `Выбрать из программы «${programLabel}»` : "Выбрать из программы..."}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      </TeacherPopoverTrigger>
+      <TeacherPopoverContent align="start" className="max-h-72 overflow-y-auto scrollbar-hidden">
+        <div className="flex flex-col gap-3">
+          {topics.length > 0 ? (
+            <div>
+              <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Темы</p>
+              <div className="mt-1 flex flex-col gap-0.5">
+                {topics.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handlePick(item.title)}
+                    className="truncate rounded-[0.75rem] px-2.5 py-1.5 text-left text-sm text-ink transition hover:bg-glass-strong/60"
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {prototypes.length > 0 ? (
+            <div>
+              <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Прототипы</p>
+              <div className="mt-1 flex flex-col gap-0.5">
+                {prototypes.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handlePick(item.title)}
+                    className="truncate rounded-[0.75rem] px-2.5 py-1.5 text-left text-sm text-ink transition hover:bg-glass-strong/60"
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </TeacherPopoverContent>
+    </TeacherPopover>
   )
 }
 
@@ -494,27 +574,12 @@ export function HomeworkLessonDialog({
               <Section icon={BookOpen} label="Тема урока">
                 {isEditableAssignment ? (
                   <div className="flex flex-col gap-2">
-                    {selectedProgram?.topics?.some((item) => !item.covered) ? (
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value) setTopic(e.target.value)
-                        }}
-                        disabled={saving}
-                        className={teacherInputCls}
-                      >
-                        <option value="">
-                          {selectedProgramLabel ? `Выбрать из программы «${selectedProgramLabel}»` : "Выбрать из программы..."}
-                        </option>
-                        {selectedProgram.topics
-                          .filter((item) => !item.covered)
-                          .map((item) => (
-                            <option key={item.id} value={item.title}>
-                              {item.title}
-                            </option>
-                          ))}
-                      </select>
-                    ) : null}
+                    <ProgramTopicPicker
+                      program={selectedProgram}
+                      programLabel={selectedProgramLabel}
+                      onSelect={setTopic}
+                      disabled={saving}
+                    />
                     <input
                       type="text"
                       value={topic}
