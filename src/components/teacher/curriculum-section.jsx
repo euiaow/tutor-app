@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react"
+import { BookOpen, ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react"
 import {
   Field,
   GhostBtn,
@@ -21,11 +21,12 @@ import {
   getCurriculumTemplates,
   updateCurriculumTemplate,
 } from "@/firebase/curriculum"
-import { createExamType, subscribeToExamTypes } from "@/firebase/examTypes"
+import { createExamType, subscribeToExamTypes, LANGUAGE_LEVELS } from "@/firebase/examTypes"
 import { auth } from "@/firebase/firebase"
 import { SubjectPicker } from "@/components/teacher/subject-picker"
 
 const NEW_EXAM_TYPE_VALUE = "__new__"
+const DEFAULT_LANGUAGE_LEVEL_INDEX = LANGUAGE_LEVELS.indexOf("B1")
 
 // Reasonable Russian default for a freshly created type's scaleUnitLabel —
 // the inline "+ Создать новый тип экзамена" form (per spec) only asks for
@@ -57,12 +58,45 @@ function ExamTypeTag({ examType }) {
   )
 }
 
+// A1-C2 progression for language_level topics/prototypes — same idea as
+// ЕГЭ's minScoreRequired (a topic only counts toward the radar once the
+// target reaches this threshold), just stepped through a fixed 6-level
+// scale with arrows instead of typed into a number input, since there's no
+// natural "type a level" input and the range is tiny/ordinal.
+function LevelStepper({ value, min, max, onChange, title }) {
+  const index = value ?? DEFAULT_LANGUAGE_LEVEL_INDEX
+  return (
+    <div className="flex shrink-0 items-center gap-1" title={title}>
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(min, index - 1))}
+        disabled={index <= min}
+        aria-label="Понизить уровень"
+        className="glass-tile grid size-7 place-items-center rounded-full text-muted-foreground transition hover:text-rose-deep disabled:opacity-40"
+      >
+        <ChevronDown className="size-3.5" aria-hidden="true" />
+      </button>
+      <span className="w-9 text-center text-sm font-semibold text-ink">{LANGUAGE_LEVELS[index]}</span>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(max, index + 1))}
+        disabled={index >= max}
+        aria-label="Повысить уровень"
+        className="glass-tile grid size-7 place-items-center rounded-full text-muted-foreground transition hover:text-rose-deep disabled:opacity-40"
+      >
+        <ChevronUp className="size-3.5" aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
 function RowList({
   label,
   rows,
   onChange,
   addLabel,
   showScore,
+  levelMode,
   scoreMin,
   scoreMax,
   scoreStep,
@@ -94,17 +128,27 @@ function RowList({
               className={`${teacherInputCls} min-w-0 flex-1`}
             />
             {showScore ? (
-              <input
-                type="number"
-                min={scoreMin}
-                max={scoreMax}
-                step={scoreStep}
-                value={row.minScoreRequired ?? 0}
-                onChange={(e) => updateRow(index, "minScoreRequired", Number(e.target.value) || 0)}
-                placeholder={scorePlaceholder}
-                title={scoreTitle}
-                className={`${teacherInputCls} spinner-visible w-16! shrink-0 px-2! text-center`}
-              />
+              levelMode ? (
+                <LevelStepper
+                  value={row.minScoreRequired ?? scoreDefault}
+                  min={scoreMin}
+                  max={scoreMax}
+                  onChange={(next) => updateRow(index, "minScoreRequired", next)}
+                  title={scoreTitle}
+                />
+              ) : (
+                <input
+                  type="number"
+                  min={scoreMin}
+                  max={scoreMax}
+                  step={scoreStep}
+                  value={row.minScoreRequired ?? 0}
+                  onChange={(e) => updateRow(index, "minScoreRequired", Number(e.target.value) || 0)}
+                  placeholder={scorePlaceholder}
+                  title={scoreTitle}
+                  className={`${teacherInputCls} spinner-visible w-16! shrink-0 px-2! text-center`}
+                />
+              )
             ) : null}
             <button
               type="button"
@@ -134,13 +178,27 @@ function RowList({
 // whichever examType is actually selected — "none" scaleType behaves like
 // the old "school" case (no score field at all).
 function fieldConfigForExamType(examType) {
-  // "language_level" topics/prototypes don't get a per-item level
-  // threshold — the target is the student's overall level (in "Мои цели"),
-  // not "this topic matters once you reach B1", so it's treated like
-  // "none" here (no score field on rows), not given its own select-based
-  // row input.
-  if (!examType || examType.scaleType === "none" || examType.scaleType === "language_level") {
+  if (!examType || examType.scaleType === "none") {
     return { showScore: false, topicsLabel: "Темы", prototypesLabel: "Прототипы" }
+  }
+
+  // Same requiredItems() mechanic Exam Radar already uses for score/grade
+  // scales (topic counts once minScoreRequired <= targetScore) — reused
+  // as-is here since targetScore for "language_level" is already stored as
+  // an index into LANGUAGE_LEVELS (see firebase/examTypes.js), so a
+  // 0-5 minScoreRequired compares against it exactly the same way a
+  // numeric score would.
+  if (examType.scaleType === "language_level") {
+    return {
+      showScore: true,
+      levelMode: true,
+      scoreMin: 0,
+      scoreMax: LANGUAGE_LEVELS.length - 1,
+      scoreStep: 1,
+      scoreDefault: DEFAULT_LANGUAGE_LEVEL_INDEX,
+      topicsLabel: "Тема и минимальный уровень, с которого актуальна",
+      prototypesLabel: "Прототип и минимальный уровень, с которого актуален",
+    }
   }
 
   const unit = examType.scaleUnitLabel || ""
@@ -357,6 +415,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
             onChange={setTopics}
             addLabel="Добавить тему"
             showScore={fieldConfig.showScore}
+            levelMode={fieldConfig.levelMode}
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
             scoreStep={fieldConfig.scoreStep}
@@ -370,6 +429,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
             onChange={setPrototypes}
             addLabel="Добавить прототип"
             showScore={fieldConfig.showScore}
+            levelMode={fieldConfig.levelMode}
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
             scoreStep={fieldConfig.scoreStep}

@@ -721,7 +721,7 @@ export function TeacherDashboard() {
           </div>
         </Panel>
 
-        <div className="grid gap-5 lg:grid-cols-[2fr_3fr]">
+        <div className={`grid gap-5 ${completedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
           {completedLessons.length > 0 ? (
             <Panel>
               <div className="flex items-center justify-between">
