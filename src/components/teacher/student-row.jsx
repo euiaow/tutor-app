@@ -53,12 +53,41 @@ import { formatSubjects } from "@/lib/student-profile"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
 import { SubjectPicker } from "@/components/teacher/subject-picker"
+import { getSubjectColorClass } from "@/lib/subjects"
 
 const MAX_SCHEDULE_SLOTS = 7
 const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
 
-function defaultSlot() {
-  return { dayOfWeek: 1, time: "16:00", durationMinutes: 60 }
+function defaultSlot(subjects) {
+  return { dayOfWeek: 1, time: "16:00", durationMinutes: 60, subject: subjects?.[0] ?? null }
+}
+
+// Only shown when the student has 2+ subjects — with exactly one, the slot
+// just inherits it via the read-time fallback (resolveSlotSubject on the
+// backend, same rule on the frontend), no picker needed. Single-select per
+// slot (unlike the profile's own multi-select Предметы picker above), same
+// visual language as StudentTags' subject chips.
+function SlotSubjectTags({ subjects, value, onChange, disabled }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {subjects.map((name) => {
+        const selected = name === value
+        return (
+          <button
+            key={name}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(name)}
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              selected ? getSubjectColorClass(name) : "bg-glass-strong text-muted-foreground hover:text-ink"
+            }`}
+          >
+            {name}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 // Self-drawn (Шаг 5) in the same language as the mockup's own 3 modals —
@@ -596,7 +625,7 @@ function StudentEditModal({ student, open, onOpenChange }) {
   }
 
   function addSlot() {
-    setSlots((prev) => (prev.length >= MAX_SCHEDULE_SLOTS ? prev : [...prev, defaultSlot()]))
+    setSlots((prev) => (prev.length >= MAX_SCHEDULE_SLOTS ? prev : [...prev, defaultSlot(subject)]))
   }
 
   function removeSlot(index) {
@@ -644,35 +673,45 @@ function StudentEditModal({ student, open, onOpenChange }) {
             </p>
             <div className="mt-3 space-y-2">
               {slots.map((slot, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <select
-                    value={slot.dayOfWeek}
-                    onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))}
-                    disabled={saving}
-                    className={teacherInputCls}
-                  >
-                    {DAY_OPTIONS.map((day) => (
-                      <option key={day.value} value={day.value}>
-                        {day.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="time"
-                    value={slot.time}
-                    onChange={(e) => updateSlot(index, "time", e.target.value)}
-                    disabled={saving}
-                    className={`${teacherInputCls} max-w-36`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeSlot(index)}
-                    disabled={saving}
-                    aria-label="Удалить слот"
-                    className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive disabled:opacity-50"
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                  </button>
+                <div key={index} className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={slot.dayOfWeek}
+                      onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))}
+                      disabled={saving}
+                      className={teacherInputCls}
+                    >
+                      {DAY_OPTIONS.map((day) => (
+                        <option key={day.value} value={day.value}>
+                          {day.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="time"
+                      value={slot.time}
+                      onChange={(e) => updateSlot(index, "time", e.target.value)}
+                      disabled={saving}
+                      className={`${teacherInputCls} max-w-36`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeSlot(index)}
+                      disabled={saving}
+                      aria-label="Удалить слот"
+                      className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive disabled:opacity-50"
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                  {subject.length >= 2 ? (
+                    <SlotSubjectTags
+                      subjects={subject}
+                      value={slot.subject ?? subject[0]}
+                      onChange={(name) => updateSlot(index, "subject", name)}
+                      disabled={saving}
+                    />
+                  ) : null}
                 </div>
               ))}
               <button
@@ -833,6 +872,7 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
       <HomeworkLessonDialog
         studentId={student.id}
         studentName={student.name}
+        student={student}
         lessonId={openLessonId}
         open={Boolean(openLessonId)}
         onOpenChange={(next) => !next && setOpenLessonId(null)}

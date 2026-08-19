@@ -35,10 +35,20 @@ async function getTeacherTimeZone(teacherId) {
 const CALENDAR_COLOR_IDS = ["9", "3", "11", "5", "4", "7", "1", "2", "10", "6", "8"]
 const DEFAULT_CALENDAR_COLOR_ID = "8" // Graphite
 
+function colorIdForSubject(subjectName) {
+  if (!subjectName) return DEFAULT_CALENDAR_COLOR_ID
+  return CALENDAR_COLOR_IDS[getSubjectColorIndex(subjectName) % CALENDAR_COLOR_IDS.length]
+}
+
 function colorIdForStudent(student) {
-  const firstSubject = student.subject?.[0]
-  if (!firstSubject) return DEFAULT_CALENDAR_COLOR_ID
-  return CALENDAR_COLOR_IDS[getSubjectColorIndex(firstSubject) % CALENDAR_COLOR_IDS.length]
+  return colorIdForSubject(student.subject?.[0])
+}
+
+// A slot's own subject wins when set; falls back to the student's first
+// subject for slots saved before per-slot binding existed (see
+// normalizeScheduleSlots) — same backward-compat rule the frontend UI uses.
+function resolveSlotSubject(student, slot) {
+  return slot?.subject || student.subject?.[0] || null
 }
 
 function pad(number) {
@@ -70,7 +80,7 @@ function buildEventResourceForSlot(student, slot, teacherTimeZone) {
     start: { dateTime: toFloatingDateTime(start), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
     recurrence: ["RRULE:FREQ=WEEKLY"],
-    colorId: colorIdForStudent(student),
+    colorId: colorIdForSubject(resolveSlotSubject(student, slot)),
   }
 
   if (student.topic) {

@@ -110,6 +110,11 @@ function normalizeScheduleSlots(data) {
       dayOfWeek: slot.dayOfWeek,
       time: slot.time,
       durationMinutes: slot.durationMinutes ?? 60,
+      // Per-slot subject binding — new field, most existing slot docs don't
+      // have it yet. Left null here on purpose (no backfill); callers that
+      // care resolve the effective subject via resolveSlotSubject in
+      // googleCalendar.js, defaulting to student.subject[0] at read time.
+      subject: typeof slot.subject === "string" && slot.subject ? slot.subject : null,
     }))
   }
 

@@ -123,6 +123,7 @@ function PastLessonCard({ lesson, studentName, student }) {
       <HomeworkLessonDialog
         studentId={lesson.studentId}
         studentName={studentName}
+        student={student}
         lessonId={lesson.id}
         open={dialogOpen}
         onOpenChange={setDialogOpen}

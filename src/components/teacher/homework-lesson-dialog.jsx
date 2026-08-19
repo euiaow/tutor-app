@@ -133,6 +133,7 @@ function Section({ icon: Icon, label, children }) {
 export function HomeworkLessonDialog({
   studentId,
   studentName,
+  student,
   lessonId: fixedLessonId,
   open,
   onOpenChange,
@@ -181,6 +182,11 @@ export function HomeworkLessonDialog({
   const [topicSelections, setTopicSelections] = useState([])
   const [prototypeSelections, setPrototypeSelections] = useState([])
   const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? null
+  // Runs once per open, after both the lesson (for slotIndex) and the
+  // programs list have loaded — if the lesson has a real slotIndex (not an
+  // extra lesson) and that slot has a resolvable subject, prefer the
+  // program matching it over the plain "first assigned program" default.
+  const slotAutoSelectRef = useRef(false)
 
   // Reset so a later re-open starts fresh instead of keeping whatever was
   // left over from the previous time this dialog was open. Done directly in
@@ -200,6 +206,7 @@ export function HomeworkLessonDialog({
       setSelectedProgramId("")
       setTopicSelections([])
       setPrototypeSelections([])
+      slotAutoSelectRef.current = false
     }
     onOpenChange(nextOpen)
   }
@@ -286,6 +293,21 @@ export function HomeworkLessonDialog({
       })
       .catch((error) => console.error("Failed to load programs:", error))
   }, [open, studentId])
+
+  useEffect(() => {
+    if (!open || slotAutoSelectRef.current) return
+    if (!lesson || programs.length === 0) return
+
+    slotAutoSelectRef.current = true
+    if (typeof lesson.slotIndex !== "number") return
+
+    const slot = student?.scheduleSlots?.[lesson.slotIndex]
+    const slotSubject = slot?.subject || student?.subject?.[0] || null
+    if (!slotSubject) return
+
+    const match = programs.find((program) => program.subject === slotSubject)
+    if (match) setSelectedProgramId(match.id)
+  }, [open, lesson, programs, student])
 
   useEffect(() => {
     if (lesson && !initializedAssignmentRef.current) {

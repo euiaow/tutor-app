@@ -113,6 +113,10 @@ export function normalizeScheduleSlots(data) {
       dayOfWeek: slot.dayOfWeek,
       time: slot.time,
       durationMinutes: slot.durationMinutes ?? 60,
+      // Per-slot subject binding — null for slots saved before this field
+      // existed; UI/logic that needs a concrete subject falls back to
+      // student.subject[0] at read time (see resolveSlotSubject callers).
+      subject: typeof slot.subject === "string" && slot.subject ? slot.subject : null,
     }))
   }
 
