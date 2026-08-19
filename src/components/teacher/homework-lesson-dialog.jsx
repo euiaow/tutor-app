@@ -25,8 +25,11 @@ import {
   updateLessonTopic,
 } from "@/firebase/lessons"
 import { getProgramsForStudent, markTopicsCovered } from "@/firebase/curriculum"
+import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
+import { resolveLessonSubject } from "@/lib/subjects"
+import { SubjectTag } from "@/components/student-tags"
 import { useTimeZone } from "@/lib/user-prefs-context"
 
 const ATTENDANCE_OPTIONS = [
@@ -178,6 +181,7 @@ export function HomeworkLessonDialog({
   // No lesson->subject link exists in the data (see Block 4 Phase 4 audit),
   // so the default is just the first assigned program, not a smart guess.
   const [programs, setPrograms] = useState([])
+  const [examTypes, setExamTypes] = useState([])
   const [selectedProgramId, setSelectedProgramId] = useState("")
   const [topicSelections, setTopicSelections] = useState([])
   const [prototypeSelections, setPrototypeSelections] = useState([])
@@ -293,6 +297,19 @@ export function HomeworkLessonDialog({
       })
       .catch((error) => console.error("Failed to load programs:", error))
   }, [open, studentId])
+
+  // Only needed to build the "Выбрать из программы «...»" label below —
+  // named after subject + exam type name, e.g. "Русский ЕГЭ".
+  useEffect(() => {
+    if (!open || !student?.teacherId) {
+      setExamTypes([])
+      return
+    }
+    const unsubscribe = subscribeToExamTypes(student.teacherId, setExamTypes, (error) =>
+      console.error("Failed to load exam types:", error),
+    )
+    return unsubscribe
+  }, [open, student?.teacherId])
 
   useEffect(() => {
     if (!open || slotAutoSelectRef.current) return
@@ -425,6 +442,13 @@ export function HomeworkLessonDialog({
 
   const submissionFiles = lesson?.homework.submission.files ?? []
   const isEditableAssignment = mode === "upcoming" && !isCompleted && !isCancelled
+  const lessonSubject = lesson ? resolveLessonSubject(lesson, student) : null
+  const selectedProgramExamType = selectedProgram
+    ? examTypes.find((type) => type.id === selectedProgram.examTypeId)
+    : null
+  const selectedProgramLabel = selectedProgram
+    ? [selectedProgram.subject, selectedProgramExamType?.name].filter(Boolean).join(" ")
+    : ""
 
   return (
     <TeacherDialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -439,8 +463,11 @@ export function HomeworkLessonDialog({
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">
               {studentName}
             </DialogPrimitive.Title>
-            <DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">
-              {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone) : "Следующий урок"}
+            <DialogPrimitive.Description className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>
+                {lesson?.date ? formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone) : "Следующий урок"}
+              </span>
+              {lessonSubject ? <SubjectTag name={lessonSubject} /> : null}
             </DialogPrimitive.Description>
           </div>
 
@@ -476,7 +503,9 @@ export function HomeworkLessonDialog({
                         disabled={saving}
                         className={teacherInputCls}
                       >
-                        <option value="">Выбрать из программы...</option>
+                        <option value="">
+                          {selectedProgramLabel ? `Выбрать из программы «${selectedProgramLabel}»` : "Выбрать из программы..."}
+                        </option>
                         {selectedProgram.topics
                           .filter((item) => !item.covered)
                           .map((item) => (

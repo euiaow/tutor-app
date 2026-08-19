@@ -2,7 +2,8 @@ import { useEffect, useState } from "react"
 import { ArrowRight, CalendarClock, Check, CircleSlash, Clock, FileText, X } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { ContactIconButton } from "@/components/teacher/contact-button"
-import { StudentTags } from "@/components/student-tags"
+import { SubjectTag } from "@/components/student-tags"
+import { resolveLessonSubject } from "@/lib/subjects"
 import {
   GhostBtn,
   SolidBtn,
@@ -215,6 +216,7 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
   const [cancellationActionPending, setCancellationActionPending] = useState(false)
 
   const isCancelled = lesson.status === "cancelled"
+  const lessonSubject = resolveLessonSubject(lesson, student)
 
   const hasAssignment =
     lesson.homework.assignment.text.trim() !== "" || lesson.homework.assignment.files.length > 0
@@ -311,7 +313,7 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
               <StudentDot />
               <span className="font-semibold text-ink">{studentName}</span>
               {lesson.isExtraLesson ? <TeacherStatusBadge tone="rose">доп.</TeacherStatusBadge> : null}
-              <StudentTags student={student} />
+              {lessonSubject ? <SubjectTag name={lessonSubject} /> : null}
               {isCancelled ? <TeacherStatusBadge tone="red">Урок отменён</TeacherStatusBadge> : null}
               {lesson.rescheduleStatus === "pending_student" ? (
                 <TeacherStatusBadge tone="amber">Ожидает подтверждения ученика</TeacherStatusBadge>

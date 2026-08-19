@@ -9,7 +9,7 @@ import { getSubjectColorClass } from "@/lib/subjects"
 // that list loaded (student-row.jsx, TeacherDashboard.jsx) — callers that
 // don't pass examTypeName just get subject tags, not a crash or a missing
 // "—" placeholder.
-function SubjectTag({ name }) {
+export function SubjectTag({ name }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${getSubjectColorClass(name)}`}>
       {name}

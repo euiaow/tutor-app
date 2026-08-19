@@ -54,3 +54,12 @@ export function getSubjectColorIndex(name) {
 export function getSubjectColorClass(name) {
   return SUBJECT_COLOR_PALETTE[getSubjectColorIndex(name)]
 }
+
+// A slot's own subject wins when set; falls back to the student's first
+// subject for lessons predating per-slot binding (or extra lessons, which
+// have no slotIndex at all) — same rule as the backend's resolveSlotSubject
+// in functions/core/googleCalendar.js.
+export function resolveLessonSubject(lesson, student) {
+  const slot = typeof lesson?.slotIndex === "number" ? student?.scheduleSlots?.[lesson.slotIndex] : null
+  return slot?.subject || student?.subject?.[0] || null
+}
