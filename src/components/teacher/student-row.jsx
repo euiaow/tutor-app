@@ -47,9 +47,11 @@ import {
   removePersonalTopic,
 } from "@/firebase/curriculum"
 import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
-import { SUBJECT_OPTIONS, EXAM_TARGET_OPTIONS, formatExamTarget, formatSubjects } from "@/lib/student-profile"
+import { formatSubjects } from "@/lib/student-profile"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
+import { SubjectPicker } from "@/components/teacher/subject-picker"
+import { subscribeToExamTypes } from "@/firebase/examTypes"
 
 const MAX_SCHEDULE_SLOTS = 7
 const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
@@ -270,10 +272,10 @@ function PersonalProgramDialog({ studentId, open, onOpenChange }) {
 // ScheduleBlock per the requested layout change; profile fields (subject/
 // exam target/rate/auto-remind/curriculum plan) live in the same modal,
 // matching the mockup's own StudentEditModal which combines both.
-function StudentEditModal({ student, open, onOpenChange }) {
+function StudentEditModal({ student, examTypes, open, onOpenChange }) {
   const [slots, setSlots] = useState([])
   const [subject, setSubject] = useState([])
-  const [examTarget, setExamTarget] = useState("school")
+  const [examTypeId, setExamTypeId] = useState("")
   const [hourlyRate, setHourlyRate] = useState(0)
   const [autoRemindLowBalance, setAutoRemindLowBalance] = useState(false)
   const [templates, setTemplates] = useState([])
@@ -293,7 +295,7 @@ function StudentEditModal({ student, open, onOpenChange }) {
 
     setSlots(student.scheduleSlots ?? [])
     setSubject(student.subject ?? [])
-    setExamTarget(student.examTarget ?? "school")
+    setExamTypeId(student.examTypeId ?? examTypes[0]?.id ?? "")
     setHourlyRate(student.hourlyRate ?? 0)
     setAutoRemindLowBalance(Boolean(student.autoRemindLowBalance))
     setTemplateId(student.curriculumSourceTemplateId ?? "")
@@ -334,7 +336,7 @@ function StudentEditModal({ student, open, onOpenChange }) {
         updateStudentSchedule(student.id, slots),
         updateStudentProfile(student.id, {
           subject,
-          examTarget,
+          examTypeId,
           hourlyRate: Number(hourlyRate) || 0,
           autoRemindLowBalance,
         }),
@@ -413,38 +415,24 @@ function StudentEditModal({ student, open, onOpenChange }) {
             </p>
 
             <Field label="Предмет (можно несколько)">
-              <div className="flex flex-wrap gap-2">
-                {SUBJECT_OPTIONS.map((option) => {
-                  const on = subject.includes(option.value)
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => toggleSubject(option.value)}
-                      className={
-                        "rounded-full px-3.5 py-1.5 text-xs font-semibold transition disabled:opacity-50 " +
-                        (on ? "text-primary-foreground" : "glass-tile text-foreground/80 hover:text-rose-deep")
-                      }
-                      style={on ? { background: "var(--gradient-orb)" } : undefined}
-                    >
-                      {option.label}
-                    </button>
-                  )
-                })}
-              </div>
+              <SubjectPicker
+                teacherId={auth.currentUser?.uid ?? null}
+                selected={subject}
+                onToggle={toggleSubject}
+                disabled={saving}
+              />
             </Field>
 
             <Field label="Цель">
               <select
-                value={examTarget}
-                onChange={(e) => setExamTarget(e.target.value)}
+                value={examTypeId}
+                onChange={(e) => setExamTypeId(e.target.value)}
                 disabled={saving}
                 className={teacherInputCls}
               >
-                {EXAM_TARGET_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+                {examTypes.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
                   </option>
                 ))}
               </select>
@@ -681,7 +669,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
   )
 }
 
-export function StudentRow({ student, progressSummary, curriculumTemplates = [] }) {
+export function StudentRow({ student, progressSummary, curriculumTemplates = [], examTypes = [] }) {
   const [expanded, setExpanded] = useState(false)
   const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
@@ -723,6 +711,8 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
     (template) => template.id === student.curriculumSourceTemplateId,
   )?.name
 
+  const examTypeName = examTypes.find((type) => type.id === student.examTypeId)?.name ?? "—"
+
   return (
     <div>
       <div
@@ -747,7 +737,7 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
               <StudentDot />
               <span className="sm:truncate">{student.name}</span>
             </Link>
-            <StudentTags student={student} />
+            <StudentTags student={student} examTypeName={examTypeName === "—" ? null : examTypeName} />
           </div>
           <div className="mt-1.5">
             {percent !== null ? (
@@ -798,7 +788,7 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
                 </div>
                 <div className="mt-1 flex justify-between text-muted-foreground">
                   <span>Цель</span>
-                  <span className="text-ink">{formatExamTarget(student.examTarget)}</span>
+                  <span className="text-ink">{examTypeName}</span>
                 </div>
               </div>
               <div className="mt-4 flex justify-between border-t border-glass-border pt-3 text-sm">
@@ -861,7 +851,12 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [] 
         onOpenChange={setIsDeleteDialogOpen}
       />
 
-      <StudentEditModal student={student} open={isEditModalOpen} onOpenChange={setIsEditModalOpen} />
+      <StudentEditModal
+        student={student}
+        examTypes={examTypes}
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
+      />
 
       <StudentLessonHistoryModal
         student={student}

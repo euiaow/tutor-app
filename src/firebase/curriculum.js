@@ -29,7 +29,7 @@ function mapTemplateDoc(id, data) {
   return {
     id,
     name: data.name ?? "",
-    examTarget: data.examTarget ?? "school",
+    examTypeId: data.examTypeId ?? null,
     topics: Array.isArray(data.topics) ? data.topics : [],
     prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
   }
@@ -47,11 +47,11 @@ export async function getCurriculumTemplates(teacherId) {
   return snapshot.docs.map((document) => mapTemplateDoc(document.id, document.data()))
 }
 
-export async function createCurriculumTemplate({ name, examTarget, topics, prototypes }) {
+export async function createCurriculumTemplate({ name, examTypeId, topics, prototypes }) {
   const ref = collection(db, CURRICULUM_TEMPLATES_COLLECTION)
   await addDoc(ref, {
     name,
-    examTarget,
+    examTypeId,
     topics,
     prototypes,
     // Multi-tenancy Phase 2: templates are admin-only, teacher-owned config
@@ -63,11 +63,11 @@ export async function createCurriculumTemplate({ name, examTarget, topics, proto
   })
 }
 
-export async function updateCurriculumTemplate(templateId, { name, examTarget, topics, prototypes }) {
+export async function updateCurriculumTemplate(templateId, { name, examTypeId, topics, prototypes }) {
   const ref = doc(db, CURRICULUM_TEMPLATES_COLLECTION, templateId)
   await updateDoc(ref, {
     name,
-    examTarget,
+    examTypeId,
     topics,
     prototypes,
     updatedAt: serverTimestamp(),

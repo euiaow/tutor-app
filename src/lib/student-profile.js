@@ -1,23 +1,13 @@
-export const SUBJECT_OPTIONS = [
-  { value: "russian", label: "Русский язык" },
-  { value: "literature", label: "Литература" },
-]
-
-export const EXAM_TARGET_OPTIONS = [
-  { value: "ege", label: "ЕГЭ" },
-  { value: "oge", label: "ОГЭ" },
-  { value: "school", label: "Школьная программа" },
-]
-
-export function formatSubjects(subjectCodes) {
-  if (!subjectCodes || subjectCodes.length === 0) return "Предмет не указан"
-  return subjectCodes
-    .map((code) => SUBJECT_OPTIONS.find((option) => option.value === code)?.label ?? code)
-    .join(", ")
-}
-
-export function formatExamTarget(examTarget) {
-  return EXAM_TARGET_OPTIONS.find((option) => option.value === examTarget)?.label ?? "—"
+// Block 3 — student.subject now stores the display name directly (e.g.
+// "Русский язык"), not a lookup code, since subjects are free-form
+// (STATIC_SUBJECTS + per-teacher customSubjects — see src/lib/subjects.js),
+// so formatSubjects is just a join, no lookup table needed anymore.
+// examTarget's old EXAM_TARGET_OPTIONS/formatExamTarget are gone entirely —
+// exam type is now a teacher-owned examTypes doc (src/firebase/examTypes.js),
+// resolved by id where needed, not a static enum this module can format.
+export function formatSubjects(subjectNames) {
+  if (!subjectNames || subjectNames.length === 0) return "Предмет не указан"
+  return subjectNames.join(", ")
 }
 
 // Russian pluralization for "занятие" (1 занятие, 2-4 занятия, 5+ занятий),

@@ -3,6 +3,7 @@ const logger = require("firebase-functions/logger")
 const { getAuthorizedClient } = require("./googleAuth")
 const { getNextLessonDateForSlot, normalizeScheduleSlots, getZonedParts, DEFAULT_TIME_ZONE } = require("./schedule")
 const { db } = require("./firestore")
+const { getSubjectColorIndex } = require("./subjectColor")
 
 const CALENDAR_ID = "primary"
 // Purely an internal reference frame for the floating-dateTime round-trip
@@ -24,22 +25,20 @@ async function getTeacherTimeZone(teacherId) {
 }
 
 // Google Calendar's event colorId palette is a fixed 1-11 set (not
-// arbitrary hex), so this maps subject codes to the closest match for the
-// same hues src/components/student-tags.jsx uses for its tags (blue for
-// russian, purple for literature) — the calendar color and the tag color
-// are meant to read as the same fact, not independently chosen. A student
-// with no subject set, or a subject this map doesn't know, falls back to
-// Graphite (neutral gray), matching the tag component's own "school"/
-// unset fallback.
-const SUBJECT_CALENDAR_COLOR_ID = {
-  russian: "9", // Blueberry
-  literature: "3", // Grape
-}
+// arbitrary hex). Block 3 — subjects are free-form now (no fixed set of
+// codes to hardcode a map against), so the color is derived the same way
+// the frontend's subject tags are (getSubjectColorIndex, a deterministic
+// hash of the subject name) and cycled onto Calendar's 11 real colorIds —
+// same subject always gets the same colorId, consistently, without storing
+// one anywhere. A student with no subject set falls back to Graphite
+// (neutral gray), same as before.
+const CALENDAR_COLOR_IDS = ["9", "3", "11", "5", "4", "7", "1", "2", "10", "6", "8"]
 const DEFAULT_CALENDAR_COLOR_ID = "8" // Graphite
 
 function colorIdForStudent(student) {
   const firstSubject = student.subject?.[0]
-  return SUBJECT_CALENDAR_COLOR_ID[firstSubject] ?? DEFAULT_CALENDAR_COLOR_ID
+  if (!firstSubject) return DEFAULT_CALENDAR_COLOR_ID
+  return CALENDAR_COLOR_IDS[getSubjectColorIndex(firstSubject) % CALENDAR_COLOR_IDS.length]
 }
 
 function pad(number) {

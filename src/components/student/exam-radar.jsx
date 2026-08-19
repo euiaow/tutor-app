@@ -11,7 +11,7 @@ import {
   BookOpen,
   Layers,
 } from "lucide-react"
-import { formatSubjects, formatExamTarget } from "@/lib/student-profile"
+import { formatSubjects } from "@/lib/student-profile"
 import { CurriculumItemGroups } from "@/components/student/curriculum-item-groups"
 import { round1, buildRadarComment } from "@/lib/examRadar"
 
@@ -55,7 +55,9 @@ function daysWord(n) {
 
 export function ExamRadar({
   subject,
-  examTarget,
+  examTypeName,
+  scaleType,
+  scaleUnitLabel,
   targetScore,
   metrics,
   requiredTopics,
@@ -64,16 +66,19 @@ export function ExamRadar({
 }) {
   const [expanded, setExpanded] = useState(false)
 
-  // Same "Целевая оценка" (no "баллов") for ОГЭ vs. "Целевой балл: N баллов"
-  // for ЕГЭ that MyGoalCard (StudentDashboard.jsx) already applies to the
-  // goal-editing form — this component renders the same value read-only and
-  // needs the identical branching, not a shared constant, since the two
-  // components differ in every other way (label position, editability).
-  const isOge = examTarget === "oge"
-  const goalLabel = isOge ? "Целевая оценка" : "Целевой балл"
-  const goalValue = isOge ? `${targetScore}` : `${targetScore} баллов`
+  // Block 3 — exam types are free-form now (teachers/{uid}/examTypes), not a
+  // hardcoded "ege"/"oge" enum, so the old ОГЭ-specific "Целевая оценка" (no
+  // unit word, bare number) formatting generalizes to "any scaleType ===
+  // 'grade' exam type". MyGoalCard (StudentDashboard.jsx) applies the
+  // identical rule to the goal-editing form, kept in sync by hand since the
+  // two components differ in every other way (label position, editability).
+  const isGradeScale = scaleType === "grade"
+  const goalLabel = isGradeScale ? "Целевая оценка" : `Целевой ${scaleUnitLabel || "балл"}`
+  const goalValue = isGradeScale
+    ? `${targetScore}`
+    : `${targetScore}${scaleUnitLabel ? ` ${scaleUnitLabel}` : ""}`
 
-  const examLabel = `До ${formatExamTarget(examTarget)} по ${formatSubjects(subject)}`
+  const examLabel = `До ${examTypeName} по ${formatSubjects(subject)}`
   const { status, daysLeft, requiredTotal, completedRequired } = metrics
   const percent = requiredTotal > 0 ? Math.round((completedRequired / requiredTotal) * 100) : 0
   const isPast = status === "past"

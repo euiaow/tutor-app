@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react"
-import { TAG_STYLES } from "@/components/student-tags"
 import {
   Field,
   GhostBtn,
@@ -22,46 +21,19 @@ import {
   getCurriculumTemplates,
   updateCurriculumTemplate,
 } from "@/firebase/curriculum"
+import { createExamType, subscribeToExamTypes } from "@/firebase/examTypes"
 import { auth } from "@/firebase/firebase"
 
-const EXAM_TARGET_OPTIONS = [
-  { value: "ege", label: "ЕГЭ" },
-  { value: "oge", label: "ОГЭ" },
-  { value: "school", label: "Школьная программа" },
-]
+const NEW_EXAM_TYPE_VALUE = "__new__"
 
-// Drives both the row layout (score field shown or not, its range) and the
-// section subtitles for CurriculumEditorDialog — keyed by the same
-// examTarget the "Тип" select already writes to state, so switching it
-// mid-edit re-renders this immediately with no save/reopen needed.
-const EXAM_TARGET_FIELD_CONFIG = {
-  ege: {
-    showScore: true,
-    scoreMin: 0,
-    scoreMax: 100,
-    scoreStep: 10,
-    scoreDefault: 70,
-    scorePlaceholder: "0",
-    scoreTitle: "Минимальный балл, с которого тема актуальна",
-    topicsLabel: "Тема и целевое количество баллов, для которого актуальна",
-    prototypesLabel: "Прототип и целевое количество баллов, для которого актуален",
-  },
-  oge: {
-    showScore: true,
-    scoreMin: 2,
-    scoreMax: 5,
-    scoreStep: 1,
-    scoreDefault: 4,
-    scorePlaceholder: "3",
-    scoreTitle: "Минимальная оценка, с которой тема актуальна",
-    topicsLabel: "Тема и минимальная оценка, для которой актуальна",
-    prototypesLabel: "Прототип и минимальная оценка, для которой актуален",
-  },
-  school: {
-    showScore: false,
-    topicsLabel: "Темы",
-    prototypesLabel: "Прототипы",
-  },
+// Reasonable Russian default for a freshly created type's scaleUnitLabel —
+// the inline "+ Создать новый тип экзамена" form (per spec) only asks for
+// Название/Тип шкалы/Мин/Макс, not a unit label, so this fills it in rather
+// than leaving every custom score-type goal reading as a bare number.
+function defaultUnitLabel(scaleType) {
+  if (scaleType === "score") return "баллов"
+  if (scaleType === "grade") return "оценка"
+  return ""
 }
 
 // Short random id for a topic/prototype row — only needs to be unique within
@@ -74,13 +46,12 @@ function emptyRow(defaultScore = 0) {
   return { id: shortId(), title: "", minScoreRequired: defaultScore }
 }
 
-function ExamTargetTag({ examTarget }) {
-  const style = TAG_STYLES[examTarget]
-  if (!style) return null
+function ExamTypeTag({ examType }) {
+  if (!examType) return null
 
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${style.className}`}>
-      {style.label}
+    <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+      {examType.name}
     </span>
   )
 }
@@ -157,23 +128,63 @@ function RowList({
   )
 }
 
-function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
+// Derives the same shape the old hardcoded EXAM_TARGET_FIELD_CONFIG used to
+// provide (showScore/scoreMin/scoreMax/scoreStep/scoreDefault/labels) from
+// whichever examType is actually selected — "none" scaleType behaves like
+// the old "school" case (no score field at all).
+function fieldConfigForExamType(examType) {
+  if (!examType || examType.scaleType === "none") {
+    return { showScore: false, topicsLabel: "Темы", prototypesLabel: "Прототипы" }
+  }
+
+  const unit = examType.scaleUnitLabel || ""
+  return {
+    showScore: true,
+    scoreMin: examType.scaleMin ?? 0,
+    scoreMax: examType.scaleMax ?? 100,
+    scoreStep: examType.scaleStep ?? 1,
+    scoreDefault: examType.scaleMin ?? 0,
+    scorePlaceholder: String(examType.scaleMin ?? 0),
+    scoreTitle: `Минимальный(ая) ${unit || "показатель"}, с которого(ой) тема актуальна`,
+    topicsLabel: `Тема и целевой(ая) ${unit || "показатель"}, для которого(ой) актуальна`,
+    prototypesLabel: `Прототип и целевой(ая) ${unit || "показатель"}, для которого(ой) актуален`,
+  }
+}
+
+function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenChange, onSaved }) {
   const [name, setName] = useState("")
-  const [examTarget, setExamTarget] = useState("ege")
+  const [examTypeId, setExamTypeId] = useState("")
+  const [newTypeName, setNewTypeName] = useState("")
+  const [newTypeScale, setNewTypeScale] = useState("score")
+  const [newTypeMin, setNewTypeMin] = useState(0)
+  const [newTypeMax, setNewTypeMax] = useState(100)
   const [topics, setTopics] = useState([])
   const [prototypes, setPrototypes] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const fieldConfig = EXAM_TARGET_FIELD_CONFIG[examTarget]
+
+  const isCreatingNewType = examTypeId === NEW_EXAM_TYPE_VALUE
+  const selectedExamType = examTypes.find((t) => t.id === examTypeId) ?? null
+  const fieldConfig = isCreatingNewType
+    ? fieldConfigForExamType(
+        newTypeScale === "none"
+          ? { scaleType: "none" }
+          : { scaleType: newTypeScale, scaleMin: Number(newTypeMin), scaleMax: Number(newTypeMax), scaleStep: 1 },
+      )
+    : fieldConfigForExamType(selectedExamType)
 
   useEffect(() => {
     if (!open) return
     setName(template?.name ?? "")
-    setExamTarget(template?.examTarget ?? "ege")
+    setExamTypeId(template?.examTypeId ?? examTypes[0]?.id ?? "")
+    setNewTypeName("")
+    setNewTypeScale("score")
+    setNewTypeMin(0)
+    setNewTypeMax(100)
     setTopics(template?.topics?.length ? template.topics : [])
     setPrototypes(template?.prototypes?.length ? template.prototypes : [])
     setError("")
-  }, [open, template])
+  }, [open, template, examTypes])
 
   function handleOpenChange(nextOpen) {
     if (saving) return
@@ -186,18 +197,34 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
     setSaving(true)
     setError("")
     try {
-      // School templates show no score field at all, but every row still
-      // needs minScoreRequired: 0 written so the document shape stays
-      // uniform across template types — Exam Radar and the
-      // curriculumProgress copy-on-assign both key off this field existing.
+      let resolvedExamTypeId = examTypeId
+
+      if (isCreatingNewType) {
+        if (!newTypeName.trim()) {
+          throw new Error("Укажи название нового типа экзамена")
+        }
+        resolvedExamTypeId = await createExamType(teacherId, {
+          name: newTypeName,
+          scaleType: newTypeScale,
+          scaleMin: newTypeMin,
+          scaleMax: newTypeMax,
+          scaleUnitLabel: defaultUnitLabel(newTypeScale),
+        })
+      }
+
+      // "school"-style (scaleType "none") templates show no score field at
+      // all, but every row still needs minScoreRequired: 0 written so the
+      // document shape stays uniform across template types — Exam Radar and
+      // the curriculumProgress copy-on-assign both key off this field
+      // existing.
       const normalizeRow = (row) => ({
         ...row,
-        minScoreRequired: examTarget === "school" ? 0 : row.minScoreRequired,
+        minScoreRequired: fieldConfig.showScore ? row.minScoreRequired : 0,
       })
 
       const payload = {
         name: name.trim(),
-        examTarget,
+        examTypeId: resolvedExamTypeId,
         topics: topics.filter((row) => row.title.trim() !== "").map(normalizeRow),
         prototypes: prototypes.filter((row) => row.title.trim() !== "").map(normalizeRow),
       }
@@ -235,20 +262,70 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
             />
           </Field>
 
-          <Field label="Тип">
+          <Field label="Тип экзамена">
             <select
-              value={examTarget}
-              onChange={(e) => setExamTarget(e.target.value)}
+              value={examTypeId}
+              onChange={(e) => setExamTypeId(e.target.value)}
               disabled={saving}
               className={teacherInputCls}
             >
-              {EXAM_TARGET_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              {examTypes.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.name}
                 </option>
               ))}
+              <option value={NEW_EXAM_TYPE_VALUE}>+ Создать новый тип экзамена</option>
             </select>
           </Field>
+
+          {isCreatingNewType ? (
+            <div className="glass-tile space-y-3 rounded-[1.25rem] p-4">
+              <Field label="Название типа">
+                <input
+                  type="text"
+                  value={newTypeName}
+                  onChange={(e) => setNewTypeName(e.target.value)}
+                  disabled={saving}
+                  placeholder="Например, IELTS"
+                  className={teacherInputCls}
+                />
+              </Field>
+              <Field label="Тип шкалы">
+                <select
+                  value={newTypeScale}
+                  onChange={(e) => setNewTypeScale(e.target.value)}
+                  disabled={saving}
+                  className={teacherInputCls}
+                >
+                  <option value="score">Числовой балл</option>
+                  <option value="grade">Оценка</option>
+                  <option value="none">Без шкалы</option>
+                </select>
+              </Field>
+              {newTypeScale !== "none" ? (
+                <div className="flex gap-3">
+                  <Field label="Мин. значение">
+                    <input
+                      type="number"
+                      value={newTypeMin}
+                      onChange={(e) => setNewTypeMin(e.target.value)}
+                      disabled={saving}
+                      className={teacherInputCls}
+                    />
+                  </Field>
+                  <Field label="Макс. значение">
+                    <input
+                      type="number"
+                      value={newTypeMax}
+                      onChange={(e) => setNewTypeMax(e.target.value)}
+                      disabled={saving}
+                      className={teacherInputCls}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <RowList
             label={fieldConfig.topicsLabel}
@@ -291,7 +368,7 @@ function CurriculumEditorDialog({ template, open, onOpenChange, onSaved }) {
   )
 }
 
-function TemplateRow({ template, onEdit, onDeleted }) {
+function TemplateRow({ template, examType, onEdit, onDeleted }) {
   const [deleting, setDeleting] = useState(false)
 
   async function handleDelete() {
@@ -312,7 +389,7 @@ function TemplateRow({ template, onEdit, onDeleted }) {
     <li className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.5rem] px-4 py-3">
       <BookOpen className="size-4 shrink-0 text-rose-deep" aria-hidden="true" />
       <span className="truncate font-semibold text-ink">{template.name}</span>
-      <ExamTargetTag examTarget={template.examTarget} />
+      <ExamTypeTag examType={examType} />
       <span className="text-xs text-muted-foreground">{template.topics.length} тем</span>
       <span className="text-xs text-muted-foreground">{template.prototypes.length} прототипов</span>
       <div className="ml-auto flex items-center gap-2">
@@ -336,10 +413,12 @@ function TemplateRow({ template, onEdit, onDeleted }) {
 
 export function CurriculumSection() {
   const [templates, setTemplates] = useState([])
+  const [examTypes, setExamTypes] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [editingTemplate, setEditingTemplate] = useState(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const teacherId = auth.currentUser?.uid ?? null
 
   function reload() {
     const uid = auth.currentUser?.uid
@@ -361,6 +440,14 @@ export function CurriculumSection() {
   useEffect(() => {
     reload()
   }, [])
+
+  useEffect(() => {
+    if (!teacherId) return
+    const unsubscribe = subscribeToExamTypes(teacherId, setExamTypes, (err) =>
+      console.error("Failed to load exam types:", err),
+    )
+    return unsubscribe
+  }, [teacherId])
 
   function handleCreate() {
     setEditingTemplate(null)
@@ -395,6 +482,7 @@ export function CurriculumSection() {
               <TemplateRow
                 key={template.id}
                 template={template}
+                examType={examTypes.find((t) => t.id === template.examTypeId) ?? null}
                 onEdit={() => handleEdit(template)}
                 onDeleted={reload}
               />
@@ -406,6 +494,8 @@ export function CurriculumSection() {
       <CurriculumEditorDialog
         key={dialogOpen ? editingTemplate?.id ?? "new" : "closed"}
         template={editingTemplate}
+        examTypes={examTypes}
+        teacherId={teacherId}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onSaved={reload}

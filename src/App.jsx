@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom"
 import { onAuthStateChanged } from "firebase/auth"
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
+import { doc, getDoc, setDoc, serverTimestamp, collection, addDoc } from "firebase/firestore"
 import { auth, db } from "@/firebase/firebase"
 import { generateTeacherSlug } from "@/firebase/teachers"
 import { Spinner } from "@/components/ui/spinner"
@@ -44,6 +44,38 @@ async function ensureTeacherProfile(user) {
     colorTheme: "pink",
     createdAt: serverTimestamp(),
   })
+
+  // Seed the 3 starting exam types (Block 3 — free-form exam types replacing
+  // the old hardcoded "ege"/"oge"/"school" enum). Only runs once, alongside
+  // the teacher doc itself never existing yet — an existing teacher's
+  // examTypes are never touched here even if empty for some other reason.
+  const examTypesRef = collection(db, "teachers", user.uid, "examTypes")
+  await Promise.all([
+    addDoc(examTypesRef, {
+      name: "ЕГЭ",
+      scaleType: "score",
+      scaleMin: 0,
+      scaleMax: 100,
+      scaleStep: 1,
+      scaleUnitLabel: "баллов",
+    }),
+    addDoc(examTypesRef, {
+      name: "ОГЭ",
+      scaleType: "grade",
+      scaleMin: 2,
+      scaleMax: 5,
+      scaleStep: 1,
+      scaleUnitLabel: "оценка",
+    }),
+    addDoc(examTypesRef, {
+      name: "Школьная программа",
+      scaleType: "none",
+      scaleMin: null,
+      scaleMax: null,
+      scaleStep: 1,
+      scaleUnitLabel: "",
+    }),
+  ])
 }
 
 function TeacherRoute() {

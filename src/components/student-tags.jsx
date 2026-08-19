@@ -1,43 +1,45 @@
-// Single source of truth for subject/exam-target tag styling — reused by
-// StudentTags below and by the Финансы table's "Предмет" column
-// (finance-section.jsx renders the same tags, not a text label).
-export const TAG_STYLES = {
-  russian: { label: "Рус.", className: "bg-blue-500/15 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400" },
-  literature: {
-    label: "Лит.",
-    className: "bg-purple-500/15 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400",
-  },
-  ege: { label: "ЕГЭ", className: "bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400" },
-  oge: { label: "ОГЭ", className: "bg-teal-500/15 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400" },
-  school: { label: "Школа", className: "bg-gray-500/15 text-gray-700 dark:bg-gray-500/20 dark:text-gray-400" },
-}
+import { getSubjectColorClass } from "@/lib/subjects"
 
-function Tag({ code }) {
-  const style = TAG_STYLES[code]
-  if (!style) return null
-
+// Block 3 — subjects are free-form now (STATIC_SUBJECTS + per-teacher
+// customSubjects, see src/lib/subjects.js), so each tag's color comes from
+// a deterministic hash of the subject's own display name (already what
+// student.subject stores) instead of a hardcoded lookup table keyed by a
+// fixed set of subject codes. The exam-type tag is now optional: it needs
+// the name resolved from teachers/{uid}/examTypes by whichever caller has
+// that list loaded (student-row.jsx, TeacherDashboard.jsx) — callers that
+// don't pass examTypeName just get subject tags, not a crash or a missing
+// "—" placeholder.
+function SubjectTag({ name }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${style.className}`}>
-      {style.label}
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${getSubjectColorClass(name)}`}>
+      {name}
     </span>
   )
 }
 
-export function StudentTags({ student }) {
+function ExamTypeTag({ name }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+      {name}
+    </span>
+  )
+}
+
+export function StudentTags({ student, examTypeName }) {
   if (!student) return null
 
-  const subjectCodes = student.subject ?? []
+  const subjects = student.subject ?? []
 
-  if (subjectCodes.length === 0 && !student.examTarget) {
+  if (subjects.length === 0 && !examTypeName) {
     return null
   }
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {subjectCodes.map((code) => (
-        <Tag key={code} code={code} />
+      {subjects.map((name) => (
+        <SubjectTag key={name} name={name} />
       ))}
-      {student.examTarget ? <Tag code={student.examTarget} /> : null}
+      {examTypeName ? <ExamTypeTag name={examTypeName} /> : null}
     </div>
   )
 }

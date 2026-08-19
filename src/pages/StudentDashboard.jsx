@@ -60,6 +60,7 @@ import {
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { subscribeToCurriculumProgress } from "@/firebase/curriculum"
+import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
@@ -377,10 +378,10 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
 // Exam Radar Phase 1 — only the goal itself (targetScore/examDate) is
 // saved here; nothing about pace/status is computed or shown yet (that's
 // Phase 2+). Only rendered when a curriculum program is assigned
-// (student.curriculumSourceTemplateId set) AND the student is actually
-// exam-prepping (examTarget "ege"/"oge") — a plain school-program student
-// has no exam to set a target score against.
-function MyGoalCard({ studentId, student }) {
+// (student.curriculumSourceTemplateId set) AND the resolved examType has a
+// real scale (scaleType !== "none", Block 3) — a plain school-program
+// student has no exam to set a target score against.
+function MyGoalCard({ studentId, student, examType }) {
   const timeZone = useTimeZone()
   const [editing, setEditing] = useState(false)
   const [targetScore, setTargetScore] = useState("")
@@ -389,14 +390,21 @@ function MyGoalCard({ studentId, student }) {
   const [error, setError] = useState("")
 
   const hasGoal = student.targetScore != null && student.examDate != null
-  // ОГЭ is graded 2-5 (a school mark), ЕГЭ 0-100 (a scaled score) — same
-  // targetScore field, different valid range/label/default depending on
-  // which exam this student is preparing for.
-  const isOge = student.examTarget === "oge"
+  // Block 3 — the range/label/default this form uses now comes from the
+  // student's own examType doc (teachers/{uid}/examTypes), not a hardcoded
+  // "ege"/"oge" check — a "grade" scale (e.g. ОГЭ's 2-5) behaves like the
+  // old isOge branch did, any other scale (custom types included) behaves
+  // like the old ЕГЭ default.
+  const isGradeScale = examType?.scaleType === "grade"
+  const scaleMin = examType?.scaleMin ?? 0
+  const scaleMax = examType?.scaleMax ?? 100
+  const scaleStep = examType?.scaleStep ?? 1
+  const unitLabel = examType?.scaleUnitLabel || "балл"
+  const goalLabel = isGradeScale ? "Целевая оценка" : `Целевой ${unitLabel}`
 
   function startEditing() {
     setTargetScore(
-      student.targetScore != null ? String(student.targetScore) : isOge ? "4" : "",
+      student.targetScore != null ? String(student.targetScore) : isGradeScale ? String(scaleMax - 1) : "",
     )
     setExamDate(student.examDate ? toDateInputValue(student.examDate) : "")
     setError("")
@@ -425,16 +433,16 @@ function MyGoalCard({ studentId, student }) {
         <h3 className="font-display text-lg text-foreground">Моя цель</h3>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex-1">
-            <span className="text-xs text-muted-foreground">{isOge ? "Целевая оценка" : "Целевой балл"}</span>
+            <span className="text-xs text-muted-foreground">{goalLabel}</span>
             <input
               type="number"
-              min={isOge ? "2" : "0"}
-              max={isOge ? "5" : "100"}
-              step={isOge ? "1" : undefined}
+              min={String(scaleMin)}
+              max={String(scaleMax)}
+              step={String(scaleStep)}
               value={targetScore}
               onChange={(e) => setTargetScore(e.target.value)}
               disabled={saving}
-              placeholder={isOge ? "4" : "80"}
+              placeholder={String(scaleMin)}
               className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
             />
           </label>
@@ -522,7 +530,7 @@ function MyGoalCard({ studentId, student }) {
 
       <div className="mt-4 flex flex-wrap gap-3">
         <div className="glass-inset flex-1 rounded-3xl p-4">
-          <p className="text-xs text-muted-foreground">{isOge ? "Целевая оценка" : "Целевой балл"}</p>
+          <p className="text-xs text-muted-foreground">{goalLabel}</p>
           <p className="mt-1 font-display text-2xl text-primary">{student.targetScore}</p>
         </div>
         <div className="glass-inset flex-1 rounded-3xl p-4">
@@ -1297,6 +1305,23 @@ function StudentDashboardContent({ studentId }) {
     return () => unsubscribe()
   }, [studentId])
 
+  // Block 3 — resolves student.examTypeId against the owning teacher's own
+  // examTypes list (MyGoalCard/ExamRadar need scaleType/scaleMin/scaleMax/
+  // scaleUnitLabel, not just a name). student.teacherId is the denormalized
+  // field mapStudentDoc now exposes for exactly this.
+  const [examTypes, setExamTypes] = useState([])
+
+  useEffect(() => {
+    if (!student?.teacherId) {
+      setExamTypes([])
+      return
+    }
+    const unsubscribe = subscribeToExamTypes(student.teacherId, setExamTypes, (error) =>
+      console.error("Failed to load exam types:", error),
+    )
+    return unsubscribe
+  }, [student?.teacherId])
+
   if (loading) {
     return <Spinner label="Загрузка данных ученика..." />
   }
@@ -1358,6 +1383,7 @@ function StudentDashboardContent({ studentId }) {
   const staleDays = curriculumProgress
     ? daysSinceLastUpdate(curriculumProgress.topics, curriculumProgress.prototypes)
     : null
+  const studentExamType = examTypes.find((type) => type.id === student.examTypeId) ?? null
 
   // Multi-tenancy Phase 4a: "teacher-theme" (pink) if this student picked
   // it, "" (plain root/amber tokens, the pre-existing default) otherwise —
@@ -1403,14 +1429,16 @@ function StudentDashboardContent({ studentId }) {
 
       <StudentNotifications studentId={studentId} />
 
-      {student.curriculumSourceTemplateId && (student.examTarget === "ege" || student.examTarget === "oge") ? (
-        <MyGoalCard studentId={studentId} student={student} />
+      {student.curriculumSourceTemplateId && studentExamType && studentExamType.scaleType !== "none" ? (
+        <MyGoalCard studentId={studentId} student={student} examType={studentExamType} />
       ) : null}
 
       {hasGoal && radarMetrics ? (
         <ExamRadar
           subject={student.subject}
-          examTarget={student.examTarget}
+          examTypeName={studentExamType?.name ?? "—"}
+          scaleType={studentExamType?.scaleType}
+          scaleUnitLabel={studentExamType?.scaleUnitLabel}
           targetScore={student.targetScore}
           metrics={radarMetrics}
           requiredTopics={requiredTopics}

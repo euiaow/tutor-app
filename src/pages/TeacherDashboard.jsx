@@ -23,6 +23,7 @@ import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
 import { getAllCurriculumProgressByStudent, getCurriculumTemplates } from "@/firebase/curriculum"
+import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { auth } from "@/firebase/firebase"
@@ -352,6 +353,7 @@ export function TeacherDashboard() {
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
   const [curriculumTemplates, setCurriculumTemplates] = useState([])
+  const [examTypes, setExamTypes] = useState([])
   const [teacherProfile, setTeacherProfile] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -388,6 +390,18 @@ export function TeacherDashboard() {
     getCurriculumTemplates(uid)
       .then(setCurriculumTemplates)
       .catch((err) => console.error("Failed to load curriculum templates:", err))
+  }, [])
+
+  // Live subscription (not one-time, unlike curriculumTemplates above) since
+  // "+ Создать новый тип экзамена" inside CurriculumSection's own editor can
+  // add one mid-session and every student row's exam-type display should
+  // pick that up without a page reload.
+  useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsub = subscribeToExamTypes(uid, setExamTypes, (err) => console.error("Failed to load exam types:", err))
+    return unsub
   }, [])
 
   async function handleSignOut() {
@@ -725,6 +739,7 @@ export function TeacherDashboard() {
                     student={student}
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
                     curriculumTemplates={curriculumTemplates}
+                    examTypes={examTypes}
                   />
                 ))}
               </div>

@@ -27,7 +27,13 @@ export function mapStudentDoc(id, data) {
     level: data.level ?? 1,
     xp: data.xp ?? 0,
     subject: Array.isArray(data.subject) ? data.subject : [],
-    examTarget: data.examTarget ?? "school",
+    examTypeId: data.examTypeId ?? null,
+    // Block 3 — StudentDashboard.jsx needs this to resolve student.examTypeId
+    // against teachers/{teacherId}/examTypes; mapStudentDoc's explicit field
+    // list is the actual gate on what reaches the client object (see
+    // systemPatterns.md), and this was never added for a prior feature that
+    // didn't need it.
+    teacherId: data.teacherId ?? null,
     hourlyRate: data.hourlyRate ?? 0,
     paidLessonsBalance: data.paidLessonsBalance ?? 0,
     lowBalanceThreshold: data.lowBalanceThreshold ?? 1,
@@ -119,9 +125,9 @@ export async function updateStudentContactUrl(studentId, contactUrl) {
   await updateDoc(ref, { contactUrl })
 }
 
-export async function updateStudentProfile(studentId, { subject, examTarget, hourlyRate, autoRemindLowBalance }) {
+export async function updateStudentProfile(studentId, { subject, examTypeId, hourlyRate, autoRemindLowBalance }) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
-  await updateDoc(ref, { subject, examTarget, hourlyRate, autoRemindLowBalance })
+  await updateDoc(ref, { subject, examTypeId, hourlyRate, autoRemindLowBalance })
 }
 
 // A callable (not a direct client write like updateStudentProfile above)
