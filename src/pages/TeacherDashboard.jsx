@@ -23,7 +23,6 @@ import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
 import { getAllProgramsByStudent } from "@/firebase/curriculum"
-import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { auth } from "@/firebase/firebase"
@@ -352,7 +351,6 @@ export function TeacherDashboard() {
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
-  const [examTypes, setExamTypes] = useState([])
   const [teacherProfile, setTeacherProfile] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -380,18 +378,6 @@ export function TeacherDashboard() {
     return () => unsub()
   }, [])
 
-
-  // Live subscription (not one-time, unlike curriculumTemplates above) since
-  // "+ Создать новый тип экзамена" inside CurriculumSection's own editor can
-  // add one mid-session and every student row's exam-type display should
-  // pick that up without a page reload.
-  useEffect(() => {
-    const uid = auth.currentUser?.uid
-    if (!uid) return
-
-    const unsub = subscribeToExamTypes(uid, setExamTypes, (err) => console.error("Failed to load exam types:", err))
-    return unsub
-  }, [])
 
   async function handleSignOut() {
     try {
@@ -727,7 +713,6 @@ export function TeacherDashboard() {
                     key={student.id}
                     student={student}
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
-                    examTypes={examTypes}
                   />
                 ))}
               </div>

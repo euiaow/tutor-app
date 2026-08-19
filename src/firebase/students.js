@@ -27,12 +27,13 @@ export function mapStudentDoc(id, data) {
     level: data.level ?? 1,
     xp: data.xp ?? 0,
     subject: Array.isArray(data.subject) ? data.subject : [],
-    examTypeId: data.examTypeId ?? null,
-    // Block 3 — StudentDashboard.jsx needs this to resolve student.examTypeId
-    // against teachers/{teacherId}/examTypes; mapStudentDoc's explicit field
-    // list is the actual gate on what reaches the client object (see
-    // systemPatterns.md), and this was never added for a prior feature that
-    // didn't need it.
+    // Block 4 — goals/exam types moved to per-program fields
+    // (students/{id}/programs/{programId}.examTypeId); the student-level
+    // examTypeId Block 3 introduced is gone, this field no longer means
+    // anything. teacherId is still needed: StudentDashboard.jsx resolves
+    // each program's examTypeId against teachers/{teacherId}/examTypes,
+    // and mapStudentDoc's explicit field list is the actual gate on what
+    // reaches the client object (see systemPatterns.md).
     teacherId: data.teacherId ?? null,
     hourlyRate: data.hourlyRate ?? 0,
     paidLessonsBalance: data.paidLessonsBalance ?? 0,
@@ -125,9 +126,9 @@ export async function updateStudentContactUrl(studentId, contactUrl) {
   await updateDoc(ref, { contactUrl })
 }
 
-export async function updateStudentProfile(studentId, { subject, examTypeId, hourlyRate, autoRemindLowBalance }) {
+export async function updateStudentProfile(studentId, { subject, hourlyRate, autoRemindLowBalance }) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
-  await updateDoc(ref, { subject, examTypeId, hourlyRate, autoRemindLowBalance })
+  await updateDoc(ref, { subject, hourlyRate, autoRemindLowBalance })
 }
 
 // A callable (not a direct client write like updateStudentProfile above)

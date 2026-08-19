@@ -53,7 +53,6 @@ import { formatSubjects } from "@/lib/student-profile"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
 import { SubjectPicker } from "@/components/teacher/subject-picker"
-import { subscribeToExamTypes } from "@/firebase/examTypes"
 
 const MAX_SCHEDULE_SLOTS = 7
 const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
@@ -545,10 +544,9 @@ function AddProgramControl({ studentId, templates, disabled }) {
 // ScheduleBlock per the requested layout change; profile fields (subject/
 // exam target/rate/auto-remind/curriculum plan) live in the same modal,
 // matching the mockup's own StudentEditModal which combines both.
-function StudentEditModal({ student, examTypes, open, onOpenChange }) {
+function StudentEditModal({ student, open, onOpenChange }) {
   const [slots, setSlots] = useState([])
   const [subject, setSubject] = useState([])
-  const [examTypeId, setExamTypeId] = useState("")
   const [hourlyRate, setHourlyRate] = useState(0)
   const [autoRemindLowBalance, setAutoRemindLowBalance] = useState(false)
   const [templates, setTemplates] = useState([])
@@ -567,7 +565,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
 
     setSlots(student.scheduleSlots ?? [])
     setSubject(student.subject ?? [])
-    setExamTypeId(student.examTypeId ?? examTypes[0]?.id ?? "")
     setHourlyRate(student.hourlyRate ?? 0)
     setAutoRemindLowBalance(Boolean(student.autoRemindLowBalance))
     setError("")
@@ -619,7 +616,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
         updateStudentSchedule(student.id, slots),
         updateStudentProfile(student.id, {
           subject,
-          examTypeId,
           hourlyRate: Number(hourlyRate) || 0,
           autoRemindLowBalance,
         }),
@@ -703,21 +699,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
                 onToggle={toggleSubject}
                 disabled={saving}
               />
-            </Field>
-
-            <Field label="Цель">
-              <select
-                value={examTypeId}
-                onChange={(e) => setExamTypeId(e.target.value)}
-                disabled={saving}
-                className={teacherInputCls}
-              >
-                {examTypes.map((type) => (
-                  <option key={type.id} value={type.id}>
-                    {type.name}
-                  </option>
-                ))}
-              </select>
             </Field>
 
             <Field label="Оплата в час">
@@ -932,7 +913,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind }
   )
 }
 
-export function StudentRow({ student, progressSummary, examTypes = [] }) {
+export function StudentRow({ student, progressSummary }) {
   const [expanded, setExpanded] = useState(false)
   const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
@@ -980,8 +961,6 @@ export function StudentRow({ student, progressSummary, examTypes = [] }) {
     e.stopPropagation()
   }
 
-  const examTypeName = examTypes.find((type) => type.id === student.examTypeId)?.name ?? "—"
-
   return (
     <div>
       <div
@@ -1006,7 +985,7 @@ export function StudentRow({ student, progressSummary, examTypes = [] }) {
               <StudentDot />
               <span className="sm:truncate">{student.name}</span>
             </Link>
-            <StudentTags student={student} examTypeName={examTypeName === "—" ? null : examTypeName} />
+            <StudentTags student={student} />
           </div>
           <div className="mt-1.5">
             {percent !== null ? (
@@ -1054,10 +1033,6 @@ export function StudentRow({ student, progressSummary, examTypes = [] }) {
                 <div className="flex justify-between text-muted-foreground">
                   <span>Предмет</span>
                   <span className="text-ink">{formatSubjects(student.subject)}</span>
-                </div>
-                <div className="mt-1 flex justify-between text-muted-foreground">
-                  <span>Цель</span>
-                  <span className="text-ink">{examTypeName}</span>
                 </div>
               </div>
               <div className="mt-1 flex justify-between text-sm">
@@ -1127,7 +1102,6 @@ export function StudentRow({ student, progressSummary, examTypes = [] }) {
 
       <StudentEditModal
         student={student}
-        examTypes={examTypes}
         open={isEditModalOpen}
         onOpenChange={setIsEditModalOpen}
       />
