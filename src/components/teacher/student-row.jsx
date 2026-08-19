@@ -45,8 +45,6 @@ import {
   assignCurriculumTemplate,
   reassignProgram,
   deleteProgram,
-  addPersonalTopic,
-  removePersonalTopic,
 } from "@/firebase/curriculum"
 import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
 import { formatSubjects } from "@/lib/student-profile"
@@ -146,157 +144,6 @@ function DeleteStudentDialog({ studentId, studentName, open, onOpenChange }) {
             )}
           </button>
         </TeacherModalFooter>
-      </TeacherDialogContent>
-    </TeacherDialog>
-  )
-}
-
-// One list + its own add-row form, for either topics or prototypes.
-// itemType is the literal "topic"/"prototype" string the backend expects.
-function PersonalProgramSection({ label, itemType, items, studentId, programId, removingId, onRemove }) {
-  const [title, setTitle] = useState("")
-  const [minScore, setMinScore] = useState(0)
-  const [adding, setAdding] = useState(false)
-  const [error, setError] = useState("")
-
-  async function handleAdd() {
-    if (adding || !title.trim()) return
-    setAdding(true)
-    setError("")
-    try {
-      await addPersonalTopic(studentId, programId, { title: title.trim(), minScoreRequired: minScore, type: itemType })
-      setTitle("")
-      setMinScore(0)
-    } catch (err) {
-      console.error("Failed to add personal topic:", err)
-      setError(err?.message || "Не удалось добавить тему")
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  return (
-    <div className="glass-tile rounded-[1.25rem] p-4">
-      <p className="text-sm font-semibold text-ink">{label}</p>
-
-      {items.length > 0 ? (
-        <ul className="mt-3 flex flex-col gap-1">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-center gap-2 rounded-[0.75rem] px-2 py-1.5 text-sm text-ink"
-            >
-              <span className="min-w-0 flex-1 truncate">{item.title}</span>
-              <button
-                type="button"
-                onClick={() => onRemove(itemType, item.id)}
-                disabled={removingId === item.id}
-                aria-label={`Удалить ${item.title}`}
-                className="shrink-0 text-muted-foreground transition hover:text-destructive disabled:opacity-50"
-              >
-                {removingId === item.id ? (
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Trash2 className="size-3.5" aria-hidden="true" />
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-3 text-sm text-muted-foreground">Пусто</p>
-      )}
-
-      <div className="mt-3 flex items-center gap-2 border-t border-glass-border pt-3">
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          disabled={adding}
-          placeholder="Название темы"
-          className={teacherInputCls}
-        />
-        <input
-          type="number"
-          min="0"
-          max="100"
-          value={minScore}
-          onChange={(e) => setMinScore(Number(e.target.value) || 0)}
-          disabled={adding}
-          placeholder="0"
-          title="Минимальный балл, с которого тема актуальна"
-          className={`${teacherInputCls} w-16 shrink-0 px-2 text-center`}
-        />
-        <GhostBtn onClick={handleAdd} disabled={adding || !title.trim()} className="shrink-0 px-4 py-2.5">
-          {adding ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Добавить"}
-        </GhostBtn>
-      </div>
-      {error ? <p className="mt-2 text-xs font-semibold text-destructive">{error}</p> : null}
-    </div>
-  )
-}
-
-// Direct editing of one specific program's topics/prototypes — independent
-// of whatever template it was assigned from. Deliberately doesn't
-// distinguish template-copied items from personally-added ones anywhere in
-// this list: once copied, they're all just "this program's material," per
-// explicit instruction not to split them into "native"/"personal" visually.
-// Block 4 — scoped to one programId now, not the student's single (former)
-// curriculumProgress/main.
-function PersonalProgramDialog({ studentId, programId, programLabel, open, onOpenChange }) {
-  const [program, setProgram] = useState(null)
-  const [removingId, setRemovingId] = useState(null)
-
-  useEffect(() => {
-    if (!open || !programId) return
-    const unsubscribe = subscribeToPrograms(
-      studentId,
-      (programs) => setProgram(programs.find((p) => p.id === programId) ?? null),
-      (error) => console.error("Failed to load program:", error),
-    )
-    return () => unsubscribe()
-  }, [open, studentId, programId])
-
-  async function handleRemove(itemType, itemId) {
-    if (removingId) return
-    setRemovingId(itemId)
-    try {
-      await removePersonalTopic(studentId, programId, { itemId, type: itemType })
-    } catch (error) {
-      console.error("Failed to remove personal topic:", error)
-    } finally {
-      setRemovingId(null)
-    }
-  }
-
-  return (
-    <TeacherDialog open={open} onOpenChange={onOpenChange}>
-      <TeacherDialogContent wide elevated>
-        <TeacherDialogTitle>Программа{programLabel ? ` — ${programLabel}` : ""}</TeacherDialogTitle>
-        <TeacherDialogDescription>
-          Темы и прототипы, добавленные напрямую в программу — не меняет общий шаблон.
-        </TeacherDialogDescription>
-
-        <div className="mt-5 space-y-4">
-          <PersonalProgramSection
-            label="Темы"
-            itemType="topic"
-            items={program?.topics ?? []}
-            studentId={studentId}
-            programId={programId}
-            removingId={removingId}
-            onRemove={handleRemove}
-          />
-          <PersonalProgramSection
-            label="Прототипы"
-            itemType="prototype"
-            items={program?.prototypes ?? []}
-            studentId={studentId}
-            programId={programId}
-            removingId={removingId}
-            onRemove={handleRemove}
-          />
-        </div>
       </TeacherDialogContent>
     </TeacherDialog>
   )
@@ -430,11 +277,10 @@ function DeleteProgramDialog({ studentId, programId, programLabel, open, onOpenC
 }
 
 // One row per already-assigned program (Block 4 Phase 2) — subject +
-// template name + mini progress + "Заменить"/delete/edit-personal-topics.
+// template name + mini progress + "Заменить"/delete.
 function ProgramRow({ studentId, program, templates, disabled }) {
   const [reassignOpen, setReassignOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
   const templateName = templates.find((t) => t.id === program.templateId)?.name ?? "Без шаблона"
   const percent = programPercent(program)
   const label = program.subject || "Без предмета"
@@ -448,15 +294,6 @@ function ProgramRow({ studentId, program, templates, disabled }) {
       {percent != null ? (
         <span className="shrink-0 text-xs font-semibold text-muted-foreground">{percent}%</span>
       ) : null}
-      <button
-        type="button"
-        onClick={() => setEditOpen(true)}
-        disabled={disabled}
-        title="Редактировать темы/прототипы"
-        className="shrink-0 text-muted-foreground transition hover:text-rose-deep disabled:opacity-50"
-      >
-        <Pencil className="size-3.5" aria-hidden="true" />
-      </button>
       <button
         type="button"
         onClick={() => setReassignOpen(true)}
@@ -475,13 +312,6 @@ function ProgramRow({ studentId, program, templates, disabled }) {
         <Trash2 className="size-4" aria-hidden="true" />
       </button>
 
-      <PersonalProgramDialog
-        studentId={studentId}
-        programId={program.id}
-        programLabel={label}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-      />
       <ReassignProgramDialog
         studentId={studentId}
         programId={program.id}
