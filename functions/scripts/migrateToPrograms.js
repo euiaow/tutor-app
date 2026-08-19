@@ -114,11 +114,22 @@ async function migrateToPrograms() {
   console.log(`migrateToPrograms: ${needsReview} entry/entries need manual review:`)
   reviewNotes.forEach((note) => console.log(`  - ${note}`))
   console.log("migrateToPrograms: old curriculumProgress/main docs were NOT deleted — remove manually once verified.")
+
+  return { migrated, needsReview, reviewNotes }
 }
 
-migrateToPrograms()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("migrateToPrograms: failed", error)
-    process.exit(1)
-  })
+module.exports = { migrateToPrograms }
+
+// Only runs when invoked directly (`node functions/scripts/migrateToPrograms.js`)
+// — this environment has no local Admin SDK credentials (no ADC/service
+// account), so session 13 actually ran this via a temporary guarded
+// onRequest wrapper in index.js instead (deployed, curled once, deleted).
+// Kept runnable standalone for whichever environment has real ADC.
+if (require.main === module) {
+  migrateToPrograms()
+    .then(() => process.exit(0))
+    .catch((error) => {
+      console.error("migrateToPrograms: failed", error)
+      process.exit(1)
+    })
+}
