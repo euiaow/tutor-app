@@ -161,7 +161,7 @@ export function TeacherDialogContent({ className, children, wide = false, elevat
         initialFocus={popupRef}
         className={cn(
           themeClass,
-          "glass-panel fixed top-1/2 left-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
+          "glass-panel fixed top-1/2 left-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto scrollbar-hidden rounded-[2rem] p-6 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 md:p-7",
           elevated ? "z-[111]" : "z-[101]",
           wide ? "max-w-2xl" : "max-w-lg",
           className,
