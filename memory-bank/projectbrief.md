@@ -46,6 +46,14 @@ integrations and Google Calendar sync.
 - Students are identified by Firestore document, not Firebase Auth —
   student-facing actions are unauthenticated by design (see
   `functions/index.js` initiator/role params).
+- **Multi-program as of session 13** — a student can be enrolled in
+  several curriculum programs at once (e.g. separate ЕГЭ prep for two
+  subjects), each with its own topics/prototypes/exam type/goal
+  (`students/{id}/programs/{programId}`, was a single
+  `curriculumProgress/main` through session 12). Exam types and subjects
+  are both free-form per-teacher config now (`teachers/{uid}/examTypes`,
+  `teachers/{uid}/customSubjects`), not a fixed enum/list — see
+  `systemPatterns.md`.
 - Russian-language UI and error strings throughout.
 
 ## Source of truth

@@ -13,8 +13,11 @@ these files are for full verbatim narrative detail only, rarely needed.
   finalization, teacher↔student bot notification parity, Cloud Run IAM
   invoker discovery, cancellation-history fix), session 11 (accidental-
   revert catch, Google Calendar disconnect, native-app link handoff,
-  mobile-layout pass, Telegram username contact UX). Archived 2026-08-02,
-  2026-08-16, and 2026-08-18 respectively.
+  mobile-layout pass, Telegram username contact UX), session 12
+  (multi-tenancy Phase 4a settings/timezone/theme, second-teacher login
+  bug, full timezone-handling rewrite, Firestore Rules published and the
+  tenant-isolation bug class it surfaced). Archived 2026-08-02,
+  2026-08-16, 2026-08-18, and 2026-08-19 respectively.
 
 `activeContext.md` itself keeps only the most recent 1 session inline —
 check there first for anything recent; come here only for older detail.

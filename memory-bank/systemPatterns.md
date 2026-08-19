@@ -703,8 +703,99 @@ src/
 - Reminder schedulers (`onSchedule`) → `functions/reminders.js` queries
   lessons in the relevant time window → `botMessages.js` builds text →
   `adapters/telegram.js` / `adapters/vk.js` deliver per student's
-  registered platform. `updateVideoCallAvailability` (session 10, every 5
-  min) is a fourth, independent scheduler in the same file — unlike the
-  other three, it never sends a bot message, just maintains
-  `lesson.videoCallAvailable` for the student dashboard's video-call
-  button to read.
+  registered platform. A fourth scheduler, `updateVideoCallAvailability`
+  (session 10, every 5 min), used to maintain a `lesson.videoCallAvailable`
+  flag for the student dashboard's video-call button — **removed entirely
+  in session 13** in favor of a pure client-side time comparison (see
+  below); if you see this flag referenced anywhere, it's dead.
+
+- **Video call button availability is computed client-side, not server-
+  maintained (session 13, replacing the session-10 design).** The button
+  in `StudentDashboard.jsx` shows whenever the teacher has a video call
+  link configured (`teachers/{teacherId}/integrations/videoCall`), and its
+  enabled/disabled state is a plain `effectiveDate.getTime() - now.getTime()`
+  comparison against a 30-second `setInterval` tick — active from 3
+  minutes before the lesson through 60 minutes after. No server round
+  trip, no Cloud Function, no Firestore field. Deliberately simpler than
+  the old design (a scheduler that wrote `lesson.videoCallAvailable` every
+  5 minutes) for a case that never needed server authority — the window
+  check is the same on client and server, and the student's own device
+  clock is good enough for "is it roughly lesson time."
+
+- **`confirmReschedule`/`confirmCancellation` use `db.runTransaction` for
+  their read-check-write, not three separate calls (session 13).** Two
+  near-simultaneous confirms of the same pending proposal (e.g. answered
+  from both the lesson banner and the notification panel at once — a real
+  race `notifications-list.jsx` already documented as theoretically
+  possible) used to both read `rescheduleStatus`/`cancellationStatus` as
+  still-pending before either committed its write, so both would proceed
+  to send duplicate notifications and make duplicate/conflicting Calendar
+  API calls. Wrapping the read+status-check+write in a transaction makes
+  it atomic — Firestore forces a losing concurrent transaction to retry,
+  see the now-updated status, and throw `failed-precondition` correctly
+  instead of duplicating the whole confirm flow. The transaction returns
+  the *pre-update* snapshot data (same shape every downstream step in the
+  function already expected), and only the Firestore read+write is inside
+  the transaction — Calendar calls and notification sends stay outside it
+  (external API calls don't belong inside a Firestore transaction, which
+  may retry). Any future dual-surface "confirm this pending thing" action
+  should use the same pattern, not read-then-check-then-write as three
+  separate awaits.
+
+- **Multi-program data model (session 13): `students/{id}/programs/
+  {programId}`, not a singleton `curriculumProgress/main`.** A student can
+  have several curriculum programs assigned at once (e.g. one per
+  subject). Each program doc carries its own `subject`/`templateId`/
+  `examTypeId`/`teacherId` (denormalized, same pattern as
+  `lessons`/`balanceLedger`)/`topics`/`prototypes`/`targetScore`/
+  `examDate` — the goal (`targetScore`/`examDate`) now belongs to the
+  *program*, not the student as a whole, since a student with two
+  programs can be prepping for two different exams with two different
+  targets. `assignCurriculumTemplate` **adds** a new program (never
+  overwrites); replacing one already-assigned program's template-derived
+  content in place is the separate `reassignProgram(studentId, programId,
+  templateId)` — it resets that program's topics/prototypes but
+  deliberately leaves `targetScore`/`examDate` untouched (a goal isn't
+  "which template populates the topic list," so replacing the template
+  shouldn't silently wipe a goal the student already set). Every
+  program-scoped backend function (`markTopicsCovered`,
+  `addPersonalTopic`, `removePersonalTopic`, `setStudentGoal`) now takes a
+  required `programId` parameter — there is no implicit "the student's
+  one program" anymore. The old `curriculumProgress/main` docs are left
+  in place as an unread backup after migration (see
+  `functions/scripts/migrateToPrograms.js`), confirmed via a full-repo
+  grep that no code path reads that collection name anymore.
+
+- **Subject color is a deterministic hash of the subject's own display
+  name, not a hardcoded lookup table (session 13).** `getSubjectColorClass`/
+  `getSubjectColorIndex` (`src/lib/subjects.js`, backend twin
+  `functions/core/subjectColor.js`, kept in sync by hand — same ESM/
+  CommonJS split as `schedule.js`) hash the subject name (djb2-style) into
+  an index over a fixed palette (11 CSS-class entries on the frontend, 11
+  Google Calendar `colorId`s on the backend) — replaces the old
+  `TAG_STYLES` map (student-tags.jsx) and `SUBJECT_CALENDAR_COLOR_ID` map
+  (googleCalendar.js), both of which only covered 2 hardcoded subjects.
+  Subjects themselves are now free-form (`STATIC_SUBJECTS` (10) +
+  `teachers/{uid}/customSubjects`, deduped by name, + `teachers/{uid}.
+  recentSubjects` top-3), not a closed enum — the hash is what makes an
+  arbitrary future subject name still get a consistent, collision-tolerant
+  color without anyone having to register it anywhere.
+
+- **Exam types are a teacher-owned Firestore collection
+  (`teachers/{uid}/examTypes`), not a hardcoded "ege"/"oge"/"school" enum
+  (session 13).** Each type carries `name`/`scaleType`
+  (`"score"|"grade"|"none"`)/`scaleMin`/`scaleMax`/`scaleStep`/
+  `scaleUnitLabel`. 3 starting types are seeded client-side in `App.jsx`'s
+  `ensureTeacherProfile` (the same place the `teachers/{uid}` doc itself
+  gets bootstrapped — there's no Cloud Function trigger on teacher
+  creation in this project, see that function's own comment) the moment a
+  new teacher doc is created. `scaleType: "grade"` is the generalization
+  of the old ОГЭ-specific "show a bare number, no unit word" formatting
+  rule (`isGradeScale` in both `MyGoalCard`/`GoalCard` and `ExamRadar`) —
+  any future exam type with a grade-like scale gets the same treatment
+  automatically, not just one literally named "ОГЭ". `curriculumTemplates`
+  and `students/{id}` (now `students/{id}/programs/{programId}`, see
+  above) both store `examTypeId` (a reference), not the old enum string —
+  every display site needs the teacher's examTypes list loaded to resolve
+  a name/scale from the id, there's no longer a pure `formatExamTarget(id)`
+  function that works without that list.

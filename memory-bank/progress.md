@@ -2,6 +2,29 @@
 
 ## What works (per commit history + code present)
 
+- **Multi-program support (session 13)** — a student can have several
+  curriculum programs at once (`students/{id}/programs/{programId}`,
+  replacing the old single `curriculumProgress/main`). Teacher assigns/
+  replaces/deletes programs independently from the student card; student
+  sees "Мои цели" (plural when >1) and one independent Radar/progress
+  block per program. **Existing pre-session-13 students have no
+  `programs/` docs yet** — migration script prepared but not run, see
+  `activeContext.md`.
+- **Free-form exam types + subjects (session 13)** — replaced the
+  hardcoded ЕГЭ/ОГЭ/Школа enum with `teachers/{uid}/examTypes` (any
+  name/scale) and the 2-subject hardcoded list with 10 static + per-
+  teacher custom subjects + a recent-3 shortcut. Google Calendar event
+  colors and subject tag colors both now come from a deterministic hash
+  of the subject name instead of a hardcoded lookup table.
+- **Transactional confirm* race fix (session 13)** — `confirmReschedule`/
+  `confirmCancellation` use `db.runTransaction` for their read-check-write
+  now; two near-simultaneous confirms of the same proposal (e.g. from two
+  open UI surfaces at once) no longer both succeed and duplicate Calendar
+  calls/notifications.
+- **Client-side video call availability (session 13)** — replaced a
+  server-maintained flag + 5-minute Cloud Function scheduler with a plain
+  client-side time comparison; button always visible when a link is set,
+  active 3 min before through 60 min after the lesson.
 - Teacher auth/login (`TeacherLogin.jsx`, `components/auth/*`).
 - Student registration via token link (`core/registration.js`,
   `generateRegistrationLink`/`cancelRegistrationToken`).
@@ -334,10 +357,19 @@
 ## Known issues / open items
 
 - No automated test suite in the repo.
-- **Still nothing committed to git — 67 uncommitted files as of session
-  12**, the largest pile yet (all of multi-tenancy Phase 4a + the full
-  timezone rewrite). Standing risk flagged every session since session 9's
-  regression scare; worth raising explicitly with the user.
+- **Resolved as of session 13**: everything through session 12 is
+  committed (`7e44893`), and session 13's own work landed in 4 separate
+  commits, one per block, each deployed right after committing. The
+  standing "nothing committed" risk flagged every session since session
+  9 is gone — confirm it stays that way in future sessions rather than
+  assuming.
+- **Migration run (session 13, same day)**: `migrateToPrograms.js` ran —
+  2 programs migrated, 2 flagged for manual review (unresolved
+  `examTypeId`, disposable test data, not fixed further per user
+  instruction). Old `curriculumProgress/main` docs left in place as
+  backup. See `activeContext.md` for how it was run (no local Admin SDK
+  credentials in this environment — used a temporary guarded Cloud
+  Function, deleted immediately after).
 - **VK bot connect status indicator and the video-call link save/read
   path — plausibly affected by the same session-12 Rules-publish event
   that broke six other queries, not independently confirmed either way.**
