@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ArrowRight, CalendarClock, Check, CircleSlash, Clock, FileText, X } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { ContactIconButton } from "@/components/teacher/contact-button"
@@ -45,19 +45,30 @@ function formatRescheduleDate(date, timeZone) {
   })
 }
 
-// The dialog is remounted (via a `key` on its usage below) every time it
-// opens, so these lazy initial values — computed once per mount — pick up
-// the lesson's current date fresh each time, without needing an effect to
-// resync state that React already owns.
+// Used to be remounted (via a `key` on its usage below) every time it
+// opened, so lazy initial values computed once per mount would pick up the
+// lesson's current date fresh each time — but that also meant Base UI's
+// Dialog.Root was born already-open instead of transitioning closed→open,
+// so the entrance animation (data-[starting-style], same as every other
+// TeacherDialog/GlassDialog) never had a state change to actually animate.
+// A plain effect keyed on `open` gets the same "fresh fields every open"
+// behavior without remounting the dialog itself.
 export function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
   const timeZone = useTimeZone()
-  const [initialDatePart, initialTimePart] = initialDate
-    ? utcDateToLocalInput(initialDate, timeZone).split("T")
-    : ["", ""]
-  const [date, setDate] = useState(initialDatePart)
-  const [time, setTime] = useState(initialTimePart)
+  const [date, setDate] = useState("")
+  const [time, setTime] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+    const [initialDatePart, initialTimePart] = initialDate
+      ? utcDateToLocalInput(initialDate, timeZone).split("T")
+      : ["", ""]
+    setDate(initialDatePart)
+    setTime(initialTimePart)
+    setError("")
+  }, [open, initialDate, timeZone])
 
   function handleOpenChange(nextOpen) {
     onOpenChange(nextOpen)
@@ -397,7 +408,6 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
       />
 
       <RescheduleDialog
-        key={rescheduleDialogOpen ? "open-reschedule" : "closed-reschedule"}
         studentId={lesson.studentId}
         lessonId={lesson.id}
         initialDate={lesson.rescheduledDate ?? lesson.date}
@@ -406,7 +416,6 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
       />
 
       <CancelLessonDialog
-        key={cancelDialogOpen ? "open-cancel" : "closed-cancel"}
         studentId={lesson.studentId}
         lessonId={lesson.id}
         lessonDate={lesson.rescheduledDate ?? lesson.date}

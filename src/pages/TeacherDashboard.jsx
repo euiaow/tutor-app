@@ -249,7 +249,7 @@ function TeacherNotificationsBell() {
       <TeacherDialogContent>
         <TeacherDialogTitle>Уведомления</TeacherDialogTitle>
 
-        <div className="mt-5 flex max-h-[65vh] flex-col gap-3 overflow-y-auto">
+        <div className="mt-5 flex max-h-[65vh] flex-col gap-3 overflow-y-auto scrollbar-hidden">
           {notifications.some((notification) => !notification.read) ? (
             <GhostBtn onClick={handleMarkAllRead} className="self-start px-4 py-2">
               Отметить все прочитанными

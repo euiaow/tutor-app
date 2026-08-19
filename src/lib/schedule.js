@@ -57,7 +57,7 @@ export function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-function getNextLessonDateForSlot(slot) {
+export function getNextLessonDateForSlot(slot) {
   if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
   }

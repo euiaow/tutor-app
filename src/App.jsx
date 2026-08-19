@@ -56,7 +56,8 @@ async function ensureTeacherProfile(user) {
       scaleType: "score",
       scaleMin: 0,
       scaleMax: 100,
-      scaleStep: 1,
+      scaleStep: 10,
+      scaleDefault: 70,
       scaleUnitLabel: "баллов",
     }),
     addDoc(examTypesRef, {
@@ -65,6 +66,7 @@ async function ensureTeacherProfile(user) {
       scaleMin: 2,
       scaleMax: 5,
       scaleStep: 1,
+      scaleDefault: 4,
       scaleUnitLabel: "оценка",
     }),
     addDoc(examTypesRef, {
@@ -73,6 +75,7 @@ async function ensureTeacherProfile(user) {
       scaleMin: null,
       scaleMax: null,
       scaleStep: 1,
+      scaleDefault: null,
       scaleUnitLabel: "",
     }),
   ])

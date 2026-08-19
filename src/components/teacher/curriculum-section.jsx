@@ -134,7 +134,12 @@ function RowList({
 // whichever examType is actually selected — "none" scaleType behaves like
 // the old "school" case (no score field at all).
 function fieldConfigForExamType(examType) {
-  if (!examType || examType.scaleType === "none") {
+  // "language_level" topics/prototypes don't get a per-item level
+  // threshold — the target is the student's overall level (in "Мои цели"),
+  // not "this topic matters once you reach B1", so it's treated like
+  // "none" here (no score field on rows), not given its own select-based
+  // row input.
+  if (!examType || examType.scaleType === "none" || examType.scaleType === "language_level") {
     return { showScore: false, topicsLabel: "Темы", prototypesLabel: "Прототипы" }
   }
 
@@ -317,10 +322,11 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
                 >
                   <option value="score">Числовой балл</option>
                   <option value="grade">Оценка</option>
+                  <option value="language_level">Уровни языка (A1–C2)</option>
                   <option value="none">Без шкалы</option>
                 </select>
               </Field>
-              {newTypeScale !== "none" ? (
+              {newTypeScale !== "none" && newTypeScale !== "language_level" ? (
                 <div className="flex gap-3">
                   <Field label="Мин. значение">
                     <input
@@ -510,7 +516,6 @@ export function CurriculumSection() {
       </div>
 
       <CurriculumEditorDialog
-        key={dialogOpen ? editingTemplate?.id ?? "new" : "closed"}
         template={editingTemplate}
         examTypes={examTypes}
         teacherId={teacherId}

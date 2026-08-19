@@ -242,7 +242,7 @@ function PersonalProgramDialog({ studentId, programId, programLabel, open, onOpe
 
   return (
     <TeacherDialog open={open} onOpenChange={onOpenChange}>
-      <TeacherDialogContent wide>
+      <TeacherDialogContent wide elevated>
         <TeacherDialogTitle>Программа{programLabel ? ` — ${programLabel}` : ""}</TeacherDialogTitle>
         <TeacherDialogDescription>
           Темы и прототипы, добавленные напрямую в программу — не меняет общий шаблон.
@@ -310,7 +310,7 @@ function ReassignProgramDialog({ studentId, programId, templates, open, onOpenCh
 
   return (
     <TeacherDialog open={open} onOpenChange={handleOpenChange}>
-      <TeacherDialogContent>
+      <TeacherDialogContent elevated>
         <TeacherDialogTitle>Заменить программу?</TeacherDialogTitle>
         <TeacherDialogDescription>
           Прогресс по текущему шаблону этой программы будет сброшен. Цель (баллы/оценка, дата экзамена) сохранится.
@@ -371,7 +371,7 @@ function DeleteProgramDialog({ studentId, programId, programLabel, open, onOpenC
 
   return (
     <TeacherDialog open={open} onOpenChange={handleOpenChange}>
-      <TeacherDialogContent>
+      <TeacherDialogContent elevated>
         <TeacherDialogTitle>Удалить программу «{programLabel}»?</TeacherDialogTitle>
         <TeacherDialogDescription>Весь прогресс по этой программе будет удалён безвозвратно.</TeacherDialogDescription>
 
@@ -846,7 +846,7 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
 // firebase/curriculum.js), no separate edit modal. `updatingId` is scoped
 // to this one tile so a click only shows a spinner on the row that was
 // actually clicked, not the whole list.
-function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind }) {
+function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, limit = 5 }) {
   const timeZone = useTimeZone()
   const [updatingId, setUpdatingId] = useState(null)
   const covered = items.filter((item) => item.covered).length
@@ -876,7 +876,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind }
       </p>
       <TruncatedList
         items={items}
-        limit={5}
+        limit={limit}
         emptyLabel="Пусто"
         className="mt-3 space-y-1.5 text-sm"
         renderItem={(item) => (
@@ -1049,29 +1049,59 @@ export function StudentRow({ student, progressSummary }) {
               </button>
             </div>
 
-            {(livePrograms ?? []).map((program) => (
-              <div key={program.id} className="space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground">
-                  {program.subject || "Без предмета"}
-                </p>
+            {(livePrograms ?? []).length === 1 ? (
+              // Single program: same layout this had before multi-program
+              // support — Темы and Прототипы as their own top-level grid
+              // cells (2/3 of the row width combined, 1/3 each), not
+              // stacked inside one cell, with room for 5 rows before
+              // truncating.
+              <>
                 <CurriculumTile
                   label="Темы программы"
                   icon={FileText}
-                  items={program.topics}
+                  items={livePrograms[0].topics}
                   studentId={student.id}
-                  programId={program.id}
+                  programId={livePrograms[0].id}
                   kind="topics"
+                  limit={5}
                 />
                 <CurriculumTile
                   label="Прототипы"
                   icon={ListChecks}
-                  items={program.prototypes}
+                  items={livePrograms[0].prototypes}
                   studentId={student.id}
-                  programId={program.id}
+                  programId={livePrograms[0].id}
                   kind="prototypes"
+                  limit={5}
                 />
-              </div>
-            ))}
+              </>
+            ) : (
+              (livePrograms ?? []).map((program) => (
+                <div key={program.id} className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    {program.subject || "Без предмета"}
+                  </p>
+                  <CurriculumTile
+                    label="Темы программы"
+                    icon={FileText}
+                    items={program.topics}
+                    studentId={student.id}
+                    programId={program.id}
+                    kind="topics"
+                    limit={3}
+                  />
+                  <CurriculumTile
+                    label="Прототипы"
+                    icon={ListChecks}
+                    items={program.prototypes}
+                    studentId={student.id}
+                    programId={program.id}
+                    kind="prototypes"
+                    limit={3}
+                  />
+                </div>
+              ))
+            )}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">

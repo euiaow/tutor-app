@@ -67,14 +67,35 @@ function collectLessonFileUrls(lesson) {
 // Firestore has no recursive delete for subcollections through a single
 // document delete, so this has to be done explicitly before the parent
 // students/{studentId} doc goes away.
-async function deleteStudentLessons(studentId, bucket) {
+// Extra (unscheduled) lessons store their own googleEventId directly on the
+// lesson doc (createExtraLesson, core/lessons.js) — slotIndex: null, so
+// they're invisible to the student.googleEventIds map deleteStudent's own
+// cleanup loop reads. Collected here, alongside the file-url scan this
+// function already did, rather than a second pass over the same snapshot.
+async function deleteStudentLessons(studentId, bucket, teacherId) {
   const lessonsRef = db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION)
   const snapshot = await lessonsRef.get()
 
+  let extraLessonCalendarEventsDeleted = 0
   for (const lessonDoc of snapshot.docs) {
-    const fileUrls = collectLessonFileUrls(lessonDoc.data())
+    const lesson = lessonDoc.data()
+    const fileUrls = collectLessonFileUrls(lesson)
     for (const url of fileUrls) {
       await deleteStorageFile(bucket, url)
+    }
+
+    if (lesson.isExtraLesson && lesson.googleEventId) {
+      try {
+        await deleteLessonEvent(teacherId, lesson.googleEventId)
+        extraLessonCalendarEventsDeleted += 1
+      } catch (error) {
+        logger.warn("deleteStudentLessons: failed to delete extra lesson's Google Calendar event, continuing", {
+          studentId,
+          lessonId: lessonDoc.id,
+          eventId: lesson.googleEventId,
+          error: error.message,
+        })
+      }
     }
   }
 
@@ -87,7 +108,7 @@ async function deleteStudentLessons(studentId, bucket) {
     await batch.commit()
   }
 
-  return docs.length
+  return { lessonsDeleted: docs.length, extraLessonCalendarEventsDeleted }
 }
 
 // completeRegistration (core/registration.js) stamps the token doc with
@@ -223,8 +244,11 @@ async function deleteStudent(studentId) {
   }
 
   let lessonsDeleted = 0
+  let extraLessonCalendarEventsDeleted = 0
   try {
-    lessonsDeleted = await deleteStudentLessons(studentId, bucket)
+    const result = await deleteStudentLessons(studentId, bucket, student.teacherId ?? null)
+    lessonsDeleted = result.lessonsDeleted
+    extraLessonCalendarEventsDeleted = result.extraLessonCalendarEventsDeleted
   } catch (error) {
     logger.warn("deleteStudent: failed to delete lessons subcollection, continuing", {
       studentId,
@@ -242,7 +266,12 @@ async function deleteStudent(studentId) {
     throw new HttpsError("internal", "Не удалось удалить ученика")
   }
 
-  logger.info("deleteStudent completed", { studentId, lessonsDeleted, calendarEventsDeleted })
+  logger.info("deleteStudent completed", {
+    studentId,
+    lessonsDeleted,
+    calendarEventsDeleted,
+    extraLessonCalendarEventsDeleted,
+  })
 }
 
 module.exports = { deleteStudent, updateStudentSettings }

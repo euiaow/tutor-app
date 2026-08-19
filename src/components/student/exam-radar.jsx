@@ -58,6 +58,7 @@ export function ExamRadar({
   examTypeName,
   scaleType,
   scaleUnitLabel,
+  scaleLabels,
   targetScore,
   metrics,
   requiredTopics,
@@ -73,10 +74,19 @@ export function ExamRadar({
   // identical rule to the goal-editing form, kept in sync by hand since the
   // two components differ in every other way (label position, editability).
   const isGradeScale = scaleType === "grade"
-  const goalLabel = isGradeScale ? "Целевая оценка" : `Целевой ${scaleUnitLabel || "балл"}`
-  const goalValue = isGradeScale
-    ? `${targetScore}`
-    : `${targetScore}${scaleUnitLabel ? ` ${scaleUnitLabel}` : ""}`
+  // Hardcoded language-level scale (A1-C2) — targetScore is an index into
+  // scaleLabels, resolved to its label here for display only.
+  const isLanguageLevel = scaleType === "language_level"
+  const goalLabel = isLanguageLevel
+    ? "Целевой уровень"
+    : isGradeScale
+      ? "Целевая оценка"
+      : `Целевой ${scaleUnitLabel || "балл"}`
+  const goalValue = isLanguageLevel
+    ? (scaleLabels?.[targetScore] ?? `${targetScore}`)
+    : isGradeScale
+      ? `${targetScore}`
+      : `${targetScore}${scaleUnitLabel ? ` ${scaleUnitLabel}` : ""}`
 
   const examLabel = `До ${examTypeName} по ${formatSubjects(subject)}`
   const { status, daysLeft, requiredTotal, completedRequired } = metrics

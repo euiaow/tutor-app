@@ -70,13 +70,28 @@ import { SettingsDialog } from "@/components/settings-dialog"
 
 function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
   const timeZone = useTimeZone()
-  const [initialDatePart, initialTimePart] = initialDate
-    ? utcDateToLocalInput(initialDate, timeZone).split("T")
-    : ["", ""]
-  const [date, setDate] = useState(initialDatePart)
-  const [time, setTime] = useState(initialTimePart)
+  const [date, setDate] = useState("")
+  const [time, setTime] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+
+  // Was a remount-via-key on the parent (key={open ? "open" : "closed"}) —
+  // that reset the form fields on each open, but also meant Base UI's
+  // Dialog.Root was born already-open instead of transitioning
+  // closed→open, so the entrance animation (data-[starting-style], same
+  // transition every other GlassDialog/TeacherDialog uses) never had a
+  // state change to actually animate. A plain effect keyed on `open`
+  // gets the same "fresh fields every time it opens" behavior without
+  // remounting the dialog itself.
+  useEffect(() => {
+    if (!open) return
+    const [initialDatePart, initialTimePart] = initialDate
+      ? utcDateToLocalInput(initialDate, timeZone).split("T")
+      : ["", ""]
+    setDate(initialDatePart)
+    setTime(initialTimePart)
+    setError("")
+  }, [open, initialDate, timeZone])
 
   function handleOpenChange(nextOpen) {
     onOpenChange(nextOpen)
@@ -393,15 +408,26 @@ function GoalCard({ studentId, program, examType, heading }) {
   // оценка"), any other scale (ЕГЭ, custom types) shows the value with its
   // unit label — same rule ExamRadar applies to the read-only display.
   const isGradeScale = examType?.scaleType === "grade"
+  // Hardcoded language-level scale (A1-C2) — targetScore stores the index
+  // into examType.scaleLabels, not the label itself, same reasoning as any
+  // other numeric targetScore (pace math in computeRadarMetrics stays
+  // number-based); the select below just resolves index<->label at the
+  // UI boundary.
+  const isLanguageLevel = examType?.scaleType === "language_level"
   const scaleMin = examType?.scaleMin ?? 0
   const scaleMax = examType?.scaleMax ?? 100
   const scaleStep = examType?.scaleStep ?? 1
   const unitLabel = examType?.scaleUnitLabel || "балл"
-  const goalLabel = isGradeScale ? "Целевая оценка" : `Целевой ${unitLabel}`
+  const goalLabel = isLanguageLevel ? "Целевой уровень" : isGradeScale ? "Целевая оценка" : `Целевой ${unitLabel}`
+  // examType.scaleDefault (e.g. ЕГЭ's 70) wins when set; otherwise falls
+  // back to the old behavior — scaleMax-1 for a grade scale, the scale's
+  // own minimum otherwise (custom types created via the inline form never
+  // set scaleDefault, so they keep the pre-existing default).
+  const defaultTargetScore = examType?.scaleDefault ?? (isGradeScale ? scaleMax - 1 : scaleMin)
 
   function startEditing() {
     setTargetScore(
-      program.targetScore != null ? String(program.targetScore) : isGradeScale ? String(scaleMax - 1) : "",
+      program.targetScore != null ? String(program.targetScore) : String(defaultTargetScore),
     )
     setExamDate(program.examDate ? toDateInputValue(program.examDate) : "")
     setError("")
@@ -431,17 +457,32 @@ function GoalCard({ studentId, program, examType, heading }) {
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex-1">
             <span className="text-xs text-muted-foreground">{goalLabel}</span>
-            <input
-              type="number"
-              min={String(scaleMin)}
-              max={String(scaleMax)}
-              step={String(scaleStep)}
-              value={targetScore}
-              onChange={(e) => setTargetScore(e.target.value)}
-              disabled={saving}
-              placeholder={String(scaleMin)}
-              className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
-            />
+            {isLanguageLevel ? (
+              <select
+                value={targetScore}
+                onChange={(e) => setTargetScore(e.target.value)}
+                disabled={saving}
+                className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
+              >
+                {(examType?.scaleLabels ?? []).map((label, index) => (
+                  <option key={label} value={index}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                min={String(scaleMin)}
+                max={String(scaleMax)}
+                step={String(scaleStep)}
+                value={targetScore}
+                onChange={(e) => setTargetScore(e.target.value)}
+                disabled={saving}
+                placeholder={String(scaleMin)}
+                className="glass-inset mt-1 w-full rounded-2xl px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
+              />
+            )}
           </label>
           <label className="flex-1">
             <span className="text-xs text-muted-foreground">Дата экзамена</span>
@@ -528,7 +569,9 @@ function GoalCard({ studentId, program, examType, heading }) {
       <div className="mt-4 flex flex-wrap gap-3">
         <div className="glass-inset flex-1 rounded-3xl p-4">
           <p className="text-xs text-muted-foreground">{goalLabel}</p>
-          <p className="mt-1 font-display text-2xl text-primary">{program.targetScore}</p>
+          <p className="mt-1 font-display text-2xl text-primary">
+            {isLanguageLevel ? (examType?.scaleLabels?.[program.targetScore] ?? program.targetScore) : program.targetScore}
+          </p>
         </div>
         <div className="glass-inset flex-1 rounded-3xl p-4">
           <p className="text-xs text-muted-foreground">Дата экзамена</p>
@@ -1003,7 +1046,6 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       {lesson ? (
         <>
           <ProposeRescheduleDialog
-            key={rescheduleDialogOpen ? "open" : "closed"}
             studentId={studentId}
             lessonId={lesson.id}
             initialDate={lesson.rescheduledDate ?? lesson.date}
@@ -1012,7 +1054,6 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           />
 
           <ProposeCancelDialog
-            key={cancelDialogOpen ? "open-cancel" : "closed-cancel"}
             studentId={studentId}
             lessonId={lesson.id}
             lessonDate={lesson.rescheduledDate ?? lesson.date}
@@ -1488,6 +1529,7 @@ function StudentDashboardContent({ studentId }) {
             examTypeName={examType?.name ?? "—"}
             scaleType={examType?.scaleType}
             scaleUnitLabel={examType?.scaleUnitLabel}
+            scaleLabels={examType?.scaleLabels}
             targetScore={program.targetScore}
             metrics={metrics}
             requiredTopics={requiredTopics}

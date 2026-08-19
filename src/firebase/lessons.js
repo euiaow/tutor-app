@@ -67,6 +67,16 @@ function mapLessonDoc(id, studentId, data) {
     cancellationInitiator: data.cancellationInitiator ?? null,
     coveredTopics: Array.isArray(data.coveredTopics) ? data.coveredTopics : [],
     coveredPrototypes: Array.isArray(data.coveredPrototypes) ? data.coveredPrototypes : [],
+    // Neither was ever exposed here before — slotIndex is needed by
+    // UpcomingLessonsListDialog's virtual-occurrence projection to match a
+    // real lesson doc back to its schedule slot; isExtraLesson was already
+    // read by upcoming-lesson-card.jsx's "доп." badge, which had silently
+    // never shown anything since this field was always undefined on the
+    // client object regardless of the actual Firestore value (mapStudentDoc
+    // had this same "explicit field list is the real gate" gap — see
+    // systemPatterns.md — found here for lessons, not just students).
+    slotIndex: typeof data.slotIndex === "number" ? data.slotIndex : null,
+    isExtraLesson: Boolean(data.isExtraLesson),
   }
 }
 
