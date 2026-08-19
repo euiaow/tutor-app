@@ -59,7 +59,7 @@ import {
 } from "@/firebase/lessons"
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
-import { subscribeToCurriculumProgress } from "@/firebase/curriculum"
+import { subscribeToPrograms } from "@/firebase/curriculum"
 import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
@@ -375,13 +375,12 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
   )
 }
 
-// Exam Radar Phase 1 — only the goal itself (targetScore/examDate) is
-// saved here; nothing about pace/status is computed or shown yet (that's
-// Phase 2+). Only rendered when a curriculum program is assigned
-// (student.curriculumSourceTemplateId set) AND the resolved examType has a
-// real scale (scaleType !== "none", Block 3) — a plain school-program
-// student has no exam to set a target score against.
-function MyGoalCard({ studentId, student, examType }) {
+// Block 4 — a goal (targetScore/examDate) now belongs to one specific
+// program, not to the student as a whole (a student can have several
+// programs, each with its own exam target). `heading` lets the wrapper
+// below decide "Моя цель" (only one qualifying program) vs. the program's
+// own subject name (several) — see MyGoalsSection.
+function GoalCard({ studentId, program, examType, heading }) {
   const timeZone = useTimeZone()
   const [editing, setEditing] = useState(false)
   const [targetScore, setTargetScore] = useState("")
@@ -389,12 +388,10 @@ function MyGoalCard({ studentId, student, examType }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
-  const hasGoal = student.targetScore != null && student.examDate != null
-  // Block 3 — the range/label/default this form uses now comes from the
-  // student's own examType doc (teachers/{uid}/examTypes), not a hardcoded
-  // "ege"/"oge" check — a "grade" scale (e.g. ОГЭ's 2-5) behaves like the
-  // old isOge branch did, any other scale (custom types included) behaves
-  // like the old ЕГЭ default.
+  const hasGoal = program.targetScore != null && program.examDate != null
+  // A "grade" scale (e.g. ОГЭ's 2-5) shows a bare number ("Целевая
+  // оценка"), any other scale (ЕГЭ, custom types) shows the value with its
+  // unit label — same rule ExamRadar applies to the read-only display.
   const isGradeScale = examType?.scaleType === "grade"
   const scaleMin = examType?.scaleMin ?? 0
   const scaleMax = examType?.scaleMax ?? 100
@@ -404,9 +401,9 @@ function MyGoalCard({ studentId, student, examType }) {
 
   function startEditing() {
     setTargetScore(
-      student.targetScore != null ? String(student.targetScore) : isGradeScale ? String(scaleMax - 1) : "",
+      program.targetScore != null ? String(program.targetScore) : isGradeScale ? String(scaleMax - 1) : "",
     )
-    setExamDate(student.examDate ? toDateInputValue(student.examDate) : "")
+    setExamDate(program.examDate ? toDateInputValue(program.examDate) : "")
     setError("")
     setEditing(true)
   }
@@ -417,7 +414,7 @@ function MyGoalCard({ studentId, student, examType }) {
     setError("")
     try {
       const dateValue = examDate ? new Date(`${examDate}T12:00:00`) : null
-      await setStudentGoal(studentId, targetScore, dateValue)
+      await setStudentGoal(studentId, program.id, targetScore, dateValue)
       setEditing(false)
     } catch (err) {
       console.error("Failed to save student goal:", err)
@@ -430,7 +427,7 @@ function MyGoalCard({ studentId, student, examType }) {
   if (editing) {
     return (
       <section className="glass-soft rounded-4xl p-6">
-        <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+        <h3 className="font-display text-lg text-foreground">{heading}</h3>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex-1">
             <span className="text-xs text-muted-foreground">{goalLabel}</span>
@@ -493,7 +490,7 @@ function MyGoalCard({ studentId, student, examType }) {
           <Target className="h-5 w-5" aria-hidden="true" />
         </span>
         <div className="min-w-[14rem] flex-1">
-          <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+          <h3 className="font-display text-lg text-foreground">{heading}</h3>
           <p className="mt-1 text-sm text-secondary-foreground">Укажи цель, чтобы видеть свой прогресс к экзамену</p>
         </div>
         <button
@@ -517,7 +514,7 @@ function MyGoalCard({ studentId, student, examType }) {
         >
           <Target className="h-5 w-5" aria-hidden="true" />
         </span>
-        <h3 className="font-display text-lg text-foreground">Моя цель</h3>
+        <h3 className="font-display text-lg text-foreground">{heading}</h3>
         <button
           type="button"
           onClick={startEditing}
@@ -531,12 +528,58 @@ function MyGoalCard({ studentId, student, examType }) {
       <div className="mt-4 flex flex-wrap gap-3">
         <div className="glass-inset flex-1 rounded-3xl p-4">
           <p className="text-xs text-muted-foreground">{goalLabel}</p>
-          <p className="mt-1 font-display text-2xl text-primary">{student.targetScore}</p>
+          <p className="mt-1 font-display text-2xl text-primary">{program.targetScore}</p>
         </div>
         <div className="glass-inset flex-1 rounded-3xl p-4">
           <p className="text-xs text-muted-foreground">Дата экзамена</p>
-          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(student.examDate, timeZone)}</p>
+          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(program.examDate, timeZone)}</p>
         </div>
+      </div>
+    </section>
+  )
+}
+
+// Block 4 Phase 3 — replaces the old single-goal MyGoalCard. Filters to
+// programs whose examType has a real scale (scaleType !== "none" — a
+// "Школьная программа"-style program never participates in goals at all,
+// same as the old examTarget === "school" exclusion). Singular "Моя цель"
+// heading + the old rich single-card layout when there's exactly one such
+// program (unchanged from before multi-program support); "Мои цели" +
+// one full card per program, headed by its own subject name, when there
+// are several.
+function MyGoalsSection({ studentId, programs, examTypesById }) {
+  const qualifying = programs.filter((program) => {
+    const examType = examTypesById[program.examTypeId]
+    return examType && examType.scaleType !== "none"
+  })
+
+  if (qualifying.length === 0) return null
+
+  if (qualifying.length === 1) {
+    const program = qualifying[0]
+    return (
+      <GoalCard
+        studentId={studentId}
+        program={program}
+        examType={examTypesById[program.examTypeId]}
+        heading="Моя цель"
+      />
+    )
+  }
+
+  return (
+    <section>
+      <h2 className="font-display text-lg text-foreground">Мои цели</h2>
+      <div className="mt-3 space-y-3">
+        {qualifying.map((program) => (
+          <GoalCard
+            key={program.id}
+            studentId={studentId}
+            program={program}
+            examType={examTypesById[program.examTypeId]}
+            heading={program.subject || "Без предмета"}
+          />
+        ))}
       </div>
     </section>
   )
@@ -1047,7 +1090,7 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
 // the two cards to render at all, so a second independent listener here
 // would be redundant. `null` while the parent's own subscription hasn't
 // resolved yet, same as before.
-function CurriculumProgressCard({ progress }) {
+function CurriculumProgressCard({ progress, subjectLabel }) {
   const [expanded, setExpanded] = useState(false)
 
   if (!progress) return null
@@ -1081,7 +1124,9 @@ function CurriculumProgressCard({ progress }) {
         >
           <TrendingUp className="h-5 w-5" aria-hidden="true" />
         </span>
-        <h3 className="font-display text-lg text-foreground">Прогресс подготовки</h3>
+        <h3 className="font-display text-lg text-foreground">
+          Прогресс подготовки{subjectLabel ? ` — ${subjectLabel}` : ""}
+        </h3>
         <span className="ml-auto font-display text-2xl text-primary">{overallPercent}%</span>
       </div>
 
@@ -1291,24 +1336,23 @@ function StudentDashboardContent({ studentId }) {
     return () => unsub()
   }, [studentId])
 
-  // Lifted from CurriculumProgressCard (Phase 3) — ExamRadar needs the same
-  // topics/prototypes/assignedAt to compute metrics, and the toggle
-  // decision (ExamRadar vs CurriculumProgressCard) needs this resolved
-  // before it can render either, so one subscription up here replaces what
-  // used to be CurriculumProgressCard's own private one.
-  const [curriculumProgress, setCurriculumProgress] = useState(null)
+  // Block 4 — a student can have several programs at once (one per
+  // subject); each renders its own goal/radar/progress block independently
+  // below (MyGoalsSection + the per-program map further down), replacing
+  // the old single curriculumProgress/main subscription.
+  const [programs, setPrograms] = useState([])
 
   useEffect(() => {
-    const unsubscribe = subscribeToCurriculumProgress(studentId, setCurriculumProgress, (error) =>
-      console.error("Failed to load curriculum progress:", error),
+    const unsubscribe = subscribeToPrograms(studentId, setPrograms, (error) =>
+      console.error("Failed to load programs:", error),
     )
     return () => unsubscribe()
   }, [studentId])
 
-  // Block 3 — resolves student.examTypeId against the owning teacher's own
-  // examTypes list (MyGoalCard/ExamRadar need scaleType/scaleMin/scaleMax/
+  // Resolves each program's examTypeId against the owning teacher's own
+  // examTypes list (GoalCard/ExamRadar need scaleType/scaleMin/scaleMax/
   // scaleUnitLabel, not just a name). student.teacherId is the denormalized
-  // field mapStudentDoc now exposes for exactly this.
+  // field mapStudentDoc exposes for exactly this.
   const [examTypes, setExamTypes] = useState([])
 
   useEffect(() => {
@@ -1360,30 +1404,35 @@ function StudentDashboardContent({ studentId }) {
 
   const allMaterials = [...dedupedMaterials, ...LOCKED_MATERIALS]
 
-  // Phase 3 toggle: ExamRadar once a goal is set, the plain progress card
-  // otherwise. requiredTopics/requiredPrototypes and the metrics are only
-  // computed once curriculumProgress has actually loaded — hasGoal alone
-  // isn't enough, there's a brief window where the goal fields are known
-  // but the progress subscription hasn't resolved yet.
-  const hasGoal = student.targetScore != null && student.examDate != null
-  const radarMetrics =
-    hasGoal && curriculumProgress
+  const examTypesById = Object.fromEntries(examTypes.map((type) => [type.id, type]))
+
+  // Block 4 Phase 3 — per-program toggle: a program with both
+  // targetScore/examDate filled gets its own independent ExamRadar block
+  // (its own computeRadarMetrics call, its own topics/prototypes/
+  // assignedAt); every other program (scaleType "none", or a real scale
+  // but no goal filled in yet) gets the plain progress card instead. Both
+  // kinds can be present at once for the same student.
+  const programBlocks = programs.map((program) => {
+    const hasGoal = program.targetScore != null && program.examDate != null
+    const metrics = hasGoal
       ? computeRadarMetrics({
-          examDate: student.examDate,
-          targetScore: student.targetScore,
-          topics: curriculumProgress.topics,
-          prototypes: curriculumProgress.prototypes,
-          assignedAt: curriculumProgress.assignedAt,
+          examDate: program.examDate,
+          targetScore: program.targetScore,
+          topics: program.topics,
+          prototypes: program.prototypes,
+          assignedAt: program.assignedAt,
         })
       : null
-  const requiredTopics = curriculumProgress ? requiredItems(curriculumProgress.topics, student.targetScore) : []
-  const requiredPrototypes = curriculumProgress
-    ? requiredItems(curriculumProgress.prototypes, student.targetScore)
-    : []
-  const staleDays = curriculumProgress
-    ? daysSinceLastUpdate(curriculumProgress.topics, curriculumProgress.prototypes)
-    : null
-  const studentExamType = examTypes.find((type) => type.id === student.examTypeId) ?? null
+    return {
+      program,
+      examType: examTypesById[program.examTypeId] ?? null,
+      hasGoal,
+      metrics,
+      requiredTopics: requiredItems(program.topics, program.targetScore),
+      requiredPrototypes: requiredItems(program.prototypes, program.targetScore),
+      staleDays: daysSinceLastUpdate(program.topics, program.prototypes),
+    }
+  })
 
   // Multi-tenancy Phase 4a: "teacher-theme" (pink) if this student picked
   // it, "" (plain root/amber tokens, the pre-existing default) otherwise —
@@ -1429,24 +1478,25 @@ function StudentDashboardContent({ studentId }) {
 
       <StudentNotifications studentId={studentId} />
 
-      {student.curriculumSourceTemplateId && studentExamType && studentExamType.scaleType !== "none" ? (
-        <MyGoalCard studentId={studentId} student={student} examType={studentExamType} />
-      ) : null}
+      <MyGoalsSection studentId={studentId} programs={programs} examTypesById={examTypesById} />
 
-      {hasGoal && radarMetrics ? (
-        <ExamRadar
-          subject={student.subject}
-          examTypeName={studentExamType?.name ?? "—"}
-          scaleType={studentExamType?.scaleType}
-          scaleUnitLabel={studentExamType?.scaleUnitLabel}
-          targetScore={student.targetScore}
-          metrics={radarMetrics}
-          requiredTopics={requiredTopics}
-          requiredPrototypes={requiredPrototypes}
-          staleDays={staleDays}
-        />
-      ) : (
-        <CurriculumProgressCard progress={curriculumProgress} />
+      {programBlocks.map(({ program, examType, hasGoal, metrics, requiredTopics, requiredPrototypes, staleDays }) =>
+        hasGoal && metrics ? (
+          <ExamRadar
+            key={program.id}
+            subject={[program.subject].filter(Boolean)}
+            examTypeName={examType?.name ?? "—"}
+            scaleType={examType?.scaleType}
+            scaleUnitLabel={examType?.scaleUnitLabel}
+            targetScore={program.targetScore}
+            metrics={metrics}
+            requiredTopics={requiredTopics}
+            requiredPrototypes={requiredPrototypes}
+            staleDays={staleDays}
+          />
+        ) : (
+          <CurriculumProgressCard key={program.id} progress={program} subjectLabel={program.subject} />
+        ),
       )}
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />

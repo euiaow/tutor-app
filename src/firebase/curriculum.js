@@ -9,7 +9,6 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
-  Timestamp,
   updateDoc,
   where,
 } from "firebase/firestore"
@@ -17,10 +16,11 @@ import { httpsCallable } from "firebase/functions"
 import { db, functions, auth } from "./firebase"
 
 const CURRICULUM_TEMPLATES_COLLECTION = "curriculumTemplates"
-const CURRICULUM_PROGRESS_SUBCOLLECTION = "curriculumProgress"
-const CURRICULUM_PROGRESS_DOC_ID = "main"
+const PROGRAMS_SUBCOLLECTION = "programs"
 
 const assignCurriculumTemplateCallable = httpsCallable(functions, "assignCurriculumTemplate")
+const reassignProgramCallable = httpsCallable(functions, "reassignProgram")
+const deleteProgramCallable = httpsCallable(functions, "deleteProgram")
 const markTopicsCoveredCallable = httpsCallable(functions, "markTopicsCovered")
 const addPersonalTopicCallable = httpsCallable(functions, "addPersonalTopic")
 const removePersonalTopicCallable = httpsCallable(functions, "removePersonalTopic")
@@ -30,6 +30,9 @@ function mapTemplateDoc(id, data) {
     id,
     name: data.name ?? "",
     examTypeId: data.examTypeId ?? null,
+    // Block 4 Phase 2 — templates now carry their own subject, copied onto
+    // every program assigned from them (assignCurriculumTemplate).
+    subject: data.subject ?? "",
     topics: Array.isArray(data.topics) ? data.topics : [],
     prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
   }
@@ -47,11 +50,12 @@ export async function getCurriculumTemplates(teacherId) {
   return snapshot.docs.map((document) => mapTemplateDoc(document.id, document.data()))
 }
 
-export async function createCurriculumTemplate({ name, examTypeId, topics, prototypes }) {
+export async function createCurriculumTemplate({ name, examTypeId, subject, topics, prototypes }) {
   const ref = collection(db, CURRICULUM_TEMPLATES_COLLECTION)
   await addDoc(ref, {
     name,
     examTypeId,
+    subject,
     topics,
     prototypes,
     // Multi-tenancy Phase 2: templates are admin-only, teacher-owned config
@@ -63,11 +67,12 @@ export async function createCurriculumTemplate({ name, examTypeId, topics, proto
   })
 }
 
-export async function updateCurriculumTemplate(templateId, { name, examTypeId, topics, prototypes }) {
+export async function updateCurriculumTemplate(templateId, { name, examTypeId, subject, topics, prototypes }) {
   const ref = doc(db, CURRICULUM_TEMPLATES_COLLECTION, templateId)
   await updateDoc(ref, {
     name,
     examTypeId,
+    subject,
     topics,
     prototypes,
     updatedAt: serverTimestamp(),
@@ -79,81 +84,81 @@ export async function deleteCurriculumTemplate(templateId) {
   await deleteDoc(ref)
 }
 
+// Block 4 — adds a new program (never overwrites an existing one). Returns
+// { success, programId }.
 export async function assignCurriculumTemplate(studentId, templateId) {
-  await assignCurriculumTemplateCallable({ studentId, templateId })
-}
-
-// One-time read (not realtime) — used by HomeworkLessonDialog when it
-// enters completing mode, and by the student-row detail view (Phase 4).
-export async function getCurriculumProgress(studentId) {
-  const ref = doc(db, "students", studentId, CURRICULUM_PROGRESS_SUBCOLLECTION, CURRICULUM_PROGRESS_DOC_ID)
-  const snapshot = await getDoc(ref)
-  if (!snapshot.exists()) return null
-
-  const data = snapshot.data()
-  return {
-    topics: Array.isArray(data.topics) ? data.topics : [],
-    prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
-  }
-}
-
-export async function markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating }) {
-  await markTopicsCoveredCallable({ studentId, lessonId, topicIds, prototypeIds, rating })
-}
-
-// Edits a student's own curriculumProgress directly — independent of
-// whatever template it came from. type is "topic" | "prototype".
-export async function addPersonalTopic(studentId, { title, minScoreRequired, type }) {
-  const result = await addPersonalTopicCallable({ studentId, title, minScoreRequired, type })
+  const result = await assignCurriculumTemplateCallable({ studentId, templateId })
   return result.data
 }
 
-export async function removePersonalTopic(studentId, { itemId, type }) {
-  await removePersonalTopicCallable({ studentId, itemId, type })
+// Replaces one already-assigned program's template-derived content in
+// place — see functions/core/curriculum.js's own comment on the semantics.
+export async function reassignProgram(studentId, programId, templateId) {
+  await reassignProgramCallable({ studentId, programId, templateId })
 }
 
-export function subscribeToCurriculumProgress(studentId, onData, onError) {
-  const ref = doc(db, "students", studentId, CURRICULUM_PROGRESS_SUBCOLLECTION, CURRICULUM_PROGRESS_DOC_ID)
+export async function deleteProgram(studentId, programId) {
+  await deleteProgramCallable({ studentId, programId })
+}
 
+function mapProgramDoc(id, data) {
+  return {
+    id,
+    subject: data.subject ?? null,
+    templateId: data.templateId ?? null,
+    examTypeId: data.examTypeId ?? null,
+    topics: Array.isArray(data.topics) ? data.topics : [],
+    prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
+    targetScore: data.targetScore ?? null,
+    examDate: data.examDate?.toDate?.() ?? null,
+    assignedAt: data.assignedAt ?? null,
+  }
+}
+
+// One-time read (not realtime) — used by HomeworkLessonDialog when it
+// enters completing/upcoming mode to source the topic picker/checklist.
+export async function getProgramsForStudent(studentId) {
+  const ref = collection(db, "students", studentId, PROGRAMS_SUBCOLLECTION)
+  const snapshot = await getDocs(ref)
+  return snapshot.docs.map((document) => mapProgramDoc(document.id, document.data()))
+}
+
+export function subscribeToPrograms(studentId, onData, onError) {
+  const ref = collection(db, "students", studentId, PROGRAMS_SUBCOLLECTION)
   return onSnapshot(
     ref,
-    (snapshot) => {
-      if (!snapshot.exists()) {
-        onData(null)
-        return
-      }
-      const data = snapshot.data()
-      onData({
-        topics: Array.isArray(data.topics) ? data.topics : [],
-        prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
-        // Exam Radar Phase 3 needs this for computeRadarMetrics' pace
-        // window — wasn't exposed here before since nothing read it.
-        assignedAt: data.assignedAt ?? null,
-      })
-    },
+    (snapshot) => onData(snapshot.docs.map((document) => mapProgramDoc(document.id, document.data()))),
     onError,
   )
 }
 
-// One-time collectionGroup scan across every student's curriculumProgress —
-// powers the progress bar on every (collapsed) row in the student list
-// without holding open a listener per student; only the row a teacher
-// actually expands gets a live subscribeToCurriculumProgress on top of this.
-export async function getAllCurriculumProgressByStudent(teacherId) {
-  const progressQuery = query(
-    collectionGroup(db, CURRICULUM_PROGRESS_SUBCOLLECTION),
-    where("teacherId", "==", teacherId),
-  )
-  const snapshot = await getDocs(progressQuery)
+export async function markTopicsCovered(studentId, lessonId, programId, { topicIds, prototypeIds, rating }) {
+  await markTopicsCoveredCallable({ studentId, lessonId, programId, topicIds, prototypeIds, rating })
+}
+
+// Edits one program's topics/prototypes directly — independent of whatever
+// template it came from. type is "topic" | "prototype".
+export async function addPersonalTopic(studentId, programId, { title, minScoreRequired, type }) {
+  const result = await addPersonalTopicCallable({ studentId, programId, title, minScoreRequired, type })
+  return result.data
+}
+
+export async function removePersonalTopic(studentId, programId, { itemId, type }) {
+  await removePersonalTopicCallable({ studentId, programId, itemId, type })
+}
+
+// One-time collectionGroup scan across every student's programs — powers
+// the (averaged, Block 4 Phase 4) progress indicator on every collapsed row
+// in the student list without holding open a listener per student.
+export async function getAllProgramsByStudent(teacherId) {
+  const programsQuery = query(collectionGroup(db, PROGRAMS_SUBCOLLECTION), where("teacherId", "==", teacherId))
+  const snapshot = await getDocs(programsQuery)
 
   const byStudentId = {}
   snapshot.docs.forEach((document) => {
     const studentId = document.ref.parent.parent.id
-    const data = document.data()
-    byStudentId[studentId] = {
-      topics: Array.isArray(data.topics) ? data.topics : [],
-      prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
-    }
+    if (!byStudentId[studentId]) byStudentId[studentId] = []
+    byStudentId[studentId].push(mapProgramDoc(document.id, document.data()))
   })
   return byStudentId
 }
@@ -162,14 +167,14 @@ export async function getAllCurriculumProgressByStudent(teacherId) {
 // markTopicsCovered flow — reads the whole array and writes it back since
 // Firestore doesn't support indexing into an array by element id via a dot
 // path in updateDoc.
-export async function setCurriculumItemCovered(studentId, kind, itemId, covered) {
-  const ref = doc(db, "students", studentId, CURRICULUM_PROGRESS_SUBCOLLECTION, CURRICULUM_PROGRESS_DOC_ID)
+export async function setCurriculumItemCovered(studentId, programId, kind, itemId, covered) {
+  const ref = doc(db, "students", studentId, PROGRAMS_SUBCOLLECTION, programId)
   const snapshot = await getDoc(ref)
   if (!snapshot.exists()) return
 
   const items = Array.isArray(snapshot.data()[kind]) ? snapshot.data()[kind] : []
   const next = items.map((item) =>
-    item.id === itemId ? { ...item, covered, coveredAt: covered ? Timestamp.now() : null } : item,
+    item.id === itemId ? { ...item, covered, coveredAt: covered ? new Date() : null } : item,
   )
   await updateDoc(ref, { [kind]: next })
 }

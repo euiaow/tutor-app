@@ -22,7 +22,7 @@ import { TeacherBotConnectStatus } from "@/components/teacher/teacher-bot-connec
 import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
-import { getAllCurriculumProgressByStudent, getCurriculumTemplates } from "@/firebase/curriculum"
+import { getAllProgramsByStudent } from "@/firebase/curriculum"
 import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
@@ -352,7 +352,6 @@ export function TeacherDashboard() {
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
-  const [curriculumTemplates, setCurriculumTemplates] = useState([])
   const [examTypes, setExamTypes] = useState([])
   const [teacherProfile, setTeacherProfile] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -381,16 +380,6 @@ export function TeacherDashboard() {
     return () => unsub()
   }, [])
 
-  // Fetched once here (not per-row) so every student row's "Учебный план"
-  // display can look up its template name without N separate reads.
-  useEffect(() => {
-    const uid = auth.currentUser?.uid
-    if (!uid) return
-
-    getCurriculumTemplates(uid)
-      .then(setCurriculumTemplates)
-      .catch((err) => console.error("Failed to load curriculum templates:", err))
-  }, [])
 
   // Live subscription (not one-time, unlike curriculumTemplates above) since
   // "+ Создать новый тип экзамена" inside CurriculumSection's own editor can
@@ -463,7 +452,7 @@ export function TeacherDashboard() {
     const uid = auth.currentUser?.uid
     if (!uid) return
 
-    getAllCurriculumProgressByStudent(uid)
+    getAllProgramsByStudent(uid)
       .then(setCurriculumProgressByStudent)
       .catch((error) => console.error("Failed to load curriculum progress summaries:", error))
   }, [students.length])
@@ -738,7 +727,6 @@ export function TeacherDashboard() {
                     key={student.id}
                     student={student}
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
-                    curriculumTemplates={curriculumTemplates}
                     examTypes={examTypes}
                   />
                 ))}

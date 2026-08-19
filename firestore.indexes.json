@@ -63,7 +63,7 @@
   ],
   "fieldOverrides": [
     {
-      "collectionGroup": "curriculumProgress",
+      "collectionGroup": "programs",
       "fieldPath": "teacherId",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }

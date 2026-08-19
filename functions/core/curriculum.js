@@ -5,16 +5,15 @@ const { db } = require("./firestore")
 
 const STUDENTS_COLLECTION = "students"
 const CURRICULUM_TEMPLATES_COLLECTION = "curriculumTemplates"
-const CURRICULUM_PROGRESS_SUBCOLLECTION = "curriculumProgress"
-const CURRICULUM_PROGRESS_DOC_ID = "main"
+const PROGRAMS_SUBCOLLECTION = "programs"
 const LESSONS_SUBCOLLECTION = "lessons"
 
-function progressRef(studentId) {
-  return db
-    .collection(STUDENTS_COLLECTION)
-    .doc(studentId)
-    .collection(CURRICULUM_PROGRESS_SUBCOLLECTION)
-    .doc(CURRICULUM_PROGRESS_DOC_ID)
+function programsRef(studentId) {
+  return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(PROGRAMS_SUBCOLLECTION)
+}
+
+function programRef(studentId, programId) {
+  return programsRef(studentId).doc(programId)
 }
 
 function lessonRef(studentId, lessonId) {
@@ -22,7 +21,7 @@ function lessonRef(studentId, lessonId) {
 }
 
 // Mirrors curriculum-section.jsx's own shortId() — only needs to be unique
-// within one student's topics/prototypes array, not globally.
+// within one program's own topics/prototypes array, not globally.
 function shortId() {
   return Math.random().toString(36).slice(2, 10)
 }
@@ -37,9 +36,12 @@ function withProgressDefaults(items) {
   }))
 }
 
-// Full replace, never a merge — assigning a new template while one is
-// already active discards all prior progress on purpose (the caller warns
-// the teacher about this before calling in, see student-card.jsx).
+// Block 4 (multi-program) — this used to fully overwrite the student's
+// single curriculumProgress/main doc, discarding any existing progress. Now
+// it ADDS a new program doc instead, so a student can have several programs
+// (e.g. one per subject) assigned at once, each tracked independently.
+// Replacing/resetting one specific already-assigned program's content is
+// reassignProgram below, not this function.
 async function assignCurriculumTemplate(studentId, templateId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -54,42 +56,114 @@ async function assignCurriculumTemplate(studentId, templateId) {
   }
   const template = templateSnapshot.data()
 
-  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
-  const studentSnapshot = await studentRef.get()
+  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   if (!studentSnapshot.exists) {
     throw new HttpsError("not-found", "Ученик не найден")
   }
 
-  await progressRef(studentId).set({
+  const programRefNew = programsRef(studentId).doc()
+  await programRefNew.set({
+    subject: template.subject ?? null,
+    templateId,
+    // Denormalized from the template at assignment time, not a live
+    // reference — if the template is later deleted/changed, this program's
+    // own scale must keep working (same reasoning as teacherId below).
+    examTypeId: template.examTypeId ?? null,
+    // Denormalized from the parent student doc, same pattern already used
+    // for lessons/balanceLedger — needed for the collectionGroup("programs")
+    // summary query (getAllProgramsByStudent) to filter by teacherId
+    // without an extra join.
+    teacherId: studentSnapshot.data().teacherId ?? null,
     topics: withProgressDefaults(template.topics),
     prototypes: withProgressDefaults(template.prototypes),
-    teacherId: studentSnapshot.data().teacherId ?? null,
+    targetScore: null,
+    examDate: null,
     assignedAt: FieldValue.serverTimestamp(),
   })
 
-  await studentRef.update({ curriculumSourceTemplateId: templateId })
+  logger.info("assignCurriculumTemplate: program added", { studentId, templateId, programId: programRefNew.id })
 
-  logger.info("assignCurriculumTemplate: template assigned", { studentId, templateId })
+  return { success: true, programId: programRefNew.id }
+}
+
+// Replaces one specific already-assigned program's template-derived content
+// (subject/templateId/examTypeId/topics/prototypes) — same "full replace,
+// resets progress" semantics assignCurriculumTemplate used to have for the
+// single-program model, now scoped to just this one program doc. Deliberately
+// leaves targetScore/examDate untouched: those are the student's own goal
+// for this program's subject, not part of "which topics does this program
+// cover" — a teacher replacing the underlying template plan shouldn't
+// silently wipe a goal the student already set.
+async function reassignProgram(studentId, programId, newTemplateId) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
+  }
+  if (!newTemplateId || typeof newTemplateId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор шаблона")
+  }
+
+  const ref = programRef(studentId, programId)
+  const [programSnapshot, templateSnapshot] = await Promise.all([
+    ref.get(),
+    db.collection(CURRICULUM_TEMPLATES_COLLECTION).doc(newTemplateId).get(),
+  ])
+
+  if (!programSnapshot.exists) {
+    throw new HttpsError("not-found", "Программа не найдена")
+  }
+  if (!templateSnapshot.exists) {
+    throw new HttpsError("not-found", "Шаблон программы не найден")
+  }
+  const template = templateSnapshot.data()
+
+  await ref.update({
+    subject: template.subject ?? null,
+    templateId: newTemplateId,
+    examTypeId: template.examTypeId ?? null,
+    topics: withProgressDefaults(template.topics),
+    prototypes: withProgressDefaults(template.prototypes),
+  })
+
+  logger.info("reassignProgram: program replaced", { studentId, programId, newTemplateId })
 
   return { success: true }
 }
 
-// Student's own exam-prep goal (Exam Radar Phase 1) — lives here rather
-// than core/students.js since it's conceptually part of the same
-// curriculum/exam-tracking domain as assignCurriculumTemplate/
-// markTopicsCovered, not general profile data. No request.auth check: this
-// is a student-facing action, reachable from the unauthenticated Student
-// Dashboard, same trust model (studentId knowledge) as the rest of the
-// student-facing surface.
-async function setStudentGoal(studentId, targetScore, examDate) {
+async function deleteProgram(studentId, programId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
+  }
 
-  const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
-  const studentSnapshot = await studentRef.get()
-  if (!studentSnapshot.exists) {
-    throw new HttpsError("not-found", "Ученик не найден")
+  await programRef(studentId, programId).delete()
+  logger.info("deleteProgram: program deleted", { studentId, programId })
+
+  return { success: true }
+}
+
+// Student's own exam-prep goal for one specific program (Block 4 — used to
+// live directly on students/{id}.targetScore/.examDate before multi-program
+// support; a goal now belongs to the program whose subject it's for, not to
+// the student as a whole). No request.auth check: student-facing action,
+// reachable from the unauthenticated Student Dashboard, same trust model
+// (studentId knowledge) as the rest of the student-facing surface.
+async function setStudentGoal(studentId, programId, targetScore, examDate) {
+  if (!studentId || typeof studentId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
+  }
+
+  const ref = programRef(studentId, programId)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Программа не найдена")
   }
 
   const normalizedScore =
@@ -98,26 +172,24 @@ async function setStudentGoal(studentId, targetScore, examDate) {
       : Math.max(0, Math.min(100, Number(targetScore)))
   const normalizedExamDate = examDate ? Timestamp.fromDate(new Date(examDate)) : null
 
-  await studentRef.update({ targetScore: normalizedScore, examDate: normalizedExamDate })
+  await ref.update({ targetScore: normalizedScore, examDate: normalizedExamDate })
 
-  logger.info("setStudentGoal: goal updated", { studentId, targetScore: normalizedScore })
+  logger.info("setStudentGoal: goal updated", { studentId, programId, targetScore: normalizedScore })
 
   return { success: true }
 }
 
-// Adds one topic/prototype directly to a student's own curriculumProgress,
-// independent of whatever template it was originally assigned from —
-// doesn't touch curriculumTemplates at all. minScoreRequired defaults to 0
-// (the common case — a personal addition the teacher wants regardless of
-// the student's target score) but still respects an explicit value from
-// the same compact "Мин. балл" input the template editor uses, clamped
-// 0-100 the same way setStudentGoal clamps targetScore. Creates
-// curriculumProgress/main on the fly (via .set, not .update) if the
-// student has no program assigned yet at all — this is a valid way to
-// start a fully custom program without ever assigning a template.
-async function addPersonalTopic(studentId, { title, minScoreRequired, type } = {}) {
+// Adds one topic/prototype directly to one specific program, independent of
+// whatever template it was originally assigned from. minScoreRequired
+// defaults to 0 (the common case — a personal addition the teacher wants
+// regardless of the student's target score) but still respects an explicit
+// value, clamped 0-100 the same way setStudentGoal clamps targetScore.
+async function addPersonalTopic(studentId, programId, { title, minScoreRequired, type } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
   }
   if (!title || typeof title !== "string" || !title.trim()) {
     throw new HttpsError("invalid-argument", "Не указано название темы")
@@ -140,26 +212,15 @@ async function addPersonalTopic(studentId, { title, minScoreRequired, type } = {
     coveredAt: null,
   }
 
-  const ref = progressRef(studentId)
+  const ref = programRef(studentId, programId)
   const snapshot = await ref.get()
-
   if (!snapshot.exists) {
-    const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
-    if (!studentSnapshot.exists) {
-      throw new HttpsError("not-found", "Ученик не найден")
-    }
-
-    await ref.set({
-      topics: field === "topics" ? [newItem] : [],
-      prototypes: field === "prototypes" ? [newItem] : [],
-      teacherId: studentSnapshot.data().teacherId ?? null,
-      assignedAt: FieldValue.serverTimestamp(),
-    })
-  } else {
-    await ref.update({ [field]: FieldValue.arrayUnion(newItem) })
+    throw new HttpsError("not-found", "Программа не найдена")
   }
 
-  logger.info("addPersonalTopic: item added", { studentId, type, id: newItem.id })
+  await ref.update({ [field]: FieldValue.arrayUnion(newItem) })
+
+  logger.info("addPersonalTopic: item added", { studentId, programId, type, id: newItem.id })
 
   return { success: true, id: newItem.id }
 }
@@ -172,9 +233,12 @@ async function addPersonalTopic(studentId, { title, minScoreRequired, type } = {
 // historical records of what was actually covered in a past lesson, and
 // removing an item from the *current* program must not rewrite that
 // history.
-async function removePersonalTopic(studentId, { itemId, type } = {}) {
+async function removePersonalTopic(studentId, programId, { itemId, type } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+  }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
   }
   if (!itemId || typeof itemId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор темы")
@@ -184,10 +248,10 @@ async function removePersonalTopic(studentId, { itemId, type } = {}) {
   }
 
   const field = type === "prototype" ? "prototypes" : "topics"
-  const ref = progressRef(studentId)
+  const ref = programRef(studentId, programId)
   const snapshot = await ref.get()
   if (!snapshot.exists) {
-    throw new HttpsError("not-found", "Программа ученика не найдена")
+    throw new HttpsError("not-found", "Программа не найдена")
   }
 
   const data = snapshot.data()
@@ -196,34 +260,37 @@ async function removePersonalTopic(studentId, { itemId, type } = {}) {
 
   await ref.update({ [field]: nextItems })
 
-  logger.info("removePersonalTopic: item removed", { studentId, type, itemId })
+  logger.info("removePersonalTopic: item removed", { studentId, programId, type, itemId })
 
   return { success: true }
 }
 
-// Marks specific topics/prototypes as covered against the student's active
-// curriculumProgress, and mirrors the full covered {id,title} objects onto
-// the lesson doc itself for history. A student with no curriculumProgress
-// doc (no program assigned) is a silent no-op, not an error — completing a
-// lesson must never fail just because this student has no program.
-async function markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating } = {}) {
+// Marks specific topics/prototypes as covered against one specific program,
+// and mirrors the full covered {id,title} objects onto the lesson doc
+// itself for history. A program that no longer exists (e.g. deleted between
+// the dialog opening and the lesson being completed) is a silent no-op, not
+// an error — completing a lesson must never fail just because of this.
+async function markTopicsCovered(studentId, lessonId, programId, { topicIds, prototypeIds, rating } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
   if (!lessonId || typeof lessonId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
   }
+  if (!programId || typeof programId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
+  }
 
   const topicIdSet = new Set(Array.isArray(topicIds) ? topicIds : [])
   const prototypeIdSet = new Set(Array.isArray(prototypeIds) ? prototypeIds : [])
   const needsReview = rating === "needs_work"
 
-  const progRef = progressRef(studentId)
+  const progRef = programRef(studentId, programId)
 
   await db.runTransaction(async (transaction) => {
     const progressSnapshot = await transaction.get(progRef)
     if (!progressSnapshot.exists) {
-      logger.info("markTopicsCovered: no curriculum progress assigned, no-op", { studentId, lessonId })
+      logger.info("markTopicsCovered: program not found, no-op", { studentId, lessonId, programId })
       return
     }
 
@@ -250,6 +317,7 @@ async function markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, 
   logger.info("markTopicsCovered: marked", {
     studentId,
     lessonId,
+    programId,
     topicIds: [...topicIdSet],
     prototypeIds: [...prototypeIdSet],
   })
@@ -259,6 +327,8 @@ async function markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, 
 
 module.exports = {
   assignCurriculumTemplate,
+  reassignProgram,
+  deleteProgram,
   setStudentGoal,
   addPersonalTopic,
   removePersonalTopic,

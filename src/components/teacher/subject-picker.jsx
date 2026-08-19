@@ -12,7 +12,11 @@ const CUSTOM_VALUE = "__custom__"
 // this teacher's own customSubjects, ending in "Указать свой предмет" which
 // reveals a text input. Every pick (from any source) pushes to
 // recentSubjects — see pushRecentSubject.
-export function SubjectPicker({ teacherId, selected, onToggle, disabled }) {
+// `single`: Block 4 Phase 2 (template editor) needs one subject, not
+// several — when true, `selected` is a plain string (not string[]) and
+// `onToggle` replaces it instead of adding/removing, with no chip-removal
+// UI (a template always needs exactly one subject, never zero).
+export function SubjectPicker({ teacherId, selected, onToggle, disabled, single = false }) {
   const [customSubjects, setCustomSubjects] = useState([])
   const [recentSubjects, setRecentSubjects] = useState([])
   const [pickerValue, setPickerValue] = useState("")
@@ -35,8 +39,9 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled }) {
     }
   }, [teacherId])
 
+  const selectedList = single ? (selected ? [selected] : []) : selected
   const allOptions = [...STATIC_SUBJECTS, ...customSubjects.filter((name) => !STATIC_SUBJECTS.includes(name))]
-  const availableOptions = allOptions.filter((name) => !selected.includes(name))
+  const availableOptions = single ? allOptions : allOptions.filter((name) => !selectedList.includes(name))
 
   async function selectSubject(name) {
     onToggle(name)
@@ -77,7 +82,7 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled }) {
             <button
               key={name}
               type="button"
-              disabled={disabled || selected.includes(name)}
+              disabled={disabled || selectedList.includes(name)}
               onClick={() => selectSubject(name)}
               className={`rounded-full px-2.5 py-1 text-xs font-semibold transition disabled:opacity-40 ${getSubjectColorClass(name)}`}
             >
@@ -87,9 +92,9 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled }) {
         </div>
       ) : null}
 
-      {selected.length > 0 ? (
+      {!single && selectedList.length > 0 ? (
         <div className="flex flex-wrap gap-2">
-          {selected.map((name) => (
+          {selectedList.map((name) => (
             <button
               key={name}
               type="button"
@@ -133,7 +138,12 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled }) {
           </button>
         </div>
       ) : (
-        <select value={pickerValue} onChange={handlePickerChange} disabled={disabled} className={teacherInputCls}>
+        <select
+          value={single ? (selected || "") : pickerValue}
+          onChange={handlePickerChange}
+          disabled={disabled}
+          className={teacherInputCls}
+        >
           <option value="">Выбрать предмет...</option>
           {availableOptions.map((name) => (
             <option key={name} value={name}>

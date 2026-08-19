@@ -23,6 +23,7 @@ import {
 } from "@/firebase/curriculum"
 import { createExamType, subscribeToExamTypes } from "@/firebase/examTypes"
 import { auth } from "@/firebase/firebase"
+import { SubjectPicker } from "@/components/teacher/subject-picker"
 
 const NEW_EXAM_TYPE_VALUE = "__new__"
 
@@ -154,6 +155,7 @@ function fieldConfigForExamType(examType) {
 function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenChange, onSaved }) {
   const [name, setName] = useState("")
   const [examTypeId, setExamTypeId] = useState("")
+  const [subject, setSubject] = useState("")
   const [newTypeName, setNewTypeName] = useState("")
   const [newTypeScale, setNewTypeScale] = useState("score")
   const [newTypeMin, setNewTypeMin] = useState(0)
@@ -176,6 +178,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
   useEffect(() => {
     if (!open) return
     setName(template?.name ?? "")
+    setSubject(template?.subject ?? "")
     setExamTypeId(template?.examTypeId ?? examTypes[0]?.id ?? "")
     setNewTypeName("")
     setNewTypeScale("score")
@@ -197,6 +200,10 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
     setSaving(true)
     setError("")
     try {
+      if (!subject) {
+        throw new Error("Укажи предмет")
+      }
+
       let resolvedExamTypeId = examTypeId
 
       if (isCreatingNewType) {
@@ -225,6 +232,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
       const payload = {
         name: name.trim(),
         examTypeId: resolvedExamTypeId,
+        subject,
         topics: topics.filter((row) => row.title.trim() !== "").map(normalizeRow),
         prototypes: prototypes.filter((row) => row.title.trim() !== "").map(normalizeRow),
       }
@@ -259,6 +267,16 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
               disabled={saving}
               placeholder="Например, Русский ЕГЭ"
               className={teacherInputCls}
+            />
+          </Field>
+
+          <Field label="Предмет">
+            <SubjectPicker
+              single
+              teacherId={teacherId}
+              selected={subject}
+              onToggle={setSubject}
+              disabled={saving}
             />
           </Field>
 
@@ -358,7 +376,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
 
           <TeacherModalFooter>
             <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={saving} />
-            <TeacherSaveBtn onClick={handleSave} disabled={saving || !name.trim()}>
+            <TeacherSaveBtn onClick={handleSave} disabled={saving || !name.trim() || !subject}>
               {saving ? "Сохраняем..." : "Сохранить"}
             </TeacherSaveBtn>
           </TeacherModalFooter>

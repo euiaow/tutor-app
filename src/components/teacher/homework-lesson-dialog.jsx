@@ -24,7 +24,7 @@ import {
   updateHomeworkAssignment,
   updateLessonTopic,
 } from "@/firebase/lessons"
-import { getCurriculumProgress, markTopicsCovered } from "@/firebase/curriculum"
+import { getProgramsForStudent, markTopicsCovered } from "@/firebase/curriculum"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { useTimeZone } from "@/lib/user-prefs-context"
@@ -171,9 +171,16 @@ export function HomeworkLessonDialog({
   const extraFileInputRef = useRef(null)
   const [removingMaterialUrl, setRemovingMaterialUrl] = useState(null)
 
-  const [curriculumProgress, setCurriculumProgress] = useState(null)
+  // Block 4 — a student can have several programs at once; `programs` is
+  // the full list, `selectedProgramId` picks which one's topics/prototypes
+  // the "Тема урока" picker and "Пройденный материал" checklist source from.
+  // No lesson->subject link exists in the data (see Block 4 Phase 4 audit),
+  // so the default is just the first assigned program, not a smart guess.
+  const [programs, setPrograms] = useState([])
+  const [selectedProgramId, setSelectedProgramId] = useState("")
   const [topicSelections, setTopicSelections] = useState([])
   const [prototypeSelections, setPrototypeSelections] = useState([])
+  const selectedProgram = programs.find((program) => program.id === selectedProgramId) ?? null
 
   // Reset so a later re-open starts fresh instead of keeping whatever was
   // left over from the previous time this dialog was open. Done directly in
@@ -189,7 +196,8 @@ export function HomeworkLessonDialog({
       setTopic("")
       setCompleteError("")
       setExtraUploadError("")
-      setCurriculumProgress(null)
+      setPrograms([])
+      setSelectedProgramId("")
       setTopicSelections([])
       setPrototypeSelections([])
     }
@@ -271,9 +279,12 @@ export function HomeworkLessonDialog({
   useEffect(() => {
     if (!open) return
 
-    getCurriculumProgress(studentId)
-      .then(setCurriculumProgress)
-      .catch((error) => console.error("Failed to load curriculum progress:", error))
+    getProgramsForStudent(studentId)
+      .then((data) => {
+        setPrograms(data)
+        setSelectedProgramId((current) => current || data[0]?.id || "")
+      })
+      .catch((error) => console.error("Failed to load programs:", error))
   }, [open, studentId])
 
   useEffect(() => {
@@ -378,8 +389,8 @@ export function HomeworkLessonDialog({
 
       const topicIds = topicSelections.filter(Boolean)
       const prototypeIds = prototypeSelections.filter(Boolean)
-      if (topicIds.length > 0 || prototypeIds.length > 0) {
-        await markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating })
+      if (selectedProgramId && (topicIds.length > 0 || prototypeIds.length > 0)) {
+        await markTopicsCovered(studentId, lessonId, selectedProgramId, { topicIds, prototypeIds, rating })
       }
 
       handleDialogOpenChange(false)
@@ -434,7 +445,7 @@ export function HomeworkLessonDialog({
               <Section icon={BookOpen} label="Тема урока">
                 {isEditableAssignment ? (
                   <div className="flex flex-col gap-2">
-                    {curriculumProgress?.topics?.some((item) => !item.covered) ? (
+                    {selectedProgram?.topics?.some((item) => !item.covered) ? (
                       <select
                         value=""
                         onChange={(e) => {
@@ -444,7 +455,7 @@ export function HomeworkLessonDialog({
                         className={teacherInputCls}
                       >
                         <option value="">Выбрать из программы...</option>
-                        {curriculumProgress.topics
+                        {selectedProgram.topics
                           .filter((item) => !item.covered)
                           .map((item) => (
                             <option key={item.id} value={item.title}>
@@ -621,20 +632,38 @@ export function HomeworkLessonDialog({
                     <ToggleGroup options={RATING_OPTIONS} value={rating} onChange={setRating} disabled={completing} />
                   </div>
 
-                  {curriculumProgress ? (
+                  {selectedProgram ? (
                     <div className="flex flex-col gap-4">
                       <span className="text-sm font-bold text-ink">Пройденный материал</span>
+                      {programs.length > 1 ? (
+                        <select
+                          value={selectedProgramId}
+                          onChange={(e) => {
+                            setSelectedProgramId(e.target.value)
+                            setTopicSelections([])
+                            setPrototypeSelections([])
+                          }}
+                          disabled={completing}
+                          className={teacherInputCls}
+                        >
+                          {programs.map((program) => (
+                            <option key={program.id} value={program.id}>
+                              {program.subject || "Без предмета"}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
                       <CoveredMaterialChecklist
                         label="Темы"
-                        items={curriculumProgress.topics}
+                        items={selectedProgram.topics}
                         selections={topicSelections}
                         onChange={setTopicSelections}
                         allCoveredLabel="Все темы пройдены ✓"
                       />
-                      {curriculumProgress.prototypes.length > 0 ? (
+                      {selectedProgram.prototypes.length > 0 ? (
                         <CoveredMaterialChecklist
                           label="Прототипы"
-                          items={curriculumProgress.prototypes}
+                          items={selectedProgram.prototypes}
                           selections={prototypeSelections}
                           onChange={setPrototypeSelections}
                           allCoveredLabel="Все прототипы пройдены ✓"

@@ -39,10 +39,12 @@ import {
 import { updateStudentSchedule, updateStudentProfile, deleteStudent } from "@/firebase/students"
 import { ensureUpcomingLesson, subscribeToLessons } from "@/firebase/lessons"
 import {
-  subscribeToCurriculumProgress,
+  subscribeToPrograms,
   setCurriculumItemCovered,
   getCurriculumTemplates,
   assignCurriculumTemplate,
+  reassignProgram,
+  deleteProgram,
   addPersonalTopic,
   removePersonalTopic,
 } from "@/firebase/curriculum"
@@ -122,9 +124,8 @@ function DeleteStudentDialog({ studentId, studentName, open, onOpenChange }) {
 }
 
 // One list + its own add-row form, for either topics or prototypes.
-// itemType is the literal "topic"/"prototype" string the backend expects;
-// progressField is which key on the curriculumProgress doc this reads from.
-function PersonalProgramSection({ label, itemType, items, studentId, removingId, onRemove }) {
+// itemType is the literal "topic"/"prototype" string the backend expects.
+function PersonalProgramSection({ label, itemType, items, studentId, programId, removingId, onRemove }) {
   const [title, setTitle] = useState("")
   const [minScore, setMinScore] = useState(0)
   const [adding, setAdding] = useState(false)
@@ -135,7 +136,7 @@ function PersonalProgramSection({ label, itemType, items, studentId, removingId,
     setAdding(true)
     setError("")
     try {
-      await addPersonalTopic(studentId, { title: title.trim(), minScoreRequired: minScore, type: itemType })
+      await addPersonalTopic(studentId, programId, { title: title.trim(), minScoreRequired: minScore, type: itemType })
       setTitle("")
       setMinScore(0)
     } catch (err) {
@@ -207,29 +208,32 @@ function PersonalProgramSection({ label, itemType, items, studentId, removingId,
   )
 }
 
-// Direct editing of a student's own curriculumProgress — add/remove
-// topics/prototypes independent of whatever template it was assigned
-// from. Deliberately doesn't distinguish template-copied items from
-// personally-added ones anywhere in this list: once copied, they're all
-// just "this student's program," per explicit instruction not to split
-// them into "native"/"personal" visually.
-function PersonalProgramDialog({ studentId, open, onOpenChange }) {
-  const [progress, setProgress] = useState(null)
+// Direct editing of one specific program's topics/prototypes — independent
+// of whatever template it was assigned from. Deliberately doesn't
+// distinguish template-copied items from personally-added ones anywhere in
+// this list: once copied, they're all just "this program's material," per
+// explicit instruction not to split them into "native"/"personal" visually.
+// Block 4 — scoped to one programId now, not the student's single (former)
+// curriculumProgress/main.
+function PersonalProgramDialog({ studentId, programId, programLabel, open, onOpenChange }) {
+  const [program, setProgram] = useState(null)
   const [removingId, setRemovingId] = useState(null)
 
   useEffect(() => {
-    if (!open) return
-    const unsubscribe = subscribeToCurriculumProgress(studentId, setProgress, (error) =>
-      console.error("Failed to load curriculum progress:", error),
+    if (!open || !programId) return
+    const unsubscribe = subscribeToPrograms(
+      studentId,
+      (programs) => setProgram(programs.find((p) => p.id === programId) ?? null),
+      (error) => console.error("Failed to load program:", error),
     )
     return () => unsubscribe()
-  }, [open, studentId])
+  }, [open, studentId, programId])
 
   async function handleRemove(itemType, itemId) {
     if (removingId) return
     setRemovingId(itemId)
     try {
-      await removePersonalTopic(studentId, { itemId, type: itemType })
+      await removePersonalTopic(studentId, programId, { itemId, type: itemType })
     } catch (error) {
       console.error("Failed to remove personal topic:", error)
     } finally {
@@ -240,7 +244,7 @@ function PersonalProgramDialog({ studentId, open, onOpenChange }) {
   return (
     <TeacherDialog open={open} onOpenChange={onOpenChange}>
       <TeacherDialogContent wide>
-        <TeacherDialogTitle>Программа ученика</TeacherDialogTitle>
+        <TeacherDialogTitle>Программа{programLabel ? ` — ${programLabel}` : ""}</TeacherDialogTitle>
         <TeacherDialogDescription>
           Темы и прототипы, добавленные напрямую в программу — не меняет общий шаблон.
         </TeacherDialogDescription>
@@ -249,22 +253,291 @@ function PersonalProgramDialog({ studentId, open, onOpenChange }) {
           <PersonalProgramSection
             label="Темы"
             itemType="topic"
-            items={progress?.topics ?? []}
+            items={program?.topics ?? []}
             studentId={studentId}
+            programId={programId}
             removingId={removingId}
             onRemove={handleRemove}
           />
           <PersonalProgramSection
             label="Прототипы"
             itemType="prototype"
-            items={progress?.prototypes ?? []}
+            items={program?.prototypes ?? []}
             studentId={studentId}
+            programId={programId}
             removingId={removingId}
             onRemove={handleRemove}
           />
         </div>
       </TeacherDialogContent>
     </TeacherDialog>
+  )
+}
+
+function programPercent(program) {
+  const total = program.topics.length + program.prototypes.length
+  if (total === 0) return null
+  const covered = program.topics.filter((t) => t.covered).length + program.prototypes.filter((p) => p.covered).length
+  return Math.round((covered / total) * 100)
+}
+
+// Confirms replacing one program's template-derived content — same shape
+// as DeleteStudentDialog's confirm-dialog pattern in this file, adapted for
+// a select instead of a delete button.
+function ReassignProgramDialog({ studentId, programId, templates, open, onOpenChange }) {
+  const [templateId, setTemplateId] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    if (saving) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) setError("")
+  }
+
+  async function handleConfirm() {
+    if (saving || !templateId) return
+    setSaving(true)
+    setError("")
+    try {
+      await reassignProgram(studentId, programId, templateId)
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to reassign program:", err)
+      setError(err?.message || "Не удалось заменить программу")
+      setSaving(false)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Заменить программу?</TeacherDialogTitle>
+        <TeacherDialogDescription>
+          Прогресс по текущему шаблону этой программы будет сброшен. Цель (баллы/оценка, дата экзамена) сохранится.
+        </TeacherDialogDescription>
+
+        <div className="mt-4">
+          <select
+            value={templateId}
+            onChange={(e) => setTemplateId(e.target.value)}
+            disabled={saving}
+            className={teacherInputCls}
+          >
+            <option value="">Выбрать шаблон...</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherModalFooter className="mt-5">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={saving} />
+          <TeacherSaveBtn onClick={handleConfirm} disabled={saving || !templateId}>
+            {saving ? "Заменяем..." : "Заменить"}
+          </TeacherSaveBtn>
+        </TeacherModalFooter>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
+
+function DeleteProgramDialog({ studentId, programId, programLabel, open, onOpenChange }) {
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    if (deleting) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) setError("")
+  }
+
+  async function handleDelete() {
+    if (deleting) return
+    setDeleting(true)
+    setError("")
+    try {
+      await deleteProgram(studentId, programId)
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to delete program:", err)
+      setError(err?.message || "Не удалось удалить программу")
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent>
+        <TeacherDialogTitle>Удалить программу «{programLabel}»?</TeacherDialogTitle>
+        <TeacherDialogDescription>Весь прогресс по этой программе будет удалён безвозвратно.</TeacherDialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherModalFooter className="mt-5">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={deleting} />
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting}
+            className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleting ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Удаляем...
+              </span>
+            ) : (
+              "Удалить"
+            )}
+          </button>
+        </TeacherModalFooter>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
+
+// One row per already-assigned program (Block 4 Phase 2) — subject +
+// template name + mini progress + "Заменить"/delete/edit-personal-topics.
+function ProgramRow({ studentId, program, templates, disabled }) {
+  const [reassignOpen, setReassignOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const templateName = templates.find((t) => t.id === program.templateId)?.name ?? "Без шаблона"
+  const percent = programPercent(program)
+  const label = program.subject || "Без предмета"
+
+  return (
+    <div className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.25rem] px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-ink">{label}</p>
+        <p className="truncate text-xs text-muted-foreground">{templateName}</p>
+      </div>
+      {percent != null ? (
+        <span className="shrink-0 text-xs font-semibold text-muted-foreground">{percent}%</span>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => setEditOpen(true)}
+        disabled={disabled}
+        title="Редактировать темы/прототипы"
+        className="shrink-0 text-muted-foreground transition hover:text-rose-deep disabled:opacity-50"
+      >
+        <Pencil className="size-3.5" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setReassignOpen(true)}
+        disabled={disabled}
+        className="shrink-0 rounded-full glass-tile px-3 py-1.5 text-xs font-semibold text-foreground/80 transition hover:text-rose-deep disabled:opacity-50"
+      >
+        Заменить
+      </button>
+      <button
+        type="button"
+        onClick={() => setDeleteOpen(true)}
+        disabled={disabled}
+        aria-label={`Удалить программу ${label}`}
+        className="shrink-0 text-muted-foreground/70 transition hover:text-destructive disabled:opacity-50"
+      >
+        <Trash2 className="size-4" aria-hidden="true" />
+      </button>
+
+      <PersonalProgramDialog
+        studentId={studentId}
+        programId={program.id}
+        programLabel={label}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+      <ReassignProgramDialog
+        studentId={studentId}
+        programId={program.id}
+        templates={templates}
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+      />
+      <DeleteProgramDialog
+        studentId={studentId}
+        programId={program.id}
+        programLabel={label}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+      />
+    </div>
+  )
+}
+
+// Muted (not accent-colored, per spec) "+ Добавить программу" text link —
+// reveals a template select + "Назначить" on click, collapses back after a
+// successful assign.
+function AddProgramControl({ studentId, templates, disabled }) {
+  const [expanded, setExpanded] = useState(false)
+  const [templateId, setTemplateId] = useState("")
+  const [assigning, setAssigning] = useState(false)
+  const [error, setError] = useState("")
+
+  async function handleAssign() {
+    if (assigning || !templateId) return
+    setAssigning(true)
+    setError("")
+    try {
+      await assignCurriculumTemplate(studentId, templateId)
+      setTemplateId("")
+      setExpanded(false)
+    } catch (err) {
+      console.error("Failed to assign program:", err)
+      setError(err?.message || "Не удалось назначить программу")
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        disabled={disabled}
+        className="text-sm text-muted-foreground transition hover:text-foreground disabled:opacity-50"
+      >
+        + Добавить программу
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={templateId}
+        onChange={(e) => setTemplateId(e.target.value)}
+        disabled={assigning || disabled}
+        className={`${teacherInputCls} min-w-0 flex-1`}
+      >
+        <option value="">Выбрать шаблон...</option>
+        {templates.map((template) => (
+          <option key={template.id} value={template.id}>
+            {template.name}
+          </option>
+        ))}
+      </select>
+      <GhostBtn onClick={handleAssign} disabled={assigning || disabled || !templateId} className="shrink-0 px-4 py-2.5">
+        {assigning ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Назначить"}
+      </GhostBtn>
+      <button
+        type="button"
+        onClick={() => setExpanded(false)}
+        disabled={assigning || disabled}
+        className="shrink-0 text-xs font-semibold text-muted-foreground"
+      >
+        Отмена
+      </button>
+      {error ? <p className="mt-2 w-full text-xs font-semibold text-destructive">{error}</p> : null}
+    </div>
   )
 }
 
@@ -279,10 +552,9 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
   const [hourlyRate, setHourlyRate] = useState(0)
   const [autoRemindLowBalance, setAutoRemindLowBalance] = useState(false)
   const [templates, setTemplates] = useState([])
-  const [templateId, setTemplateId] = useState("")
+  const [programs, setPrograms] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [isProgramEditorOpen, setIsProgramEditorOpen] = useState(false)
   const initializedRef = useRef(false)
 
   useEffect(() => {
@@ -298,7 +570,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
     setExamTypeId(student.examTypeId ?? examTypes[0]?.id ?? "")
     setHourlyRate(student.hourlyRate ?? 0)
     setAutoRemindLowBalance(Boolean(student.autoRemindLowBalance))
-    setTemplateId(student.curriculumSourceTemplateId ?? "")
     setError("")
 
     const uid = auth.currentUser?.uid
@@ -308,6 +579,20 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
         .catch((err) => console.error("Failed to load curriculum templates:", err))
     }
   }, [open, student])
+
+  // Block 4 — live, not one-time: assign/reassign/delete below all act
+  // immediately (their own callable, not gated behind this modal's overall
+  // Save button), so the list needs to reflect that without re-opening.
+  useEffect(() => {
+    if (!open) {
+      setPrograms([])
+      return
+    }
+    const unsubscribe = subscribeToPrograms(student.id, setPrograms, (err) =>
+      console.error("Failed to load programs:", err),
+    )
+    return unsubscribe
+  }, [open, student.id])
 
   function updateSlot(index, field, value) {
     setSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, [field]: value } : slot)))
@@ -330,8 +615,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
     setSaving(true)
     setError("")
     try {
-      const templateChanged = templateId && templateId !== (student.curriculumSourceTemplateId ?? "")
-
       await Promise.all([
         updateStudentSchedule(student.id, slots),
         updateStudentProfile(student.id, {
@@ -340,7 +623,6 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
           hourlyRate: Number(hourlyRate) || 0,
           autoRemindLowBalance,
         }),
-        templateChanged ? assignCurriculumTemplate(student.id, templateId) : Promise.resolve(),
       ])
       await ensureUpcomingLesson(student.id)
       onOpenChange(false)
@@ -468,40 +750,21 @@ function StudentEditModal({ student, examTypes, open, onOpenChange }) {
               </button>
             </div>
 
-            <label className="block">
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsProgramEditorOpen(true)}
-                  className="flex items-center gap-1 text-xs font-semibold text-rose-deep"
-                >
-                  <Pencil className="size-3" aria-hidden="true" />
-                  Редактировать программу ученика
-                </button>
-                <span className="text-xs font-semibold text-muted-foreground">Учебный план</span>
+            <div>
+              <span className="text-xs font-semibold text-muted-foreground">Программы</span>
+              <div className="mt-1.5 space-y-2">
+                {programs.map((program) => (
+                  <ProgramRow
+                    key={program.id}
+                    studentId={student.id}
+                    program={program}
+                    templates={templates}
+                    disabled={saving}
+                  />
+                ))}
+                <AddProgramControl studentId={student.id} templates={templates} disabled={saving} />
               </div>
-              <div className="mt-1.5">
-                <select
-                  value={templateId}
-                  onChange={(e) => setTemplateId(e.target.value)}
-                  disabled={saving}
-                  className={teacherInputCls}
-                >
-                  <option value="">Не назначен</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </label>
-
-            <PersonalProgramDialog
-              studentId={student.id}
-              open={isProgramEditorOpen}
-              onOpenChange={setIsProgramEditorOpen}
-            />
+            </div>
           </div>
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}
@@ -602,7 +865,7 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
 // firebase/curriculum.js), no separate edit modal. `updatingId` is scoped
 // to this one tile so a click only shows a spinner on the row that was
 // actually clicked, not the whole list.
-function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
+function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind }) {
   const timeZone = useTimeZone()
   const [updatingId, setUpdatingId] = useState(null)
   const covered = items.filter((item) => item.covered).length
@@ -611,7 +874,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
     if (updatingId) return
     setUpdatingId(item.id)
     try {
-      await setCurriculumItemCovered(studentId, kind, item.id, !item.covered)
+      await setCurriculumItemCovered(studentId, programId, kind, item.id, !item.covered)
     } catch (error) {
       console.error("Failed to update curriculum item:", error)
     } finally {
@@ -669,21 +932,21 @@ function CurriculumTile({ label, icon: Icon, items, studentId, kind }) {
   )
 }
 
-export function StudentRow({ student, progressSummary, curriculumTemplates = [], examTypes = [] }) {
+export function StudentRow({ student, progressSummary, examTypes = [] }) {
   const [expanded, setExpanded] = useState(false)
   const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
-  const [liveProgress, setLiveProgress] = useState(null)
+  const [livePrograms, setLivePrograms] = useState(null)
 
   useEffect(() => {
     if (!expanded) {
-      setLiveProgress(null)
+      setLivePrograms(null)
       return
     }
-    const unsubscribe = subscribeToCurriculumProgress(student.id, setLiveProgress, (error) =>
-      console.error("Failed to subscribe to curriculum progress:", error),
+    const unsubscribe = subscribeToPrograms(student.id, setLivePrograms, (error) =>
+      console.error("Failed to subscribe to programs:", error),
     )
     return () => unsubscribe()
   }, [expanded, student.id])
@@ -692,24 +955,30 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [],
   // the one-time batch snapshot the parent loaded on mount — otherwise the
   // header percent stayed stuck at whatever it was when the page loaded,
   // even though the expanded tile below it (which already used
-  // liveProgress) updated in real time via markTopicsCovered/
+  // livePrograms) updated in real time via markTopicsCovered/
   // setCurriculumItemCovered.
-  const progressForPercent = liveProgress ?? progressSummary
-  const totalTopics = progressForPercent?.topics.length ?? 0
-  const coveredTopics = progressForPercent?.topics.filter((topic) => topic.covered).length ?? 0
-  const totalPrototypes = progressForPercent?.prototypes.length ?? 0
-  const coveredPrototypes = progressForPercent?.prototypes.filter((prototype) => prototype.covered).length ?? 0
-  const totalProgressItems = totalTopics + totalPrototypes
-  const coveredProgressItems = coveredTopics + coveredPrototypes
+  //
+  // Block 4 Phase 4 — a student can have several programs now, so the
+  // collapsed-row percent is the AVERAGE across all of them (sum covered /
+  // sum total, not any single program's own percent) — chosen over "just
+  // the first program" as the more honest reflection of total work done.
+  const programsForPercent = livePrograms ?? progressSummary ?? []
+  const totalProgressItems = programsForPercent.reduce(
+    (sum, program) => sum + program.topics.length + program.prototypes.length,
+    0,
+  )
+  const coveredProgressItems = programsForPercent.reduce(
+    (sum, program) =>
+      sum +
+      program.topics.filter((topic) => topic.covered).length +
+      program.prototypes.filter((prototype) => prototype.covered).length,
+    0,
+  )
   const percent = totalProgressItems > 0 ? Math.round((coveredProgressItems / totalProgressItems) * 100) : null
 
   function stop(e) {
     e.stopPropagation()
   }
-
-  const templateName = curriculumTemplates.find(
-    (template) => template.id === student.curriculumSourceTemplateId,
-  )?.name
 
   const examTypeName = examTypes.find((type) => type.id === student.examTypeId)?.name ?? "—"
 
@@ -791,10 +1060,6 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [],
                   <span className="text-ink">{examTypeName}</span>
                 </div>
               </div>
-              <div className="mt-4 flex justify-between border-t border-glass-border pt-3 text-sm">
-                <span className="text-muted-foreground">Учебный план</span>
-                <span className="text-ink">{templateName ?? "Не назначен"}</span>
-              </div>
               <div className="mt-1 flex justify-between text-sm">
                 <span className="text-muted-foreground">Пароль</span>
                 <span className="text-ink">{student.accessCode}</span>
@@ -809,20 +1074,29 @@ export function StudentRow({ student, progressSummary, curriculumTemplates = [],
               </button>
             </div>
 
-            <CurriculumTile
-              label="Темы программы"
-              icon={FileText}
-              items={liveProgress?.topics ?? []}
-              studentId={student.id}
-              kind="topics"
-            />
-            <CurriculumTile
-              label="Прототипы"
-              icon={ListChecks}
-              items={liveProgress?.prototypes ?? []}
-              studentId={student.id}
-              kind="prototypes"
-            />
+            {(livePrograms ?? []).map((program) => (
+              <div key={program.id} className="space-y-3">
+                <p className="text-xs font-semibold text-muted-foreground">
+                  {program.subject || "Без предмета"}
+                </p>
+                <CurriculumTile
+                  label="Темы программы"
+                  icon={FileText}
+                  items={program.topics}
+                  studentId={student.id}
+                  programId={program.id}
+                  kind="topics"
+                />
+                <CurriculumTile
+                  label="Прототипы"
+                  icon={ListChecks}
+                  items={program.prototypes}
+                  studentId={student.id}
+                  programId={program.id}
+                  kind="prototypes"
+                />
+              </div>
+            ))}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">

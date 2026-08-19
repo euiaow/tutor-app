@@ -51,6 +51,8 @@ const { deleteStudent, updateStudentSettings } = require("./core/students")
 const { addPayment } = require("./core/finance")
 const {
   assignCurriculumTemplate,
+  reassignProgram,
+  deleteProgram,
   setStudentGoal,
   addPersonalTopic,
   removePersonalTopic,
@@ -299,13 +301,59 @@ exports.assignCurriculumTemplate = onCall(async (request) => {
   }
 })
 
-// Student-facing, no request.auth check — same trust model (studentId
-// knowledge) as the rest of the Student Dashboard's callables.
-exports.setStudentGoal = onCall(async (request) => {
-  const { studentId, targetScore, examDate } = request.data ?? {}
+// Block 4 — replaces one already-assigned program's template-derived
+// content in place (see core/curriculum.js's own comment on why this is
+// separate from assignCurriculumTemplate, which only ever adds a new one).
+exports.reassignProgram = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, programId, templateId } = request.data ?? {}
 
   try {
-    return await setStudentGoal(studentId, targetScore, examDate)
+    await assertOwnsStudent(studentId, request.auth.uid)
+    await assertOwnsTemplate(templateId, request.auth.uid)
+    return await reassignProgram(studentId, programId, templateId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to reassign program", error)
+    throw new HttpsError("internal", "Не удалось заменить программу")
+  }
+})
+
+exports.deleteProgram = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { studentId, programId } = request.data ?? {}
+
+  try {
+    await assertOwnsStudent(studentId, request.auth.uid)
+    return await deleteProgram(studentId, programId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to delete program", error)
+    throw new HttpsError("internal", "Не удалось удалить программу")
+  }
+})
+
+// Student-facing, no request.auth check — same trust model (studentId
+// knowledge) as the rest of the Student Dashboard's callables. Block 4:
+// programId is now required — a goal belongs to one specific program, not
+// to the student as a whole.
+exports.setStudentGoal = onCall(async (request) => {
+  const { studentId, programId, targetScore, examDate } = request.data ?? {}
+
+  try {
+    return await setStudentGoal(studentId, programId, targetScore, examDate)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -340,11 +388,11 @@ exports.addPersonalTopic = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
   }
 
-  const { studentId, title, minScoreRequired, type } = request.data ?? {}
+  const { studentId, programId, title, minScoreRequired, type } = request.data ?? {}
 
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
-    return await addPersonalTopic(studentId, { title, minScoreRequired, type })
+    return await addPersonalTopic(studentId, programId, { title, minScoreRequired, type })
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -360,11 +408,11 @@ exports.removePersonalTopic = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
   }
 
-  const { studentId, itemId, type } = request.data ?? {}
+  const { studentId, programId, itemId, type } = request.data ?? {}
 
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
-    return await removePersonalTopic(studentId, { itemId, type })
+    return await removePersonalTopic(studentId, programId, { itemId, type })
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -380,11 +428,11 @@ exports.markTopicsCovered = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
   }
 
-  const { studentId, lessonId, topicIds, prototypeIds, rating } = request.data ?? {}
+  const { studentId, lessonId, programId, topicIds, prototypeIds, rating } = request.data ?? {}
 
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
-    return await markTopicsCovered(studentId, lessonId, { topicIds, prototypeIds, rating })
+    return await markTopicsCovered(studentId, lessonId, programId, { topicIds, prototypeIds, rating })
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error

@@ -137,9 +137,13 @@ export async function updateStudentProfile(studentId, { subject, examTypeId, hou
 // where called out. `examDate` is a JS Date or null; serialized to ISO
 // before crossing the callable boundary since Date doesn't survive
 // httpsCallable's JSON serialization.
-export async function setStudentGoal(studentId, targetScore, examDate) {
+// Block 4 — programId is now required: a goal belongs to one specific
+// program (students/{id}/programs/{programId}), not to the student doc
+// itself, since a student can have several programs at once.
+export async function setStudentGoal(studentId, programId, targetScore, examDate) {
   await setStudentGoalCallable({
     studentId,
+    programId,
     targetScore: targetScore === "" || targetScore === null ? null : Number(targetScore),
     examDate: examDate ? examDate.toISOString() : null,
   })
