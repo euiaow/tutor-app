@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { STATIC_SUBJECTS, getSubjectColorClass } from "@/lib/subjects"
 import { subscribeToCustomSubjects, createCustomSubjectIfNeeded, pushRecentSubject } from "@/firebase/customSubjects"
 import { subscribeToTeacherProfile } from "@/firebase/teachers"
-import { teacherInputCls } from "@/components/teacher/theme-ui"
+import { TeacherSelect, teacherInputCls } from "@/components/teacher/theme-ui"
 
 const CUSTOM_VALUE = "__custom__"
 
@@ -52,8 +52,7 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled, single 
     }
   }
 
-  async function handlePickerChange(e) {
-    const value = e.target.value
+  async function handlePickerChange(value) {
     setPickerValue("")
     if (value === CUSTOM_VALUE) {
       setAddingCustom(true)
@@ -138,20 +137,16 @@ export function SubjectPicker({ teacherId, selected, onToggle, disabled, single 
           </button>
         </div>
       ) : (
-        <select
+        <TeacherSelect
           value={single ? (selected || "") : pickerValue}
           onChange={handlePickerChange}
           disabled={disabled}
-          className={teacherInputCls}
-        >
-          <option value="">Выбрать предмет...</option>
-          {availableOptions.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-          <option value={CUSTOM_VALUE}>Указать свой предмет</option>
-        </select>
+          placeholder="Выбрать предмет..."
+          options={[
+            ...availableOptions.map((name) => ({ value: name, label: name })),
+            { value: CUSTOM_VALUE, label: "Указать свой предмет" },
+          ]}
+        />
       )}
     </div>
   )

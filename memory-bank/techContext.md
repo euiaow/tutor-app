@@ -173,6 +173,16 @@
   only their *effects* are now visible from query behavior, which is a
   meaningfully worse diagnostic position than before (a permission-denied
   now has to be reasoned about from symptoms, not read off a rules file).
+  **Session 14: this bit again, this time as a missing `allow update` on
+  `notifications/{notificationId}`** — a comment claimed the field was
+  "still open," but no real `allow update` statement existed, so every
+  mark-as-read write silently rolled back client-side. Confirmed only
+  because the user checked their own browser DevTools console for a
+  `permission-denied` and pasted back the actual current rule text on
+  request — that combination (ask for the console error, then ask for the
+  literal rule block) is the only reliable diagnostic path available in
+  this environment; don't guess at rules content. See
+  `systemPatterns.md`'s "comment describing a rule" entry.
 - `gcloud` CLI is **not installed** in this environment — for Cloud
   Functions log/data diagnostics, use `firebase functions:log --only
   <name> -n <count>` instead (filter out `AuditLog` noise, see

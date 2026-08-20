@@ -1,7 +1,7 @@
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
-import { X } from "lucide-react"
+import { ChevronDown, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useThemeClass } from "@/lib/user-prefs-context"
 
@@ -247,18 +247,18 @@ export function TeacherPopoverContent({ className, children, align = "center", s
 
   return (
     <PopoverPrimitive.Portal>
-      {/* Above TeacherDialogContent's own z-[100]/z-[101] (Backdrop/Popup) —
-          a Popover must always render on top even when opened from inside an
-          already-open Dialog (e.g. the notifications bell's bot-connect
-          rows), not sit behind the dialog's popup at the same stacking
-          level. */}
-      <PopoverPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-[110]">
+      {/* Above every dialog tier, including `elevated` TeacherDialogContent
+          (z-[110]/z-[111]) — a Popover must always render on top no matter
+          which dialog (or how deeply nested) it was opened from, e.g. the
+          notifications bell's bot-connect rows, or HomeworkLessonDialog's
+          own topic picker when that dialog itself is elevated. */}
+      <PopoverPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-[120]">
         <PopoverPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}
           className={cn(
             themeClass,
-            "glass-panel w-72 rounded-[1.25rem] p-4 outline-none data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+            "glass-panel w-72 rounded-[1.25rem] p-4 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
             className,
           )}
           {...props}
@@ -267,6 +267,55 @@ export function TeacherPopoverContent({ className, children, align = "center", s
         </PopoverPrimitive.Popup>
       </PopoverPrimitive.Positioner>
     </PopoverPrimitive.Portal>
+  )
+}
+
+// Designed replacement for a plain native `<select>` — same visual shape as
+// `teacherInputCls` inputs, options rendered via TeacherPopover instead of
+// the browser's own unstyled dropdown. Reuse this any time a single-choice
+// picker is needed (subject, exam type, etc.) instead of a fresh `<select>`
+// or a one-off popover — see ProgramTopicPicker (homework-lesson-dialog.jsx)
+// for the pattern this was pulled out of.
+export function TeacherSelect({ value, onChange, options, placeholder = "Выбрать...", disabled, className = "" }) {
+  const [open, setOpen] = useState(false)
+  const selected = options.find((option) => option.value === value)
+
+  return (
+    <TeacherPopover open={open} onOpenChange={setOpen}>
+      <TeacherPopoverTrigger
+        disabled={disabled}
+        className={cn(
+          teacherInputCls,
+          "flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50",
+          className,
+        )}
+      >
+        <span className={cn("truncate", !selected ? "text-muted-foreground/70" : "")}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      </TeacherPopoverTrigger>
+      <TeacherPopoverContent align="start" className="max-h-72 overflow-y-auto scrollbar-hidden">
+        <div className="flex flex-col gap-0.5">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value)
+                setOpen(false)
+              }}
+              className={cn(
+                "truncate rounded-[0.75rem] px-2.5 py-1.5 text-left text-sm transition hover:bg-glass-strong/60",
+                option.value === value ? "font-semibold text-rose-deep" : "text-ink",
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </TeacherPopoverContent>
+    </TeacherPopover>
   )
 }
 

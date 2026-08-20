@@ -37,6 +37,14 @@ function mapLessonDoc(id, studentId, data) {
   return {
     id,
     studentId,
+    // Same "explicit field list is the real gate" gap as slotIndex/
+    // isExtraLesson below — teacherId exists on every lesson doc (see
+    // core/lessons.js) but was silently dropped here, which meant
+    // StudentDashboard.jsx's video-call block could never even attempt to
+    // read teachers/{teacherId}/integrations/videoCall (guarded on
+    // lesson?.teacherId being truthy) — looked like a Firestore Rules
+    // problem, wasn't one.
+    teacherId: data.teacherId ?? null,
     status: data.status ?? null,
     date: data.date?.toDate?.() ?? null,
     topic: data.topic ?? "",

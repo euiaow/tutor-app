@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams, useSearchParams } from "react-router-dom"
+import { I18nextProvider, useTranslation } from "react-i18next"
+import { studentI18n, useDateLocale } from "@/lib/i18n"
 import {
   Paperclip,
   CheckCircle2,
@@ -39,7 +41,7 @@ import {
 } from "@/components/glass-dialog"
 import { LoginScreen } from "@/components/auth/login-screen"
 import { usePageTitle } from "@/lib/usePageTitle"
-import { subscribeToStudent, getStudentTelegramChatId, setStudentGoal } from "@/firebase/students"
+import { subscribeToStudent, getStudentTelegramChatId, getStudentLanguage, setStudentGoal } from "@/firebase/students"
 import {
   subscribeToStudentNotifications,
   markNotificationRead,
@@ -66,9 +68,16 @@ import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/e
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
 import { resolveTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
 import { updateStudentSettings } from "@/firebase/students"
-import { SettingsDialog } from "@/components/settings-dialog"
+import { StudentSettingsDialog } from "@/components/student/student-settings-dialog"
+import { GamificationProvider } from "@/lib/gamification-context"
+import { GamificationSection } from "@/components/student/gamification-section"
+import { StickerZone } from "@/components/student/sticker-zone"
+import { translateSubject } from "@/locales/subjectTranslations"
+import { translateUnitLabel } from "@/locales/examUnitTranslations"
+import { buildNotificationText } from "@/lib/notificationMessages"
 
 function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const [date, setDate] = useState("")
   const [time, setTime] = useState("")
@@ -114,7 +123,7 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
       handleOpenChange(false)
     } catch (err) {
       console.error("Failed to propose reschedule:", err)
-      setError(err?.message || "Не удалось отправить запрос на перенос")
+      setError(err?.message || t("rescheduleDialog.error"))
     } finally {
       setSubmitting(false)
     }
@@ -123,8 +132,8 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
   return (
     <GlassDialog open={open} onOpenChange={handleOpenChange}>
       <GlassDialogContent>
-        <GlassDialogTitle>Предложить перенос</GlassDialogTitle>
-        <GlassDialogDescription>Выберите новую дату и время урока</GlassDialogDescription>
+        <GlassDialogTitle>{t("rescheduleDialog.title")}</GlassDialogTitle>
+        <GlassDialogDescription>{t("rescheduleDialog.description")}</GlassDialogDescription>
 
         <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
           <div className="flex gap-2">
@@ -154,10 +163,10 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
             {submitting ? (
               <>
                 <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                Отправляем...
+                {t("rescheduleDialog.submitting")}
               </>
             ) : (
-              "Предложить перенос"
+              t("rescheduleDialog.submit")
             )}
           </button>
         </form>
@@ -167,7 +176,9 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
 }
 
 function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
 
@@ -188,7 +199,7 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
       handleOpenChange(false)
     } catch (err) {
       console.error("Failed to propose cancellation:", err)
-      setError(err?.message || "Не удалось отправить запрос на отмену")
+      setError(err?.message || t("cancelDialog.error"))
     } finally {
       setSubmitting(false)
     }
@@ -197,9 +208,11 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
   return (
     <GlassDialog open={open} onOpenChange={handleOpenChange}>
       <GlassDialogContent>
-        <GlassDialogTitle>Отменить урок</GlassDialogTitle>
+        <GlassDialogTitle>{t("cancelDialog.title")}</GlassDialogTitle>
         <GlassDialogDescription>
-          Вы уверены, что хотите запросить отмену урока{lessonDate ? ` ${formatLessonDateTime(lessonDate, timeZone)}` : ""}?
+          {lessonDate
+            ? t("cancelDialog.descriptionWithDate", { date: formatLessonDateTime(lessonDate, timeZone, dateLocale) })
+            : t("cancelDialog.descriptionNoDate")}
         </GlassDialogDescription>
 
         {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
@@ -211,7 +224,7 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
             disabled={submitting}
             className="flex-1 rounded-full border border-white/60 bg-white/45 px-5 py-3 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:opacity-50"
           >
-            Назад
+            {t("common.back")}
           </button>
           <button
             type="button"
@@ -220,7 +233,7 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
             className="flex flex-1 items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:opacity-50"
             style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
           >
-            {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Да, отменить"}
+            {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : t("cancelDialog.confirmButton")}
           </button>
         </div>
       </GlassDialogContent>
@@ -305,39 +318,47 @@ function CompactStatusBadge({ tone, children }) {
 // those live on the main "Следующий урок" card; this is just an overview
 // of every upcoming draft across all of a student's schedule slots.
 function UpcomingLessonRow({ lesson }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   return (
     <li className="glass-inset flex flex-col gap-1.5 rounded-2xl px-4 py-3">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <CalendarDays className="size-3.5" aria-hidden="true" />
-        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
+        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
       </div>
       <p className="text-sm text-secondary-foreground">
-        {lesson.topic || <span className="text-muted-foreground">Без темы</span>}
+        {lesson.topic || <span className="text-muted-foreground">{t("common.noTopic")}</span>}
       </p>
 
       {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
         <div className="mt-0.5 flex flex-wrap items-center gap-2">
           <CompactStatusBadge tone="warn">
-            {lesson.rescheduleStatus === "pending_student" ? "Ожидает вашего ответа" : "Перенос предложен"}
+            {lesson.rescheduleStatus === "pending_student"
+              ? t("upcomingRow.pendingStudent")
+              : t("upcomingRow.rescheduleProposed")}
           </CompactStatusBadge>
           <span className="flex items-center gap-1.5 text-xs">
             <span className="text-muted-foreground line-through">
-              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
+              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
             </span>
             <ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />
             <span className="font-semibold text-foreground">
-              {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
+              {lesson.rescheduleProposedDate
+                ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone, dateLocale)
+                : "—"}
             </span>
           </span>
         </div>
       ) : lesson.rescheduleStatus === "confirmed" ? (
-        <CompactStatusBadge tone="good">Перенос подтверждён</CompactStatusBadge>
+        <CompactStatusBadge tone="good">{t("upcomingRow.rescheduleConfirmed")}</CompactStatusBadge>
       ) : null}
 
       {lesson.cancellationStatus === "pending_student" || lesson.cancellationStatus === "pending_teacher" ? (
         <CompactStatusBadge tone="bad">
-          {lesson.cancellationStatus === "pending_student" ? "Ожидает вашего ответа (отмена)" : "Отмена предложена"}
+          {lesson.cancellationStatus === "pending_student"
+            ? t("upcomingRow.pendingStudentCancellation")
+            : t("upcomingRow.cancellationProposed")}
         </CompactStatusBadge>
       ) : null}
     </li>
@@ -345,6 +366,7 @@ function UpcomingLessonRow({ lesson }) {
 }
 
 function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
+  const { t } = useTranslation("student")
   const [lessons, setLessons] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -369,14 +391,14 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
   return (
     <GlassDialog open={open} onOpenChange={onOpenChange}>
       <GlassDialogContent>
-        <GlassDialogTitle>Мои уроки</GlassDialogTitle>
-        <GlassDialogDescription>Все предстоящие занятия по расписанию</GlassDialogDescription>
+        <GlassDialogTitle>{t("allUpcomingDialog.title")}</GlassDialogTitle>
+        <GlassDialogDescription>{t("allUpcomingDialog.description")}</GlassDialogDescription>
 
         <div className="scrollbar-hidden mt-4 max-h-[65vh] overflow-y-auto pr-1">
           {loading ? (
-            <Spinner label="Загрузка..." />
+            <Spinner label={t("common.loading")} />
           ) : lessons.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Пока нет запланированных уроков</p>
+            <p className="text-sm text-muted-foreground">{t("allUpcomingDialog.empty")}</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {lessons.map((lesson) => (
@@ -396,7 +418,9 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
 // below decide "Моя цель" (only one qualifying program) vs. the program's
 // own subject name (several) — see MyGoalsSection.
 function GoalCard({ studentId, program, examType, heading }) {
+  const { t, i18n } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const [editing, setEditing] = useState(false)
   const [targetScore, setTargetScore] = useState("")
   const [examDate, setExamDate] = useState("")
@@ -417,8 +441,12 @@ function GoalCard({ studentId, program, examType, heading }) {
   const scaleMin = examType?.scaleMin ?? 0
   const scaleMax = examType?.scaleMax ?? 100
   const scaleStep = examType?.scaleStep ?? 1
-  const unitLabel = examType?.scaleUnitLabel || "балл"
-  const goalLabel = isLanguageLevel ? "Целевой уровень" : isGradeScale ? "Целевая оценка" : `Целевой ${unitLabel}`
+  const unitLabel = translateUnitLabel(examType?.scaleUnitLabel, i18n.language) || t("goals.unitFallback")
+  const goalLabel = isLanguageLevel
+    ? t("goals.targetLevel")
+    : isGradeScale
+      ? t("goals.targetGrade")
+      : t("goals.targetScoreUnit", { unit: unitLabel })
   // examType.scaleDefault (e.g. ЕГЭ's 70) wins when set; otherwise falls
   // back to the old behavior — scaleMax-1 for a grade scale, the scale's
   // own minimum otherwise (custom types created via the inline form never
@@ -444,7 +472,7 @@ function GoalCard({ studentId, program, examType, heading }) {
       setEditing(false)
     } catch (err) {
       console.error("Failed to save student goal:", err)
-      setError(err?.message || "Не удалось сохранить цель")
+      setError(err?.message || t("goals.saveError"))
     } finally {
       setSaving(false)
     }
@@ -485,7 +513,7 @@ function GoalCard({ studentId, program, examType, heading }) {
             )}
           </label>
           <label className="flex-1">
-            <span className="text-xs text-muted-foreground">Дата экзамена</span>
+            <span className="text-xs text-muted-foreground">{t("goals.examDate")}</span>
             <input
               type="date"
               value={examDate}
@@ -505,7 +533,7 @@ function GoalCard({ studentId, program, examType, heading }) {
             disabled={saving}
             className="rounded-full border border-white/60 bg-white/45 px-5 py-2.5 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:opacity-50"
           >
-            Отмена
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -514,7 +542,7 @@ function GoalCard({ studentId, program, examType, heading }) {
             className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
             style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : t("common.save")}
           </button>
         </div>
       </section>
@@ -532,7 +560,7 @@ function GoalCard({ studentId, program, examType, heading }) {
         </span>
         <div className="min-w-[14rem] flex-1">
           <h3 className="font-display text-lg text-foreground">{heading}</h3>
-          <p className="mt-1 text-sm text-secondary-foreground">Укажи цель, чтобы видеть свой прогресс к экзамену</p>
+          <p className="mt-1 text-sm text-secondary-foreground">{t("goals.noGoalHint")}</p>
         </div>
         <button
           type="button"
@@ -540,7 +568,7 @@ function GoalCard({ studentId, program, examType, heading }) {
           className="rounded-full px-5 py-2.5 text-sm font-medium text-primary-foreground"
           style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
         >
-          Заполнить
+          {t("goals.fillIn")}
         </button>
       </section>
     )
@@ -559,7 +587,7 @@ function GoalCard({ studentId, program, examType, heading }) {
         <button
           type="button"
           onClick={startEditing}
-          aria-label="Изменить цель"
+          aria-label={t("goals.editGoalAria")}
           className="ml-auto text-muted-foreground transition hover:text-primary"
         >
           <Pencil className="h-4 w-4" aria-hidden="true" />
@@ -574,8 +602,10 @@ function GoalCard({ studentId, program, examType, heading }) {
           </p>
         </div>
         <div className="glass-inset flex-1 rounded-3xl p-4">
-          <p className="text-xs text-muted-foreground">Дата экзамена</p>
-          <p className="mt-1 font-display text-lg text-foreground">{formatShortDate(program.examDate, timeZone)}</p>
+          <p className="text-xs text-muted-foreground">{t("goals.examDate")}</p>
+          <p className="mt-1 font-display text-lg text-foreground">
+            {formatShortDate(program.examDate, timeZone, dateLocale)}
+          </p>
         </div>
       </div>
     </section>
@@ -591,6 +621,7 @@ function GoalCard({ studentId, program, examType, heading }) {
 // one full card per program, headed by its own subject name, when there
 // are several.
 function MyGoalsSection({ studentId, programs, examTypesById }) {
+  const { t, i18n } = useTranslation("student")
   const qualifying = programs.filter((program) => {
     const examType = examTypesById[program.examTypeId]
     return examType && examType.scaleType !== "none"
@@ -605,14 +636,14 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
         studentId={studentId}
         program={program}
         examType={examTypesById[program.examTypeId]}
-        heading="Моя цель"
+        heading={t("goals.myGoal")}
       />
     )
   }
 
   return (
     <section>
-      <h2 className="font-display text-lg text-foreground">Мои цели</h2>
+      <h2 className="font-display text-lg text-foreground">{t("goals.myGoals")}</h2>
       <div className="mt-3 space-y-3">
         {qualifying.map((program) => (
           <GoalCard
@@ -620,7 +651,7 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
             studentId={studentId}
             program={program}
             examType={examTypesById[program.examTypeId]}
-            heading={program.subject || "Без предмета"}
+            heading={translateSubject(program.subject, i18n.language) || t("goals.noSubject")}
           />
         ))}
       </div>
@@ -629,7 +660,9 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
 }
 
 function NextLessonPlate({ studentId, hasSchedule }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const [lesson, setLesson] = useState(null)
   const [cancelledLesson, setCancelledLesson] = useState(null)
   const [actionPending, setActionPending] = useState(false)
@@ -689,7 +722,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       await submitHomeworkFile(studentId, fileUrl)
     } catch (err) {
       console.error("Failed to submit homework file:", err)
-      setUploadHomeworkError("Не удалось загрузить файл")
+      setUploadHomeworkError(t("nextLesson.homeworkUploadError"))
     } finally {
       setUploadingHomework(false)
       if (homeworkFileInputRef.current) {
@@ -804,7 +837,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-            Следующий урок
+            {t("nextLesson.label")}
           </p>
           <h2
             id="next-lesson-title"
@@ -813,10 +846,10 @@ function NextLessonPlate({ studentId, hasSchedule }) {
             } ${cancelledLesson ? "text-destructive" : "text-foreground"}`}
           >
             {cancelledLesson
-              ? "Урок отменён"
+              ? t("nextLesson.cancelled")
               : showPlaceholder
-                ? "Преподаватель ещё не добавил расписание"
-                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
+                ? t("nextLesson.noSchedule")
+                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
           </h2>
         </div>
         {hasSchedule ? (
@@ -825,8 +858,8 @@ function NextLessonPlate({ studentId, hasSchedule }) {
             onClick={() => setAllLessonsOpen(true)}
             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground sm:text-sm"
           >
-            <span className="sm:hidden">Все уроки</span>
-            <span className="hidden sm:inline">Посмотреть все уроки</span>
+            <span className="sm:hidden">{t("nextLesson.allLessonsShort")}</span>
+            <span className="hidden sm:inline">{t("nextLesson.allLessonsFull")}</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : null}
@@ -836,58 +869,62 @@ function NextLessonPlate({ studentId, hasSchedule }) {
 
       <div className="mt-5 flex flex-col gap-5">
         {lesson?.rescheduleStatus === "pending_student" ? (
-          <StatusPlate tone="warn" title="Репетитор предлагает перенос">
+          <StatusPlate tone="warn" title={t("nextLesson.teacherProposesReschedule")}>
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
-                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
               </span>
               <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
               <span className="font-semibold text-foreground">
-                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
+                {lesson.rescheduleProposedDate
+                  ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone, dateLocale)
+                  : "—"}
               </span>
             </p>
             <StatusPlateActions
               onConfirm={handleConfirmReschedule}
-              confirmLabel="Подтвердить"
+              confirmLabel={t("common.confirm")}
               onReject={handleRejectReschedule}
-              rejectLabel="Отклонить"
+              rejectLabel={t("common.reject")}
               disabled={actionPending}
             />
           </StatusPlate>
         ) : null}
 
         {lesson?.rescheduleStatus === "pending_teacher" ? (
-          <StatusPlate tone="warn" title="Запрос на перенос отправлен">
+          <StatusPlate tone="warn" title={t("nextLesson.rescheduleRequestSent")}>
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
-                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone)}
+                {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
               </span>
               <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
               <span className="font-semibold text-foreground">
-                {lesson.rescheduleProposedDate ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone) : "—"}
+                {lesson.rescheduleProposedDate
+                  ? formatLessonDateTime(lesson.rescheduleProposedDate, timeZone, dateLocale)
+                  : "—"}
               </span>
             </p>
           </StatusPlate>
         ) : null}
 
         {lesson?.rescheduleStatus === "confirmed" ? (
-          <StatusPlate tone="good" title="Перенос подтверждён" />
+          <StatusPlate tone="good" title={t("nextLesson.rescheduleConfirmed")} />
         ) : null}
 
         {lesson?.cancellationStatus === "pending_student" ? (
-          <StatusPlate tone="bad" title="Репетитор предлагает отменить этот урок">
+          <StatusPlate tone="bad" title={t("nextLesson.teacherProposesCancellation")}>
             <StatusPlateActions
               onConfirm={handleConfirmCancellation}
-              confirmLabel="Подтвердить отмену"
+              confirmLabel={t("nextLesson.confirmCancellation")}
               onReject={handleRejectCancellation}
-              rejectLabel="Отклонить"
+              rejectLabel={t("common.reject")}
               disabled={actionPending}
             />
           </StatusPlate>
         ) : null}
 
         {lesson?.cancellationStatus === "pending_teacher" ? (
-          <StatusPlate tone="bad" title="Запрос на отмену отправлен" />
+          <StatusPlate tone="bad" title={t("nextLesson.cancellationRequestSent")} />
         ) : null}
 
         {lesson ? (
@@ -896,10 +933,10 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
                 <div className="min-w-0">
                   <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-                    Видеовстреча
+                    {t("nextLesson.videoCall")}
                   </p>
                   <p className="mt-1 truncate text-sm text-secondary-foreground">
-                    {videoCallActive ? "Ссылка активна" : "Станет доступна за 3 минуты до начала"}
+                    {videoCallActive ? t("nextLesson.videoCallActive") : t("nextLesson.videoCallAvailableSoon")}
                   </p>
                 </div>
                 <button
@@ -910,14 +947,14 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                   style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
                 >
                   <Video className="h-4 w-4" aria-hidden="true" />
-                  Подключиться
+                  {t("nextLesson.videoCallJoin")}
                 </button>
               </div>
             ) : null}
 
             <div className="glass-inset rounded-3xl p-5">
               <span className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-                Задание
+                {t("nextLesson.assignment")}
               </span>
               {hasAssignment ? (
                 <div className="mt-1.5 flex flex-col gap-1.5">
@@ -941,24 +978,24 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                   ) : null}
                 </div>
               ) : (
-                <p className="mt-1.5 text-sm text-secondary-foreground">Задание пока не добавлено</p>
+                <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.assignmentEmpty")}</p>
               )}
             </div>
 
             <div className="glass-inset rounded-3xl p-5">
               <span className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-                Моя домашка
+                {t("nextLesson.myHomework")}
               </span>
               {submissionFiles.length === 0 ? (
-                <p className="mt-1.5 text-sm text-secondary-foreground">Вы ещё не отправили домашнее задание</p>
+                <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.homeworkNotSubmitted")}</p>
               ) : (
                 <>
                   <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold text-secondary-foreground">
                     <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
-                    Домашнее задание получено ✓
+                    {t("nextLesson.homeworkReceived")}
                     {lastSubmission?.submittedAt ? (
                       <span className="font-normal text-muted-foreground">
-                        ({formatLessonDateTime(lastSubmission.submittedAt, timeZone)})
+                        ({formatLessonDateTime(lastSubmission.submittedAt, timeZone, dateLocale)})
                       </span>
                     ) : null}
                   </p>
@@ -973,8 +1010,10 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                         >
                           <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
                           <span className="truncate">
-                            Файл {index + 1}
-                            {file.submittedAt ? ` (${formatLessonDateTime(file.submittedAt, timeZone)})` : ""}
+                            {t("nextLesson.fileLabel", { index: index + 1 })}
+                            {file.submittedAt
+                              ? ` (${formatLessonDateTime(file.submittedAt, timeZone, dateLocale)})`
+                              : ""}
                           </span>
                         </a>
                       </li>
@@ -999,19 +1038,19 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 {uploadingHomework ? (
                   <>
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Загрузка...
+                    {t("nextLesson.uploading")}
                   </>
                 ) : (
                   <>
                     <Paperclip className="size-4" aria-hidden="true" />
-                    Прикрепить домашку
+                    {t("nextLesson.attachHomework")}
                   </>
                 )}
               </button>
               {uploadHomeworkError ? (
                 <p className="mt-1.5 text-xs font-semibold text-destructive">{uploadHomeworkError}</p>
               ) : null}
-              <p className="mt-3 text-xs text-muted-foreground">Или отправить в бот в ТГ/ВК</p>
+              <p className="mt-3 text-xs text-muted-foreground">{t("nextLesson.orSendViaBot")}</p>
             </div>
 
             {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
@@ -1023,7 +1062,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                     className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/45 px-5 py-3 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
                   >
                     <CalendarClock className="h-4 w-4" />
-                    Перенести урок
+                    {t("nextLesson.rescheduleButton")}
                   </button>
                 ) : null}
                 {lesson.cancellationStatus !== "pending_teacher" ? (
@@ -1034,7 +1073,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                     style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
                   >
                     <X className="h-4 w-4" />
-                    Отменить урок
+                    {t("nextLesson.cancelButton")}
                   </button>
                 ) : null}
               </div>
@@ -1072,10 +1111,10 @@ function toJsDate(value) {
   return value?.toDate?.() ?? value ?? null
 }
 
-function formatShortDate(value, timeZone) {
+function formatShortDate(value, timeZone, locale = "ru-RU") {
   const date = toJsDate(value)
   if (!date) return ""
-  return date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
+  return date.toLocaleDateString(locale, { timeZone, day: "numeric", month: "long" })
 }
 
 // Local (not UTC) YYYY-MM-DD for a controlled <input type="date"> value —
@@ -1091,7 +1130,8 @@ function toDateInputValue(value) {
   return `${year}-${month}-${day}`
 }
 
-function pluralizeTopics(n) {
+function pluralizeTopics(n, lang = "ru") {
+  if (lang === "en") return n === 1 ? "topic" : "topics"
   const mod10 = n % 10
   const mod100 = n % 100
   if (mod10 === 1 && mod100 !== 11) return "тема"
@@ -1132,6 +1172,7 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
 // would be redundant. `null` while the parent's own subscription hasn't
 // resolved yet, same as before.
 function CurriculumProgressCard({ progress, subjectLabel }) {
+  const { t, i18n } = useTranslation("student")
   const [expanded, setExpanded] = useState(false)
 
   if (!progress) return null
@@ -1166,17 +1207,17 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
           <TrendingUp className="h-5 w-5" aria-hidden="true" />
         </span>
         <h3 className="font-display text-lg text-foreground">
-          Прогресс подготовки{subjectLabel ? ` — ${subjectLabel}` : ""}
+          {subjectLabel ? t("progress.titleWithSubject", { subject: subjectLabel }) : t("progress.title")}
         </h3>
         <span className="ml-auto font-display text-2xl text-primary">{overallPercent}%</span>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <CurriculumProgressBar icon={BookOpen} label="Темы" done={coveredTopics.length} total={totalTopics} />
+        <CurriculumProgressBar icon={BookOpen} label={t("progress.topics")} done={coveredTopics.length} total={totalTopics} />
         {totalPrototypes > 0 ? (
           <CurriculumProgressBar
             icon={Layers}
-            label="Типы задач"
+            label={t("progress.prototypeTypes")}
             done={coveredPrototypes.length}
             total={totalPrototypes}
           />
@@ -1185,12 +1226,12 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
 
       {needsReviewItems.length > 0 ? (
         <div className="mt-3 rounded-xl bg-amber-500/10 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-400">
-          <span className="font-semibold">К повторению: </span>
+          <span className="font-semibold">{t("progress.needsReview")}</span>
           {needsReviewItems
             .slice(0, 3)
             .map((item) => item.title)
             .join(", ")}
-          {needsReviewItems.length > 3 ? ` и ещё ${needsReviewItems.length - 3}` : ""}
+          {needsReviewItems.length > 3 ? t("progress.andMore", { count: needsReviewItems.length - 3 }) : ""}
         </div>
       ) : null}
 
@@ -1198,19 +1239,21 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
         <div className="glass-inset mt-3 flex items-start gap-3 rounded-3xl p-4">
           <Flame className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
           <p className="text-sm text-secondary-foreground">
-            На этой неделе пройдено <b className="text-primary">{coveredThisWeek}</b>{" "}
-            {pluralizeTopics(coveredThisWeek)}
+            {t("progress.coveredThisWeek", {
+              count: coveredThisWeek,
+              word: pluralizeTopics(coveredThisWeek, i18n.language),
+            })}
           </p>
         </div>
       ) : null}
 
       {expanded ? (
         <div className={`mt-4 grid gap-6 ${totalPrototypes > 0 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
-          <CurriculumItemGroups icon={BookOpen} title="Темы" covered={coveredTopics} remaining={remainingTopics} />
+          <CurriculumItemGroups icon={BookOpen} title={t("progress.topics")} covered={coveredTopics} remaining={remainingTopics} />
           {totalPrototypes > 0 ? (
             <CurriculumItemGroups
               icon={Layers}
-              title="Прототипы"
+              title={t("progress.prototypes")}
               covered={coveredPrototypes}
               remaining={remainingPrototypes}
             />
@@ -1223,7 +1266,7 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
         onClick={() => setExpanded((v) => !v)}
         className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary"
       >
-        {expanded ? "Свернуть" : "Подробнее"}
+        {expanded ? t("common.collapse") : t("common.expand")}
         {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
       </button>
     </section>
@@ -1231,11 +1274,14 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
 }
 
 function AllNotificationsDialog({ notifications, open, onOpenChange, onNotificationClick }) {
+  const { t } = useTranslation("student")
   return (
     <GlassDialog open={open} onOpenChange={onOpenChange}>
       <GlassDialogContent>
-        <GlassDialogTitle>Все уведомления</GlassDialogTitle>
-        <GlassDialogDescription>Последние {notifications.length} уведомлений</GlassDialogDescription>
+        <GlassDialogTitle>{t("notifications.allDialogTitle")}</GlassDialogTitle>
+        <GlassDialogDescription>
+          {t("notifications.allDialogDescription", { count: notifications.length })}
+        </GlassDialogDescription>
 
         <div className="scrollbar-hidden mt-6 max-h-[60vh] overflow-y-auto">
           <NotificationsList
@@ -1251,11 +1297,23 @@ function AllNotificationsDialog({ notifications, open, onOpenChange, onNotificat
 }
 
 function StudentNotifications({ studentId }) {
+  const { t, i18n } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const [notifications, setNotifications] = useState([])
   const [allOpen, setAllOpen] = useState(false)
   const hasUnread = notifications.some((notification) => !notification.read)
-  const lastNotification = notifications[0] ?? null
+  // `params` present means this is a new-style, bilingual notification —
+  // render it via buildNotificationText in the student's current language.
+  // A notification created before this feature has `params: null` and only
+  // ever had a pre-built Russian `text` — shown as-is, no migration, per
+  // spec ("старые уведомления... не делаем миграцию существующих данных").
+  const displayNotifications = notifications.map((notification) =>
+    notification.params
+      ? { ...notification, text: buildNotificationText(notification.type, notification.params, i18n.language) }
+      : notification,
+  )
+  const lastNotification = displayNotifications[0] ?? null
 
   useEffect(() => {
     const unsubscribe = subscribeToStudentNotifications(studentId, setNotifications, (firestoreError) => {
@@ -1288,10 +1346,12 @@ function StudentNotifications({ studentId }) {
           <span className={`text-sm leading-relaxed ${lastNotification.read ? "opacity-90" : ""}`}>
             {lastNotification.text}
           </span>
-          <span className="text-xs opacity-50">{formatRelativeTime(lastNotification.createdAt, timeZone)}</span>
+          <span className="text-xs opacity-50">
+            {formatRelativeTime(lastNotification.createdAt, timeZone, dateLocale)}
+          </span>
         </button>
       ) : (
-        <span className="min-w-0 text-sm text-ink-foreground/60">Нет новых уведомлений</span>
+        <span className="min-w-0 text-sm text-ink-foreground/60">{t("notifications.empty")}</span>
       )}
 
       <button
@@ -1300,14 +1360,14 @@ function StudentNotifications({ studentId }) {
         className="relative inline-flex shrink-0 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs"
       >
         <Bell className="h-3.5 w-3.5" aria-hidden="true" />
-        Все
+        {t("notifications.all")}
         {hasUnread ? (
           <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-primary" />
         ) : null}
       </button>
 
       <AllNotificationsDialog
-        notifications={notifications}
+        notifications={displayNotifications}
         open={allOpen}
         onOpenChange={setAllOpen}
         onNotificationClick={handleNotificationClick}
@@ -1334,7 +1394,8 @@ function getInitial(name) {
 }
 
 function StudentDashboardContent({ studentId }) {
-  usePageTitle("Моя панель")
+  const { t, i18n } = useTranslation("student")
+  usePageTitle(t("page.title"))
   const [student, setStudent] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1352,13 +1413,24 @@ function StudentDashboardContent({ studentId }) {
       },
       (firestoreError) => {
         console.error("Failed to load student:", firestoreError)
-        setError("Не удалось загрузить данные ученика")
+        setError(t("page.loadStudentError"))
         setLoading(false)
       },
     )
 
     return unsubscribe
   }, [studentId])
+
+  // Authoritative sync once the live student doc has loaded — the initial
+  // language is already applied pre-auth by StudentI18nGate (a one-time
+  // read, needed since the PIN screen renders before this component ever
+  // mounts), this just keeps it correct if the Firestore value ever changes
+  // while the dashboard stays open.
+  useEffect(() => {
+    if (student) {
+      studentI18n.changeLanguage(student.language || "ru")
+    }
+  }, [student])
 
   useEffect(() => {
     const unsub = subscribeToLessons(
@@ -1369,7 +1441,7 @@ function StudentDashboardContent({ studentId }) {
       },
       (fetchError) => {
         console.error("Failed to load lessons:", fetchError)
-        setLessonsError("Не удалось загрузить историю уроков")
+        setLessonsError(t("history.loadError"))
         setLessonsLoading(false)
       },
     )
@@ -1408,7 +1480,7 @@ function StudentDashboardContent({ studentId }) {
   }, [student?.teacherId])
 
   if (loading) {
-    return <Spinner label="Загрузка данных ученика..." />
+    return <Spinner label={t("page.loadingStudent")} />
   }
 
   if (error) {
@@ -1422,7 +1494,7 @@ function StudentDashboardContent({ studentId }) {
   if (!student) {
     return (
       <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-3 py-16 text-center">
-        <p className="text-lg font-semibold text-foreground">Ученик не найден</p>
+        <p className="text-lg font-semibold text-foreground">{t("page.studentNotFound")}</p>
       </div>
     )
   }
@@ -1485,33 +1557,40 @@ function StudentDashboardContent({ studentId }) {
 
   return (
     <UserPrefsProvider timeZone={resolvedTimeZone} themeClass={themeClass}>
+    <GamificationProvider studentId={studentId}>
     <div className={`relative mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-10 sm:py-14 ${themeClass}`}>
       <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4">
         <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">Добро пожаловать</p>
+          <p className="text-sm text-muted-foreground">{t("header.welcome")}</p>
           <h1 className="font-display truncate text-2xl text-foreground sm:text-3xl">
-            Привет, {firstName}! ✌️
+            {t("header.greeting", { name: firstName })}
           </h1>
         </div>
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          aria-label="Настройки"
+          aria-label={t("header.settingsAria")}
           className="glass-soft grid size-11 shrink-0 place-items-center rounded-full text-foreground/70 transition hover:text-foreground"
         >
           <Settings className="h-5 w-5" aria-hidden="true" />
         </button>
-        <div className="glass-soft grid h-14 w-14 shrink-0 place-items-center rounded-full font-display text-lg text-foreground">
-          {getInitial(firstName)}
+        <div className="relative shrink-0">
+          <div className="glass-soft grid h-14 w-14 place-items-center rounded-full font-display text-lg text-foreground">
+            {getInitial(firstName)}
+          </div>
+          {/* Zone 1 of 3 (see task spec) — у аватара. */}
+          <div className="absolute -bottom-1.5 -right-1.5">
+            <StickerZone zone="zone1" size="sm" />
+          </div>
         </div>
       </header>
 
-      <SettingsDialog
-        variant="student"
+      <StudentSettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         timezone={student.timezone ?? ""}
         colorTheme={student.colorTheme ?? "amber"}
+        language={student.language ?? "ru"}
         onSave={(values) => updateStudentSettings(studentId, values)}
       />
 
@@ -1521,27 +1600,38 @@ function StudentDashboardContent({ studentId }) {
 
       <MyGoalsSection studentId={studentId} programs={programs} examTypesById={examTypesById} />
 
-      {programBlocks.map(({ program, examType, hasGoal, metrics, requiredTopics, requiredPrototypes, staleDays }) =>
-        hasGoal && metrics ? (
-          <ExamRadar
-            key={program.id}
-            subject={[program.subject].filter(Boolean)}
-            examTypeName={examType?.name ?? "—"}
-            scaleType={examType?.scaleType}
-            scaleUnitLabel={examType?.scaleUnitLabel}
-            scaleLabels={examType?.scaleLabels}
-            targetScore={program.targetScore}
-            metrics={metrics}
-            requiredTopics={requiredTopics}
-            requiredPrototypes={requiredPrototypes}
-            staleDays={staleDays}
-          />
-        ) : (
-          <CurriculumProgressCard key={program.id} progress={program} subjectLabel={program.subject} />
-        ),
-      )}
+      {programBlocks.map(({ program, examType, hasGoal, metrics, requiredTopics, requiredPrototypes, staleDays }, index) => (
+        // Zone 2 of 3 (see task spec) — в карточке прогресса. Only the
+        // first program's card carries it (a student can have several, but
+        // there are only 3 fixed zones total on the whole dashboard).
+        <div key={program.id} className={index === 0 ? "relative" : undefined}>
+          {hasGoal && metrics ? (
+            <ExamRadar
+              subject={[program.subject].filter(Boolean)}
+              examTypeName={examType?.name ?? "—"}
+              scaleType={examType?.scaleType}
+              scaleUnitLabel={examType?.scaleUnitLabel}
+              scaleLabels={examType?.scaleLabels}
+              targetScore={program.targetScore}
+              metrics={metrics}
+              requiredTopics={requiredTopics}
+              requiredPrototypes={requiredPrototypes}
+              staleDays={staleDays}
+            />
+          ) : (
+            <CurriculumProgressCard progress={program} subjectLabel={translateSubject(program.subject, i18n.language)} />
+          )}
+          {index === 0 ? (
+            <div className="absolute -top-2 -right-2">
+              <StickerZone zone="zone2" size="sm" />
+            </div>
+          ) : null}
+        </div>
+      ))}
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
+
+      <GamificationSection studentId={studentId} coinsBalance={student.coinsBalance} />
 
       <LessonHistory
         studentId={studentId}
@@ -1549,12 +1639,23 @@ function StudentDashboardContent({ studentId }) {
         loading={lessonsLoading}
         error={lessonsError}
       />
+
+      {/* Zone 3 of 3 (see task spec) — нижний баннер. */}
+      <section className="glass-soft flex items-center justify-between rounded-4xl p-5">
+        <div>
+          <p className="font-display text-sm text-foreground">{t("gamification.showcaseTitle")}</p>
+          <p className="text-xs text-muted-foreground">{t("gamification.showcaseHint")}</p>
+        </div>
+        <StickerZone zone="zone3" size="lg" />
+      </section>
     </div>
+    </GamificationProvider>
     </UserPrefsProvider>
   )
 }
 
 function StudentGate({ studentId }) {
+  const { t } = useTranslation("student")
   const [searchParams] = useSearchParams()
   const skipPinRequested = searchParams.get("skipPin") === "true"
 
@@ -1604,7 +1705,7 @@ function StudentGate({ studentId }) {
   if (checkingSkipPin) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-background px-4">
-        <Spinner label="Проверка входа..." />
+        <Spinner label={t("page.checkingLogin")} />
       </main>
     )
   }
@@ -1626,6 +1727,35 @@ function StudentGate({ studentId }) {
   )
 }
 
+// Fetches students/{id}.language once (before authorization — the PIN
+// login screen itself needs to render in the student's language) and
+// applies it to studentI18n, then wraps everything StudentDashboard renders
+// in an I18nextProvider bound to that instance. Blocks rendering briefly
+// (returns null) rather than flashing Russian then re-rendering in English,
+// same "resolve first, then render" shape used elsewhere (e.g.
+// StudentGate's own checkingSkipPin).
+function StudentI18nGate({ studentId, children }) {
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setReady(false)
+    getStudentLanguage(studentId)
+      .then((language) => studentI18n.changeLanguage(language || "ru"))
+      .catch((error) => console.error("Failed to resolve student language:", error))
+      .finally(() => {
+        if (!cancelled) setReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [studentId])
+
+  if (!ready) return null
+
+  return <I18nextProvider i18n={studentI18n}>{children}</I18nextProvider>
+}
+
 export function StudentDashboard() {
   const { studentId } = useParams()
 
@@ -1639,5 +1769,9 @@ export function StudentDashboard() {
     )
   }
 
-  return <StudentGate key={studentId} studentId={studentId} />
+  return (
+    <StudentI18nGate studentId={studentId}>
+      <StudentGate key={studentId} studentId={studentId} />
+    </StudentI18nGate>
+  )
 }

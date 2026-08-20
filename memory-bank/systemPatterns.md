@@ -153,7 +153,17 @@ src/
   actual gate on whether a field reaches the UI** — any future feature
   reading a new student field must check this function first, since a
   field existing on the Firestore doc is not sufficient for the client
-  object to expose it.
+  object to expose it. **Confirmed as a recurring bug class, not a
+  one-off**: `src/firebase/lessons.js`'s `mapLessonDoc` hit the exact
+  same gap twice more — first for `slotIndex`/`isExtraLesson` (session
+  14), then for `teacherId` (session 15, root cause of the video-call
+  button silently never working — see [[activeContext]]). **Any new
+  mapper function in this codebase (`mapStudentDoc`, `mapLessonDoc`,
+  `mapTemplateDoc`, etc.) should be treated as a standing suspect the
+  moment a field "exists in Firestore but isn't showing up" — check the
+  mapper's explicit field list before looking anywhere else, and when
+  adding a genuinely new field to a Firestore doc, add it to the mapper
+  proactively in the same change, not after discovering the gap later.**
 - **No shadcn `DropdownMenu` existed before `ContactButton`** — built the
   smallest usable wrapper (`src/components/ui/dropdown-menu.jsx`) directly
   on `@base-ui/react`'s `Menu` primitive, the same library `dialog.jsx` and
@@ -461,7 +471,26 @@ src/
   needed the same z-index bump (`z-[100]` → `z-[110]`) for the same
   reason — a Popover has no backdrop to worry about, but its own Popup
   was still tied for z-index with the outer Dialog's Backdrop, so it could
-  render behind the outer Dialog's Popup.
+  render behind the outer Dialog's Popup. **Session 15: this same gap
+  bit 3 more dialogs** (`RescheduleDialog`/`CancelLessonDialog` in
+  `upcoming-lesson-card.jsx`, nested inside "Следующие уроки"; and
+  `HomeworkLessonDialog`, which hand-rolls its own `Dialog.Backdrop`
+  outside `TeacherDialogContent` and had no `elevated`-equivalent support
+  at all until fixed) — **any dialog that is EVER opened from inside
+  another already-open dialog anywhere in the app needs this treatment,
+  and it's cheap to apply unconditionally** (bumping z-index/forcing
+  render is harmless even when a given usage happens not to be nested).
+  Also found `TeacherPopoverContent` had **zero** transition/animation
+  classes at all (not incomplete — entirely absent, so it popped open
+  instantly with no fade), and its z-index (`z-[110]`) needed a further
+  bump to `z-[120]` — above `elevated`'s own `z-[111]` — once a Popover
+  (`ProgramTopicPicker`) started living inside an `elevated`
+  `HomeworkLessonDialog`. **Rule of thumb going forward: any popup
+  primitive in this app (Dialog, Popover, and any future one) needs both
+  a `data-[starting-style]`/`data-[ending-style]` transition AND a
+  z-index high enough to clear every dialog tier it could ever be nested
+  inside — check both whenever adding a new popup-shaped component, don't
+  assume either one "just works" by copying an existing className.**
 - **Telegram's `callback_data` has a real 64-byte limit that this project
   bumped into for the first time in session 10.** Every existing
   student-facing reschedule/cancellation callback encoded at most one
@@ -627,6 +656,43 @@ src/
   `lesson.isExtraLesson`, the slot-indexed lookup otherwise. Any future
   code resolving a lesson's calendar event id must use this, not
   re-derive the slot-index lookup inline.
+- **A recurring wall-clock value (schedule `dayOfWeek`+`time`) needs its
+  own stamped anchor timezone, separate from whatever timezone it's being
+  displayed in — conflating the two makes a timezone conversion a silent
+  no-op (session 15).** `getNextLessonDateForSlot` used to take a single
+  `timeZone` param used for both "what timezone does '16:00' mean" and
+  (implicitly, since callers passed the *same* value for both purposes)
+  the eventual display zone — so converting a legacy slot's time always
+  round-tripped back to itself regardless of which zone the teacher
+  switched their Settings preference to, exactly reproducing "nothing
+  changed" from the user's perspective. Fixed by giving each slot its own
+  `timeZone` field (stamped with the teacher's current preference at
+  save time, `student-row.jsx`'s `StudentEditModal.handleSave`) that
+  `getNextLessonDateForSlot` prefers over any passed-in fallback — the
+  fallback is now only ever `Europe/Moscow` (the function's own built-in
+  default), never "whatever timezone the viewer currently has selected."
+  **Any future "recurring local time, viewed by someone whose timezone
+  preference can change" feature must keep the anchor timezone and the
+  display timezone as two genuinely separate values — never let a
+  "current preference" fallback serve as the anchor for data that should
+  stay pinned to whenever it was actually set.**
+- **Gamification (sticker cases, session 15) reuses the finance.js
+  transactional shape exactly** — `openCase`
+  (`functions/core/gamification.js`) does one `db.runTransaction` for the
+  balance-check + inventory-write + ledger-write, same as `addPayment`/
+  `deductLessonFromBalance`. New wrinkle this reuse didn't have before:
+  the "already own this?" check is a deterministic Firestore doc id
+  (`${setId}_${stickerId}`, not an auto-id) on the inventory subcollection
+  — doubles as both the dedup key and the transaction's ownership read, no
+  separate query needed. **`stickerSets` is a deliberate GLOBAL catalog
+  (no `teacherId`), the first top-level collection in this app that
+  isn't per-teacher scoped** — confirmed explicitly with the user before
+  building, since every other admin-authored collection so far
+  (`curriculumTemplates`, `examTypes`) followed the per-teacher pattern
+  by default. If a future feature needs a genuinely shared, non-teacher-
+  scoped catalog again, this is the precedent: no `teacherId` field, no
+  `where("teacherId", ...)` filter, and Rules for it are a plain
+  `allow read: if true` with no ownership check at all.
 
 ## Component relationships
 
@@ -799,3 +865,83 @@ src/
   every display site needs the teacher's examTypes list loaded to resolve
   a name/scale from the id, there's no longer a pure `formatExamTarget(id)`
   function that works without that list.
+
+- **An ordinal/index-based target scale reuses the same
+  `requiredItems()`/threshold mechanic a numeric scale uses, with zero
+  radar/backend changes (session 14).** `language_level` exam types store
+  `targetScore` as an index into `LANGUAGE_LEVELS` (0-5), and
+  `requiredItems()` (`src/lib/examRadar.js`) only ever does
+  `item.minScoreRequired <= targetScore` — a plain number comparison that
+  doesn't care whether the number represents points or a level index. So
+  giving language-level topics their own "actual from level X" mechanic
+  needed **no changes to `examRadar.js` or any backend function at all** —
+  only the curriculum template editor's input widget changed
+  (`curriculum-section.jsx`'s `RowList` gained a `levelMode` prop that
+  swaps the numeric `<input>` for a `LevelStepper` arrow control over the
+  same `minScoreRequired` field). **When adding a new ordinal scale type
+  in the future, check whether the existing score-comparison plumbing
+  already works before writing new comparison logic — it very often
+  does, since `minScoreRequired`/`targetScore` were never typed as
+  "points," just numbers.**
+
+- **Per-slot subject binding follows the same "store null, resolve a
+  fallback at read time, no backfill" shape multi-tenancy's `teacherId`
+  and Block 3's exam-type seeding both used (session 14).**
+  `scheduleSlots[]` elements can carry an optional `subject`;
+  `normalizeScheduleSlots` (both `functions/core/schedule.js` and
+  `src/lib/schedule.js`, kept in sync by hand as always) passes it through
+  as `null` when absent rather than writing a migration. Every consumer
+  resolves the effective subject the same way: `slot?.subject ||
+  student.subject?.[0] || null` — duplicated by hand in exactly two
+  places (`resolveSlotSubject` in `functions/core/googleCalendar.js` for
+  the backend, `resolveLessonSubject` in `src/lib/subjects.js` for the
+  frontend, the latter additionally keyed off `lesson.slotIndex` since
+  the UI resolves *from a lesson*, not a raw slot). **This pattern — new
+  optional field, null on old docs, fallback resolved identically at every
+  read site, no backfill script — is now the established default for
+  adding a new per-item property to an existing collection in this app;
+  reach for a migration script only when the fallback genuinely can't be
+  computed from sibling data.**
+
+- **`TeacherPopover`/`TeacherPopoverTrigger`/`TeacherPopoverContent`
+  (`theme-ui.jsx`) is the reusable primitive for any "designed dropdown"
+  that isn't a native `<select>` (session 14).** Already existed (used by
+  the contact-link inline editor); reused as-is for
+  `HomeworkLessonDialog`'s `ProgramTopicPicker` (grouped "Темы"/
+  "Прототипы" subheadings) rather than building a bespoke popup —
+  z-[110]/[111] stacking already handles opening from inside an
+  already-open `TeacherDialogContent`. **Reach for this before writing a
+  new dropdown-shaped component from scratch.**
+
+- **`TeacherDialogContent`'s own outer `Popup` needs `scrollbar-hidden`
+  too, not just whatever scrollable `<div>` a caller nests inside it
+  (session 14 finding, corrects an incomplete session-12 fix).** The
+  Popup itself is `overflow-y-auto` (so any dialog's content can exceed
+  `max-h-[90vh]` and still be reachable) — session 12 added
+  `scrollbar-hidden` to the notification bell's own inner list `<div>`,
+  which fixed that specific list's scrollbar but left the *outer* Popup's
+  native scrollbar visible whenever the dialog's total content (list +
+  something below it, e.g. `TeacherBotConnectStatus`) overflowed the
+  outer container too. Fixed once on the shared `TeacherDialogContent`
+  Popup itself, which covers every teacher dialog, not just this one —
+  **a scrollbar bug report should always be checked against every
+  `overflow-y-auto` ancestor, not just the innermost one that looks
+  responsible.**
+
+- **A comment describing a Firestore rule is not the same as the rule
+  existing — read the literal `allow` statements when diagnosing
+  `permission-denied` (session 14).** The `notifications/{notificationId}`
+  rule had `allow read`/`allow create` written out, followed by a comment
+  `// update — unchanged, still open for both sides to mark read` with
+  **no actual `allow update` statement beneath it** — so every
+  mark-as-read write hit Firestore's default-deny. Symptom looked like a
+  client bug (a notification flips to "read" for an instant, then
+  reverts) because the Firestore SDK applies writes optimistically to
+  local listeners and rolls them back only once the server's rejection
+  comes back — easy to mistake for "the UI state is wrong" instead of "the
+  write never actually happened." Confirmed via the user's own DevTools
+  console (`permission-denied`), not guessed. No local rules file exists
+  in this repo (by deliberate policy — see `techContext.md`), so this
+  class of bug can only be diagnosed by asking the user to paste the
+  actual current rule text or a console error; don't assume a described/
+  commented rule is live.

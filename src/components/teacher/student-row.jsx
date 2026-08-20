@@ -46,15 +46,13 @@ import {
   reassignProgram,
   deleteProgram,
 } from "@/firebase/curriculum"
-import { DAY_OPTIONS, formatLessonDateTime } from "@/lib/schedule"
-import { formatSubjects } from "@/lib/student-profile"
+import { DAY_OPTIONS, formatLessonDateTime, formatNextLessonDate, getNextLessonDateForSlot } from "@/lib/schedule"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
 import { SubjectPicker } from "@/components/teacher/subject-picker"
 import { getSubjectColorClass } from "@/lib/subjects"
 
 const MAX_SCHEDULE_SLOTS = 7
-const DAYS = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
 
 function defaultSlot(subjects) {
   return { dayOfWeek: 1, time: "16:00", durationMinutes: 60, subject: subjects?.[0] ?? null }
@@ -404,6 +402,7 @@ function AddProgramControl({ studentId, templates, disabled }) {
 // exam target/rate/auto-remind/curriculum plan) live in the same modal,
 // matching the mockup's own StudentEditModal which combines both.
 function StudentEditModal({ student, open, onOpenChange }) {
+  const teacherTimeZone = useTimeZone()
   const [slots, setSlots] = useState([])
   const [subject, setSubject] = useState([])
   const [hourlyRate, setHourlyRate] = useState(0)
@@ -471,8 +470,14 @@ function StudentEditModal({ student, open, onOpenChange }) {
     setSaving(true)
     setError("")
     try {
+      // Stamped fresh on every save — a schedule slot's day/time is wall-
+      // clock in whatever timezone was active when it was last saved, and
+      // stays pinned to that instant afterward even if the teacher later
+      // changes their own timezone preference in Settings (see
+      // getNextLessonDateForSlot in lib/schedule.js).
+      const slotsToSave = slots.map((slot) => ({ ...slot, timeZone: teacherTimeZone }))
       await Promise.all([
-        updateStudentSchedule(student.id, slots),
+        updateStudentSchedule(student.id, slotsToSave),
         updateStudentProfile(student.id, {
           subject,
           hourlyRate: Number(hourlyRate) || 0,
@@ -783,13 +788,39 @@ function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, 
   )
 }
 
+// One item ("Предмет"/"Программа") vs. several ("Предметы"/"Программы",
+// stacked one-per-line, top-aligned with the label instead of centered) —
+// same shape reused for both rows in the "Расписание" tile below.
+function SummaryListRow({ singularLabel, pluralLabel, items, emptyLabel }) {
+  const list = (items ?? []).filter(Boolean)
+
+  return (
+    <div className="flex items-start justify-between gap-3 text-muted-foreground">
+      <span className="shrink-0">{list.length > 1 ? pluralLabel : singularLabel}</span>
+      {list.length === 0 ? (
+        <span className="text-right text-ink">{emptyLabel}</span>
+      ) : list.length === 1 ? (
+        <span className="text-right text-ink">{list[0]}</span>
+      ) : (
+        <span className="flex flex-col items-end text-right text-ink">
+          {list.map((item, index) => (
+            <span key={index}>{item}</span>
+          ))}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function StudentRow({ student, progressSummary }) {
+  const timeZone = useTimeZone()
   const [expanded, setExpanded] = useState(false)
   const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
   const [livePrograms, setLivePrograms] = useState(null)
+  const [templates, setTemplates] = useState([])
 
   useEffect(() => {
     if (!expanded) {
@@ -801,6 +832,17 @@ export function StudentRow({ student, progressSummary }) {
     )
     return () => unsubscribe()
   }, [expanded, student.id])
+
+  // One-time fetch, not a subscription — only needed to resolve each
+  // program's templateId into a display name for the "Программы" summary
+  // line below (same call StudentEditModal already makes for the identical
+  // reason, ProgramRow's own templateName lookup).
+  useEffect(() => {
+    if (!expanded) return
+    getCurriculumTemplates(student.teacherId)
+      .then(setTemplates)
+      .catch((error) => console.error("Failed to load curriculum templates:", error))
+  }, [expanded, student.teacherId])
 
   // Prefer the live subscription (active while this row is expanded) over
   // the one-time batch snapshot the parent loaded on mount — otherwise the
@@ -890,9 +932,19 @@ export function StudentRow({ student, progressSummary }) {
               <ul className="mt-3 space-y-1.5 text-sm">
                 {student.scheduleSlots?.length > 0 ? (
                   student.scheduleSlots.map((slot, index) => (
-                    <li key={index} className="flex justify-between text-muted-foreground">
-                      <span>{DAYS[slot.dayOfWeek]}</span>
-                      <span className="font-semibold text-ink">{slot.time}</span>
+                    // Recomputed via getNextLessonDateForSlot, not the raw
+                    // slot.time string — anchored on the slot's own stamped
+                    // timeZone (or Europe/Moscow, getNextLessonDateForSlot's
+                    // own built-in default, for a legacy slot saved before
+                    // per-slot anchoring existed — deliberately NOT the
+                    // viewer's current pref here, or a legacy "16:00" would
+                    // silently mean a different real instant every time the
+                    // teacher changes their own timezone), then displayed in
+                    // the viewer's current pref — so a slot set for "16:00
+                    // Europe/Moscow" reads correctly converted once the
+                    // teacher switches their own timezone preference.
+                    <li key={index} className="font-semibold text-ink">
+                      {formatNextLessonDate(getNextLessonDateForSlot(slot), timeZone)}
                     </li>
                   ))
                 ) : (
@@ -900,10 +952,22 @@ export function StudentRow({ student, progressSummary }) {
                 )}
               </ul>
               <div className="mt-3 space-y-1.5 border-t border-glass-border pt-3 text-sm">
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Предмет</span>
-                  <span className="text-ink">{formatSubjects(student.subject)}</span>
-                </div>
+                <SummaryListRow
+                  singularLabel="Предмет"
+                  pluralLabel="Предметы"
+                  items={student.subject ?? []}
+                  emptyLabel="Предмет не указан"
+                />
+              </div>
+              <div className="mt-1 text-sm">
+                <SummaryListRow
+                  singularLabel="Программа"
+                  pluralLabel="Программы"
+                  items={(livePrograms ?? []).map(
+                    (program) => templates.find((template) => template.id === program.templateId)?.name ?? "Без шаблона",
+                  )}
+                  emptyLabel="Не назначены"
+                />
               </div>
               <div className="mt-1 flex justify-between text-sm">
                 <span className="text-muted-foreground">Пароль</span>

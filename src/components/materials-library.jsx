@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { ChevronRight, Lock, Paperclip } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { Spinner } from "@/components/ui/spinner"
 import { MaterialLink } from "@/components/material-link"
 import {
@@ -10,11 +11,16 @@ import {
 } from "@/components/glass-dialog"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { useTimeZone } from "@/lib/user-prefs-context"
+import { useDateLocale } from "@/lib/i18n"
 
 const VISIBLE_COUNT = 3
 
+// Student-only component (not shared with the teacher panel), so useTranslation
+// here always resolves against the studentI18n instance via I18nextProvider.
 export function MaterialsLibrary({ materials, loading = false, error = null }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const [showAll, setShowAll] = useState(false)
   const visibleMaterials = materials.slice(0, VISIBLE_COUNT)
   const hasMore = materials.length > VISIBLE_COUNT
@@ -22,15 +28,15 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
   return (
     <section aria-labelledby="materials-library-title" className="glass-soft rounded-4xl p-6">
       <h2 id="materials-library-title" className="font-display text-lg text-foreground">
-        Материалы к урокам
+        {t("materials.title")}
       </h2>
 
       {loading ? (
-        <Spinner label="Загрузка материалов..." className="py-6" />
+        <Spinner label={t("materials.loading")} className="py-6" />
       ) : error ? (
         <p className="mt-3 text-sm font-semibold text-destructive">{error}</p>
       ) : materials.length === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">Материалов пока нет</p>
+        <p className="mt-3 text-sm text-muted-foreground">{t("materials.empty")}</p>
       ) : (
         <>
           <ul className="mt-4 flex flex-col gap-2.5">
@@ -64,7 +70,7 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
               onClick={() => setShowAll(true)}
               className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary"
             >
-              Показать все
+              {t("common.showAll")}
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
           ) : null}
@@ -73,8 +79,8 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
 
       <GlassDialog open={showAll} onOpenChange={setShowAll}>
         <GlassDialogContent className="max-w-md">
-          <GlassDialogTitle>Все материалы</GlassDialogTitle>
-          <GlassDialogDescription>Файлы, прикреплённые к урокам</GlassDialogDescription>
+          <GlassDialogTitle>{t("materials.allDialogTitle")}</GlassDialogTitle>
+          <GlassDialogDescription>{t("materials.allDialogDescription")}</GlassDialogDescription>
 
           <ul className="mt-6 flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
             {materials.map((material, index) => {
@@ -106,7 +112,7 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
                   </a>
                   {material.lessonDate ? (
                     <span className="text-xs text-muted-foreground">
-                      {formatLessonDateTime(material.lessonDate, timeZone)}
+                      {formatLessonDateTime(material.lessonDate, timeZone, dateLocale)}
                     </span>
                   ) : null}
                 </li>

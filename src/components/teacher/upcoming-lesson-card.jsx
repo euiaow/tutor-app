@@ -100,7 +100,7 @@ export function RescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
 
   return (
     <TeacherDialog open={open} onOpenChange={handleOpenChange}>
-      <TeacherDialogContent>
+      <TeacherDialogContent elevated>
         <TeacherDialogTitle>Предложить перенос</TeacherDialogTitle>
         <TeacherDialogDescription>Выберите новую дату и время урока для ученика</TeacherDialogDescription>
 
@@ -168,7 +168,7 @@ export function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOp
 
   return (
     <TeacherDialog open={open} onOpenChange={handleOpenChange}>
-      <TeacherDialogContent>
+      <TeacherDialogContent elevated>
         <TeacherDialogTitle>Отменить урок</TeacherDialogTitle>
         <TeacherDialogDescription>
           {cancelDirectly

@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import {
   Target,
   CalendarClock,
@@ -14,6 +15,8 @@ import {
 import { formatSubjects } from "@/lib/student-profile"
 import { CurriculumItemGroups } from "@/components/student/curriculum-item-groups"
 import { round1, buildRadarComment } from "@/lib/examRadar"
+import { translateSubject } from "@/locales/subjectTranslations"
+import { translateUnitLabel } from "@/locales/examUnitTranslations"
 
 // Judgment call (Phase 3 — not specified): final_week gets the same amber
 // "pay attention" tone as yellow, without being as alarming as red — it's
@@ -35,17 +38,8 @@ const STATUS_COLOR = {
   no_data: "var(--muted-foreground)",
 }
 
-const STATUS_LABEL = {
-  green: "Идёшь по плану",
-  yellow: "Немного отстаёшь",
-  red: "Критическое отставание",
-  done: "Цель достигнута 🎉",
-  past: "Дата экзамена уже прошла",
-  final_week: "Последняя неделя — темп больше не считаем, просто закрывай оставшееся",
-  no_data: "Пока нет данных",
-}
-
-function daysWord(n) {
+function daysWord(n, lang = "ru") {
+  if (lang === "en") return n === 1 ? "day" : "days"
   const m10 = n % 10
   const m100 = n % 100
   if (m10 === 1 && m100 !== 11) return "день"
@@ -65,6 +59,7 @@ export function ExamRadar({
   requiredPrototypes,
   staleDays,
 }) {
+  const { t, i18n } = useTranslation("student")
   const [expanded, setExpanded] = useState(false)
 
   // Block 3 — exam types are free-form now (teachers/{uid}/examTypes), not a
@@ -77,25 +72,30 @@ export function ExamRadar({
   // Hardcoded language-level scale (A1-C2) — targetScore is an index into
   // scaleLabels, resolved to its label here for display only.
   const isLanguageLevel = scaleType === "language_level"
+  const translatedUnitLabel = translateUnitLabel(scaleUnitLabel, i18n.language)
   const goalLabel = isLanguageLevel
-    ? "Целевой уровень"
+    ? t("goals.targetLevel")
     : isGradeScale
-      ? "Целевая оценка"
-      : `Целевой ${scaleUnitLabel || "балл"}`
+      ? t("goals.targetGrade")
+      : t("goals.targetScoreUnit", { unit: translatedUnitLabel || t("goals.unitFallback") })
   const goalValue = isLanguageLevel
     ? (scaleLabels?.[targetScore] ?? `${targetScore}`)
     : isGradeScale
       ? `${targetScore}`
-      : `${targetScore}${scaleUnitLabel ? ` ${scaleUnitLabel}` : ""}`
+      : `${targetScore}${translatedUnitLabel ? ` ${translatedUnitLabel}` : ""}`
 
-  const examLabel = `До ${examTypeName} по ${formatSubjects(subject)}`
+  const translatedSubjects = (subject ?? []).map((name) => translateSubject(name, i18n.language))
+  const examLabel = t("examRadar.examLabel", {
+    examType: examTypeName,
+    subject: formatSubjects(translatedSubjects, t("goals.noSubject")),
+  })
   const { status, daysLeft, requiredTotal, completedRequired } = metrics
   const percent = requiredTotal > 0 ? Math.round((completedRequired / requiredTotal) * 100) : 0
   const isPast = status === "past"
   const showPace = status === "green" || status === "yellow" || status === "red"
   const color = STATUS_COLOR[status] ?? null
 
-  const comment = buildRadarComment(metrics, targetScore)
+  const comment = buildRadarComment(metrics, targetScore, i18n.language)
 
   const coveredTopics = requiredTopics.filter((item) => item.covered)
   const remainingTopics = requiredTopics.filter((item) => !item.covered)
@@ -117,18 +117,21 @@ export function ExamRadar({
       {staleDays != null && staleDays > 14 ? (
         <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-300">
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-          Прогресс не обновлялся {staleDays} {daysWord(staleDays)} — попроси репетитора отметить пройденное
+          {t("examRadar.staleWarning", { days: staleDays, daysWord: daysWord(staleDays, i18n.language) })}
         </div>
       ) : null}
 
       {isPast ? (
         <p className="mt-5 text-sm text-secondary-foreground">
-          {goalLabel} была: <b className="font-display">{goalValue}</b>
+          {t("examRadar.goalWasPrefix", { goalLabel })} <b className="font-display">{goalValue}</b>
         </p>
       ) : (
         <div className="mt-5 flex flex-wrap items-end gap-x-4 gap-y-2">
           <p className="font-display text-5xl leading-none text-primary">
-            {daysLeft} <span className="font-display text-2xl text-secondary-foreground">{daysWord(daysLeft)}</span>
+            {daysLeft}{" "}
+            <span className="font-display text-2xl text-secondary-foreground">
+              {daysWord(daysLeft, i18n.language)}
+            </span>
           </p>
           <p className="ml-auto inline-flex items-center gap-2 text-sm text-secondary-foreground">
             <Target className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -141,7 +144,7 @@ export function ExamRadar({
         <div className="glass-inset mt-5 rounded-3xl p-4">
           <div className="flex items-center gap-2.5">
             <span className="text-sm text-secondary-foreground">
-              Тем/прототипов пройдено {completedRequired} из {requiredTotal} нужных
+              {t("examRadar.progressLine", { completed: completedRequired, total: requiredTotal })}
             </span>
             <span className="ml-auto font-display text-sm text-primary">{percent}%</span>
           </div>
@@ -156,16 +159,20 @@ export function ExamRadar({
           <div className="glass-inset rounded-3xl p-4">
             <div className="flex items-center gap-2.5">
               <Gauge className="h-4 w-4 text-primary" aria-hidden="true" />
-              <span className="text-sm text-secondary-foreground">Темп сейчас</span>
-              <span className="ml-auto font-display text-sm">{round1(metrics.currentPace)}/нед</span>
+              <span className="text-sm text-secondary-foreground">{t("examRadar.paceNow")}</span>
+              <span className="ml-auto font-display text-sm">
+                {round1(metrics.currentPace)}{t("examRadar.perWeek")}
+              </span>
             </div>
           </div>
           <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground sm:block" aria-hidden="true" />
           <div className="glass-inset rounded-3xl p-4">
             <div className="flex items-center gap-2.5">
               <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
-              <span className="text-sm text-secondary-foreground">Нужно</span>
-              <span className="ml-auto font-display text-sm">{round1(metrics.neededPace)}/нед</span>
+              <span className="text-sm text-secondary-foreground">{t("examRadar.paceNeeded")}</span>
+              <span className="ml-auto font-display text-sm">
+                {round1(metrics.neededPace)}{t("examRadar.perWeek")}
+              </span>
             </div>
           </div>
         </div>
@@ -190,7 +197,7 @@ export function ExamRadar({
               aria-hidden="true"
             />
           ) : null}
-          <p className="font-display text-[0.7rem] font-medium">{STATUS_LABEL[status]}</p>
+          <p className="font-display text-[0.7rem] font-medium">{t(`examRadar.status.${status}`)}</p>
         </div>
         <p className="mt-2.5 text-sm text-secondary-foreground">{comment}</p>
       </div>
@@ -201,14 +208,14 @@ export function ExamRadar({
             <div className={`mt-4 grid gap-6 ${requiredPrototypes.length > 0 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
               <CurriculumItemGroups
                 icon={BookOpen}
-                title={`Темы для ${goalValue}`}
+                title={t("examRadar.topicsFor", { goal: goalValue })}
                 covered={coveredTopics}
                 remaining={remainingTopics}
               />
               {requiredPrototypes.length > 0 ? (
                 <CurriculumItemGroups
                   icon={Layers}
-                  title={`Прототипы для ${goalValue}`}
+                  title={t("examRadar.prototypesFor", { goal: goalValue })}
                   covered={coveredPrototypes}
                   remaining={remainingPrototypes}
                 />
@@ -221,7 +228,7 @@ export function ExamRadar({
             onClick={() => setExpanded((v) => !v)}
             className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary"
           >
-            {expanded ? "Свернуть" : "Подробнее"}
+            {expanded ? t("common.collapse") : t("common.expand")}
             {expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
           </button>
         </>

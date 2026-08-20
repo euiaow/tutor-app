@@ -16,8 +16,12 @@ these files are for full verbatim narrative detail only, rarely needed.
   mobile-layout pass, Telegram username contact UX), session 12
   (multi-tenancy Phase 4a settings/timezone/theme, second-teacher login
   bug, full timezone-handling rewrite, Firestore Rules published and the
-  tenant-isolation bug class it surfaced). Archived 2026-08-02,
-  2026-08-16, 2026-08-18, and 2026-08-19 respectively.
+  tenant-isolation bug class it surfaced), session 13 (confirm* race fix,
+  8 UI fixes, free-form exam types/subjects, full multi-program rewrite +
+  migration run), session 14 (per-slot subject binding, language-level
+  progression, designed topic/prototype picker, notifications
+  mark-as-read Rules bug found). Archived 2026-08-02, 2026-08-16,
+  2026-08-18, 2026-08-19, 2026-08-19, and 2026-08-19 respectively.
 
 `activeContext.md` itself keeps only the most recent 1 session inline —
 check there first for anything recent; come here only for older detail.

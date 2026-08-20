@@ -1,15 +1,17 @@
 import { RotateCcw } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { TruncatedList } from "@/components/truncated-list"
 import { useTimeZone } from "@/lib/user-prefs-context"
+import { useDateLocale } from "@/lib/i18n"
 
 function toJsDate(value) {
   return value?.toDate?.() ?? value ?? null
 }
 
-function formatShortDate(value, timeZone) {
+function formatShortDate(value, timeZone, locale) {
   const date = toJsDate(value)
   if (!date) return ""
-  return date.toLocaleDateString("ru-RU", { timeZone, day: "numeric", month: "long" })
+  return date.toLocaleDateString(locale, { timeZone, day: "numeric", month: "long" })
 }
 
 // Пройдено/Осталось split for a topics or prototypes list — stacked
@@ -21,7 +23,9 @@ function formatShortDate(value, timeZone) {
 // program), so this logic lives in one place instead of being duplicated
 // across the two page/component files that need it.
 export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) {
+  const { t } = useTranslation("student")
   const timeZone = useTimeZone()
+  const dateLocale = useDateLocale()
   const total = covered.length + remaining.length
 
   return (
@@ -37,11 +41,13 @@ export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) 
 
       {covered.length > 0 ? (
         <div className="mt-4">
-          <p className="mb-2.5 text-xs text-muted-foreground">Пройдено · {covered.length}</p>
+          <p className="mb-2.5 text-xs text-muted-foreground">{t("curriculumGroups.covered", { count: covered.length })}</p>
           <TruncatedList
             items={covered}
             emptyLabel={null}
             className="space-y-1.5"
+            collapseLabel={t("common.collapse")}
+            showAllLabel={(count) => t("common.showAll") + ` (${count})`}
             renderItem={(item) => (
               <li
                 key={item.id}
@@ -53,7 +59,9 @@ export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) 
                   ) : null}
                   <span className={`truncate ${item.needsReview ? "text-primary" : ""}`}>{item.title}</span>
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatShortDate(item.coveredAt, timeZone)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {formatShortDate(item.coveredAt, timeZone, dateLocale)}
+                </span>
               </li>
             )}
           />
@@ -62,11 +70,13 @@ export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) 
 
       {remaining.length > 0 ? (
         <div className={covered.length > 0 ? "mt-5 border-t border-white/50 pt-4" : "mt-4"}>
-          <p className="mb-2.5 text-xs text-muted-foreground">Осталось · {remaining.length}</p>
+          <p className="mb-2.5 text-xs text-muted-foreground">{t("curriculumGroups.remaining", { count: remaining.length })}</p>
           <TruncatedList
             items={remaining}
             emptyLabel={null}
             className="space-y-1.5"
+            collapseLabel={t("common.collapse")}
+            showAllLabel={(count) => t("common.showAll") + ` (${count})`}
             renderItem={(item) => (
               <li key={item.id} className="truncate text-sm text-muted-foreground">
                 {item.title}
@@ -75,7 +85,7 @@ export function CurriculumItemGroups({ title, icon: Icon, covered, remaining }) 
           />
         </div>
       ) : (
-        <p className="mt-5 border-t border-white/50 pt-4 text-xs text-muted-foreground">Все темы пройдены 🎉</p>
+        <p className="mt-5 border-t border-white/50 pt-4 text-xs text-muted-foreground">{t("curriculumGroups.allCovered")}</p>
       )}
     </section>
   )

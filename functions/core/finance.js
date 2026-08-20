@@ -105,17 +105,12 @@ async function deductLessonFromBalance(studentId, lessonId) {
     ]
 
     if (student.autoRemindLowBalance === true) {
-      const studentText =
-        newBalance <= 0
-          ? "Пакет занятий закончился. Свяжись, чтобы продлить, когда будет удобно."
-          : `Осталось ${newBalance} занятие(-ий) в оплаченном пакете. Дай знать, если нужно продлить — буду рада продолжать с тобой заниматься! 🙂`
-
       notifications.push(
         createNotification({
           target: "student",
           studentId,
           type: "low_balance",
-          text: studentText,
+          params: { newBalance },
           lessonId,
           teacherId,
         }),

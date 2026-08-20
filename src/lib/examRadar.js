@@ -146,8 +146,19 @@ export function computeRadarMetrics({ examDate, targetScore, topics, prototypes,
 // next step (talk to the tutor), not alarm. This register is an explicit,
 // settled decision — not something to soften toward "motivational" or
 // sharpen toward "warning" later without being asked.
-export function buildRadarComment(metrics, targetScore) {
+// `language` defaults to "ru" (this function has exactly one caller —
+// exam-radar.jsx, student-only — but the default keeps the same
+// safe-fallback shape as every other locale-aware helper in this codebase,
+// e.g. formatLessonDateTime/formatRelativeTime). Templated sentences with
+// hand-rolled pluralization, so this stays a plain bilingual function
+// rather than routing through i18next JSON keys, same reasoning as
+// daysWord/pluralizeTopics.
+export function buildRadarComment(metrics, targetScore, language = "ru") {
   const { status } = metrics
+
+  if (language === "en") {
+    return buildRadarCommentEn(metrics, targetScore)
+  }
 
   if (status === "done") {
     return `Все темы для ${targetScore} баллов пройдены 🎉 Дальше — повторение и практика.`
@@ -179,4 +190,39 @@ export function buildRadarComment(metrics, targetScore) {
   }
 
   return `Текущий темп ${pace} тем(ы) в неделю заметно отстаёт от нужного ${needed}. Осталось ${topicsLeft} тем при ${daysLeft} днях до экзамена — стоит обсудить с репетитором, как перераспределить нагрузку.`
+}
+
+function buildRadarCommentEn(metrics, targetScore) {
+  const { status } = metrics
+
+  if (status === "done") {
+    return `All topics for ${targetScore} points are covered 🎉 From here — review and practice.`
+  }
+
+  if (status === "past") {
+    return "The exam date has already passed. If you took it — how did it go? Update your goal if you're preparing for another attempt."
+  }
+
+  if (status === "final_week") {
+    return `Final week before the exam. Topics left: ${metrics.topicsLeft}. Focus on what's still uncovered, not on pace — pace stops being meaningful at this point.`
+  }
+
+  if (status === "no_data") {
+    return "Too early to judge the pace — start covering topics and a real picture will show up here."
+  }
+
+  // green / yellow / red — pace-based.
+  const { currentPace, neededPace, topicsLeft, daysLeft } = metrics
+  const pace = round1(currentPace)
+  const needed = round1(neededPace)
+
+  if (status === "green") {
+    return `Great pace! You're currently covering ${pace} topics/week against a needed ${needed}. Keep it up and you'll have room to spare for review.`
+  }
+
+  if (status === "yellow") {
+    return `Slightly behind. Over the recent weeks you've covered ${pace} topics/week on average, but ${needed} is needed. Still catchable — try covering a bit more in the next few lessons.`
+  }
+
+  return `The current pace of ${pace} topics/week is well below the needed ${needed}. ${topicsLeft} topics left with ${daysLeft} days until the exam — worth discussing with the teacher how to redistribute the load.`
 }

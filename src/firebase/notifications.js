@@ -18,6 +18,7 @@ function mapNotificationDoc(id, data) {
     studentId: data.studentId ?? null,
     type: data.type ?? null,
     text: data.text ?? "",
+    params: data.params ?? null,
     read: Boolean(data.read),
     createdAt: data.createdAt?.toDate?.() ?? null,
     lessonId: data.lessonId ?? null,

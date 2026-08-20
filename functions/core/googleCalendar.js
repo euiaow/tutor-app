@@ -18,12 +18,6 @@ const CALENDAR_ID = "primary"
 // there is no correctness reason to change it.
 const CALENDAR_TIME_ZONE = DEFAULT_TIME_ZONE
 
-async function getTeacherTimeZone(teacherId) {
-  if (!teacherId) return DEFAULT_TIME_ZONE
-  const snapshot = await db.collection("teachers").doc(teacherId).get()
-  return snapshot.exists ? snapshot.data().timezone || DEFAULT_TIME_ZONE : DEFAULT_TIME_ZONE
-}
-
 // Google Calendar's event colorId palette is a fixed 1-11 set (not
 // arbitrary hex). Block 3 — subjects are free-form now (no fixed set of
 // codes to hardcode a map against), so the color is derived the same way
@@ -66,8 +60,8 @@ function toFloatingDateTime(date) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00`
 }
 
-function buildEventResourceForSlot(student, slot, teacherTimeZone) {
-  const start = getNextLessonDateForSlot(slot, teacherTimeZone)
+function buildEventResourceForSlot(student, slot) {
+  const start = getNextLessonDateForSlot(slot)
   if (!start) {
     return null
   }
@@ -178,13 +172,18 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
   const scheduleSlots = normalizeScheduleSlots(student)
   const existingEventIds = student.googleEventIds ?? {}
   const nextEventIds = {}
-  const teacherTimeZone = await getTeacherTimeZone(teacherId)
 
   for (let index = 0; index < scheduleSlots.length; index += 1) {
     const key = String(index)
     const slot = scheduleSlots[index]
     const existingEventId = existingEventIds[key] ?? null
-    const resource = buildEventResourceForSlot(student, slot, teacherTimeZone)
+    // No teacher-profile-timezone fallback passed here on purpose — see the
+    // identical comment in core/lessons.js's ensureUpcomingLesson. A slot's
+    // own stamped `timeZone` always wins; a legacy slot with none falls
+    // back to DEFAULT_TIME_ZONE inside buildEventResourceForSlot/
+    // getNextLessonDateForSlot rather than the teacher's current Settings
+    // preference.
+    const resource = buildEventResourceForSlot(student, slot)
 
     if (!resource) {
       logger.warn("syncScheduleSlots: cannot build event, invalid slot", { studentId, slotIndex: index })

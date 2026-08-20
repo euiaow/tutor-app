@@ -2,6 +2,49 @@
 
 ## What works (per commit history + code present)
 
+- **Gamification MVP — sticker cases (session 15), stub art only** —
+  students open a case (6 coins default) for a server-weighted-random
+  sticker (`openCase` Cloud Function, `functions/core/gamification.js`);
+  duplicates convert to +2 coins instead of a second copy. Inventory grid
+  + 3 fixed decoration zones (avatar, progress card, bottom banner) on
+  `StudentDashboard.jsx`, tap-to-arm/tap-to-place. Verified end-to-end
+  against the real deployed backend (weighted distribution, balance
+  debits, duplicate conversion, ownership validation) — see
+  [[activeContext]]. **Not yet live for real students — Firestore Rules
+  for the 3 new collections not yet published.**
+- **Real fixes for two bugs that looked fixed in an earlier pass but
+  weren't (session 15)** — video call button (real cause:
+  `mapLessonDoc` dropping `teacherId`, not just the Rules gap first
+  suspected) and schedule-time-vs-timezone display (real cause: anchor
+  and display timezone were accidentally the same value, making the
+  conversion a no-op for every legacy schedule slot). Both verified with
+  real scripts/tests this time, not just code review. See [[activeContext]].
+- **Dialog backdrop/animation consistency pass (session 15)** — fixed
+  Base UI's "nested dialog skips its own Backdrop unless `forceRender`"
+  gap in 3 more places (`RescheduleDialog`/`CancelLessonDialog`/
+  `HomeworkLessonDialog`), and found `TeacherPopoverContent` had no
+  transition classes at all. New `TeacherSelect` designed-dropdown
+  component replaces native `<select>` for subject/exam-type pickers. See
+  [[activeContext]].
+- **Per-schedule-slot subject binding (session 14)** — `scheduleSlots[]`
+  elements can now carry their own `subject`, distinct from the student's
+  overall subject list; falls back to the student's first subject at
+  read time when unset (no backfill). Drives Google Calendar event colors
+  per-slot, a per-lesson subject tag (replacing the old "show every
+  subject the student has" tag), and an auto-selected "Пройденный
+  материал" program in `HomeworkLessonDialog` when a lesson's slot has a
+  resolvable subject. See [[activeContext]].
+- **Language-level (A1–C2) progression for curriculum topics (session
+  14)** — topics/prototypes under a `language_level`-scale exam type can
+  now be tagged "actual from level X" via an arrow stepper in the
+  template editor, reusing the exact same `minScoreRequired <=
+  targetScore` mechanic score/grade scales already used (no radar/backend
+  changes needed — `targetScore` was already an index into
+  `LANGUAGE_LEVELS`). See [[activeContext]].
+- **Designed topic/prototype picker (session 14)** — `HomeworkLessonDialog`'s
+  "Тема урока" picker is now a `TeacherPopover` dropdown grouped into
+  "Темы"/"Прототипы" subheadings (both selectable as a lesson topic now),
+  replacing a plain `<select>` that only listed topics.
 - **Multi-program support (session 13)** — a student can have several
   curriculum programs at once (`students/{id}/programs/{programId}`,
   replacing the old single `curriculumProgress/main`). Teacher assigns/
@@ -356,6 +399,22 @@
 
 ## Known issues / open items
 
+- **Gamification's 3 new collections (`stickerSets`, `students/{id}/
+  inventory`, `students/{id}/decoration`) have no Firestore Rules yet
+  (session 15)** — drafted and handed to the user, not confirmed
+  published. Every student-facing read of these will permission-deny
+  until published. See [[activeContext]].
+- **No coin-earning mechanic exists (session 15)** — gamification spec
+  only covered spending; a teacher has to grant `coinsBalance` by hand
+  via Firestore Console to test the feature for now.
+- **Notifications mark-as-read broken by a Rules gap (found session 14,
+  fix drafted, NOT confirmed published)** — the `notifications/
+  {notificationId}` rule's `allow update` was never actually written (a
+  comment claimed it was "unchanged, still open" but no real `allow`
+  statement existed), so every mark-as-read write silently
+  permission-denied and rolled back. Rule text handed to the user; check
+  next session whether it's live and mark-as-read actually sticks now.
+  See [[activeContext]].
 - No automated test suite in the repo.
 - **Resolved as of session 13**: everything through session 12 is
   committed (`7e44893`), and session 13's own work landed in 4 separate

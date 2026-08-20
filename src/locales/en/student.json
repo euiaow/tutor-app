@@ -1,0 +1,223 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "reject": "Decline",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving...",
+    "back": "Back",
+    "loading": "Loading...",
+    "noTopic": "No topic",
+    "showAll": "Show all",
+    "collapse": "Collapse",
+    "expand": "Details"
+  },
+  "header": {
+    "welcome": "Welcome",
+    "greeting": "Hi, {{name}}! ✌️",
+    "settingsAria": "Settings"
+  },
+  "page": {
+    "title": "My dashboard",
+    "loadingStudent": "Loading student data...",
+    "loadStudentError": "Failed to load student data",
+    "studentNotFound": "Student not found",
+    "checkingLogin": "Checking login..."
+  },
+  "nextLesson": {
+    "label": "Next lesson",
+    "cancelled": "Lesson cancelled",
+    "noSchedule": "The teacher hasn't set up a schedule yet",
+    "allLessonsShort": "All lessons",
+    "allLessonsFull": "View all lessons",
+    "teacherProposesReschedule": "The teacher suggests rescheduling",
+    "rescheduleRequestSent": "Reschedule request sent",
+    "rescheduleConfirmed": "Reschedule confirmed",
+    "confirmCancellation": "Confirm cancellation",
+    "teacherProposesCancellation": "The teacher suggests cancelling this lesson",
+    "cancellationRequestSent": "Cancellation request sent",
+    "videoCall": "Video call",
+    "videoCallActive": "Link is active",
+    "videoCallAvailableSoon": "Available 3 minutes before the start",
+    "videoCallJoin": "Join",
+    "assignment": "Assignment",
+    "assignmentEmpty": "No assignment yet",
+    "myHomework": "My homework",
+    "homeworkNotSubmitted": "You haven't submitted your homework yet",
+    "homeworkReceived": "Homework received ✓",
+    "fileLabel": "File {{index}}",
+    "homeworkUploadError": "Failed to upload the file",
+    "uploading": "Uploading...",
+    "attachHomework": "Attach homework",
+    "orSendViaBot": "Or send it via the Telegram/VK bot",
+    "rescheduleButton": "Reschedule lesson",
+    "cancelButton": "Cancel lesson"
+  },
+  "upcomingRow": {
+    "pendingStudent": "Awaiting your response",
+    "rescheduleProposed": "Reschedule proposed",
+    "rescheduleConfirmed": "Reschedule confirmed",
+    "pendingStudentCancellation": "Awaiting your response (cancellation)",
+    "cancellationProposed": "Cancellation proposed"
+  },
+  "allUpcomingDialog": {
+    "title": "My lessons",
+    "description": "All upcoming scheduled lessons",
+    "empty": "No lessons scheduled yet"
+  },
+  "rescheduleDialog": {
+    "title": "Propose reschedule",
+    "description": "Choose a new date and time for the lesson",
+    "submitting": "Sending...",
+    "submit": "Propose reschedule",
+    "error": "Failed to send the reschedule request"
+  },
+  "cancelDialog": {
+    "title": "Cancel lesson",
+    "descriptionWithDate": "Are you sure you want to request cancellation of the lesson on {{date}}?",
+    "descriptionNoDate": "Are you sure you want to request cancellation of the lesson?",
+    "confirmButton": "Yes, cancel",
+    "error": "Failed to send the cancellation request"
+  },
+  "goals": {
+    "myGoal": "My goal",
+    "myGoals": "My goals",
+    "noSubject": "No subject",
+    "targetLevel": "Target level",
+    "targetGrade": "Target grade",
+    "targetScoreUnit": "Target {{unit}}",
+    "unitFallback": "score",
+    "examDate": "Exam date",
+    "noGoalHint": "Set a goal to track your progress toward the exam",
+    "fillIn": "Fill in",
+    "editGoalAria": "Edit goal",
+    "saveError": "Failed to save the goal"
+  },
+  "examRadar": {
+    "status": {
+      "green": "On track",
+      "yellow": "Falling a bit behind",
+      "red": "Critically behind",
+      "done": "Goal reached 🎉",
+      "past": "Exam date has already passed",
+      "final_week": "Final week — pace is no longer tracked, just finish what's left",
+      "no_data": "No data yet"
+    },
+    "examLabel": "Until the {{examType}} in {{subject}}",
+    "staleWarning": "Progress hasn't been updated in {{days}} {{daysWord}} — ask the teacher to mark what's been covered",
+    "goalWasPrefix": "{{goalLabel}} was:",
+    "progressLine": "{{completed}} of {{total}} required topics/prototypes covered",
+    "paceNow": "Current pace",
+    "paceNeeded": "Needed",
+    "perWeek": "/week",
+    "topicsFor": "Topics for {{goal}}",
+    "prototypesFor": "Prototypes for {{goal}}"
+  },
+  "progress": {
+    "title": "Curriculum progress",
+    "titleWithSubject": "Curriculum progress — {{subject}}",
+    "topics": "Topics",
+    "prototypes": "Prototypes",
+    "prototypeTypes": "Task types",
+    "needsReview": "To review: ",
+    "andMore": " and {{count}} more",
+    "coveredThisWeek": "Covered this week: {{count}} {{word}}"
+  },
+  "curriculumGroups": {
+    "covered": "Covered · {{count}}",
+    "remaining": "Remaining · {{count}}",
+    "allCovered": "All topics covered 🎉"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No new notifications",
+    "all": "All",
+    "allDialogTitle": "All notifications",
+    "allDialogDescription": "Last {{count}} notifications",
+    "confirmed": "Confirmed",
+    "rejected": "Declined",
+    "alreadyHandled": "Already handled"
+  },
+  "materials": {
+    "title": "Lesson materials",
+    "loading": "Loading materials...",
+    "empty": "No materials yet",
+    "allDialogTitle": "All materials",
+    "allDialogDescription": "Files attached to lessons"
+  },
+  "history": {
+    "title": "Lesson history",
+    "loading": "Loading lessons...",
+    "loadError": "Failed to load lesson history",
+    "empty": "No lessons yet",
+    "showAll": "Show full history",
+    "dialogTitle": "Lesson history",
+    "cancelled": "Cancelled",
+    "homeworkDone": "Homework done",
+    "homeworkNotDone": "Homework not done",
+    "attendance": {
+      "on_time": "On time",
+      "late": "Late",
+      "absent": "Absent"
+    },
+    "rating": {
+      "excellent": "Excellent",
+      "good": "Good",
+      "needs_work": "Needs work"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Time zone and color theme",
+    "timezone": "Time zone",
+    "language": "Language",
+    "colorTheme": "Color theme",
+    "saveError": "Failed to save settings",
+    "colorThemeOptions": {
+      "pink": "Pink (teacher's)",
+      "amber": "Amber (student's)"
+    }
+  },
+  "login": {
+    "pageTitle": "Log in",
+    "heading": "Sign in to the student portal",
+    "subheading": "Enter your personal access code to continue",
+    "codeAccepted": "Code accepted!",
+    "welcomeBack": "Welcome back.",
+    "invalidCode": "Invalid access code",
+    "verifyError": "Failed to verify the code. Please try again",
+    "verifying": "Verifying...",
+    "submit": "Log in",
+    "footerHint": "Ask your teacher for the access code.",
+    "pinGroupAria": "4-digit access code",
+    "digitAria": "Digit {{index}}"
+  },
+  "gamification": {
+    "sectionTitle": "Cases and stickers",
+    "noSets": "No cases added yet",
+    "openButton": "Open · {{price}} 🪙",
+    "openError": "Failed to open the case",
+    "notEnoughCoins": "Not enough coins",
+    "collectionTitle": "Collection ({{count}})",
+    "collectionEmpty": "Empty for now — open a case to get your first sticker",
+    "collectionHint": "Tap a sticker, then tap one of the 3 zones on the page to place it there",
+    "rarity": {
+      "common": "Common",
+      "rare": "Rare",
+      "epic": "Epic",
+      "legendary": "Legendary"
+    },
+    "zoneRemoveTitle": "{{name}} — tap to remove",
+    "zonePlaceTitle": "Tap to place a sticker",
+    "showcaseTitle": "Sticker showcase",
+    "showcaseHint": "Place a sticker from your collection here",
+    "caseOpening": {
+      "dialogTitle": "Opening case",
+      "spinning": "Spinning the reel...",
+      "revealed": "Result",
+      "duplicate": "Already in your collection — converted to {{coins}} 🪙",
+      "newItem": "Added to your collection",
+      "continue": "Continue"
+    }
+  }
+}

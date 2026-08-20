@@ -1,12 +1,14 @@
 import { useState } from "react"
 import { LoaderCircle, LogIn, AlertCircle } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { PinInput } from "@/components/auth/pin-input"
 import { StudentGrainBackground } from "@/components/student-grain-background"
 import { verifyStudentAccessCode } from "@/firebase/students"
 import { usePageTitle } from "@/lib/usePageTitle"
 
 export function LoginScreen({ studentId, onSuccess }) {
-  usePageTitle("Вход")
+  const { t } = useTranslation("student")
+  usePageTitle(t("login.pageTitle"))
   const [pin, setPin] = useState(["", "", "", ""])
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
@@ -28,12 +30,12 @@ export function LoginScreen({ studentId, onSuccess }) {
         setSuccess(true)
         setTimeout(() => onSuccess?.(), 600)
       } else {
-        setError("Неверный код доступа")
+        setError(t("login.invalidCode"))
         setPin(["", "", "", ""])
       }
     } catch (err) {
       console.error("Failed to verify access code:", err)
-      setError("Не удалось проверить код. Попробуйте ещё раз")
+      setError(t("login.verifyError"))
       setPin(["", "", "", ""])
     } finally {
       setLoading(false)
@@ -49,13 +51,13 @@ export function LoginScreen({ studentId, onSuccess }) {
           decorative backdrop) no longer applies — switched to the mockup's
           own translucent `glass` utility, explicitly requested. */}
       <section className="glass relative w-full max-w-sm rounded-4xl p-7 sm:p-9">
-        <h1 className="font-display text-3xl leading-tight text-foreground">Вход в ученический портал</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Введите персональный код доступа, чтобы продолжить</p>
+        <h1 className="font-display text-3xl leading-tight text-foreground">{t("login.heading")}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t("login.subheading")}</p>
 
         {success ? (
           <div className="mt-7 rounded-3xl bg-chart-3/10 p-6 text-center" role="status">
-            <p className="text-base font-bold text-foreground">Код принят!</p>
-            <p className="mt-1 text-sm text-muted-foreground">Добро пожаловать обратно.</p>
+            <p className="text-base font-bold text-foreground">{t("login.codeAccepted")}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t("login.welcomeBack")}</p>
           </div>
         ) : (
           <form
@@ -97,21 +99,19 @@ export function LoginScreen({ studentId, onSuccess }) {
               {loading ? (
                 <>
                   <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  Проверяем...
+                  {t("login.verifying")}
                 </>
               ) : (
                 <>
                   <LogIn className="h-4 w-4" aria-hidden="true" />
-                  Войти
+                  {t("login.submit")}
                 </>
               )}
             </button>
           </form>
         )}
 
-        <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
-          Код доступа можно узнать у преподавателя.
-        </p>
+        <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">{t("login.footerHint")}</p>
       </section>
     </main>
   )

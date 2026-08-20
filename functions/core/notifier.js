@@ -1,6 +1,7 @@
 const { FieldValue } = require("firebase-admin/firestore")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
+const { buildNotificationText } = require("./notificationMessages")
 
 const NOTIFICATIONS_COLLECTION = "notifications"
 const DEFAULT_TIME_ZONE = "Europe/Moscow"
@@ -31,12 +32,25 @@ async function resolveRecipientTimeZone(target, studentData, teacherId) {
 // Firestore record is what the UI reads, so it must survive even if the
 // bot send fails (student never linked a platform, token expired, etc).
 //
-// `text` can be a plain string (unchanged behavior, e.g. messages with no
-// date in them) or a `(timeZone) => string` builder — used by every
-// core/lessons.js call site that formats a lesson date/time, so each of the
-// (up to two, student + teacher) createNotification calls for the same
-// event renders its own copy of the text in *that* recipient's own
-// timezone, instead of one shared pre-built string.
+// `text` (target: "teacher" only, unchanged) can be a plain string or a
+// `(timeZone) => string` builder — used by every core/lessons.js call site
+// that formats a lesson date/time, so each of the (up to two, student +
+// teacher) createNotification calls for the same event renders its own copy
+// of the text in *that* recipient's own timezone, instead of one shared
+// pre-built string. The teacher panel has no i18n at all, so this path is
+// untouched by the student-notification translation work below.
+//
+// `params` (target: "student" only) carries the RAW values that used to be
+// interpolated into a pre-built Russian string for this category — see
+// notificationMessages.js. This function resolves the student's own saved
+// language (studentData.language, already read below for the timezone
+// lookup) and the recipient's timeZone, builds the text via
+// buildNotificationText for BOTH the Firestore-persisted record's language
+// and the bot dispatch, and persists `type`+`params` (with `timeZone`
+// merged in) instead of a pre-built `text` — so the site can re-render the
+// same notification in whichever language the student's profile says at
+// view time, not whatever it was at send time. A `text` argument is simply
+// never read for this target.
 //
 // `telegramReplyMarkup`/`vkKeyboard` are passed straight through to
 // sendReminderToStudent for the few flows (reschedule/cancellation
@@ -47,6 +61,7 @@ async function createNotification({
   studentId = null,
   type,
   text,
+  params,
   lessonId = null,
   teacherId: providedTeacherId = null,
   telegramReplyMarkup,
@@ -73,20 +88,32 @@ async function createNotification({
   }
 
   const timeZone = await resolveRecipientTimeZone(target, studentData, teacherId)
-  const resolvedText = typeof text === "function" ? text(timeZone) : text
+
+  // `fullParams`/`language` only matter for target === "student"; computed
+  // unconditionally here anyway since it's cheap and keeps the branching
+  // below to one place.
+  const language = studentData?.language === "en" ? "en" : "ru"
+  const fullParams = { ...params, timeZone }
+  const resolvedText =
+    target === "student" ? buildNotificationText(type, fullParams, language) : typeof text === "function" ? text(timeZone) : text
 
   const ref = db.collection(NOTIFICATIONS_COLLECTION).doc()
 
-  await ref.set({
+  const doc = {
     target,
     studentId,
     teacherId,
     type,
-    text: resolvedText,
     read: false,
     createdAt: FieldValue.serverTimestamp(),
     lessonId,
-  })
+  }
+  if (target === "student") {
+    doc.params = fullParams
+  } else {
+    doc.text = resolvedText
+  }
+  await ref.set(doc)
 
   logger.info("createNotification: notification recorded", { id: ref.id, target, studentId, type, lessonId })
 

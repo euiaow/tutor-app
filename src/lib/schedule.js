@@ -11,14 +11,15 @@ const DAY_NAMES_RU = [
 export const DAY_OPTIONS = DAY_NAMES_RU.map((label, value) => ({ value, label }))
 
 // Full-rewrite note: schedule.dayOfWeek/time used to be interpreted as a
-// fixed Moscow wall-clock value — reversed; the teacher's own saved
-// timezone is now the interpretation context (see
-// functions/core/schedule.js, the canonical backend copy this file
-// mirrors — getNextLessonDateForSlot/getNextLessonDate below are unused on
-// the frontend today, all "next lesson" display reads the already-computed
-// date off the backend-written lesson doc instead, but kept in sync with
-// the backend copy's shape regardless). DEFAULT_TIME_ZONE here is only
-// this file's own safety-net default for a caller that doesn't pass one.
+// fixed Moscow wall-clock value — reversed; each slot now carries its own
+// `timeZone`, stamped at save time with whatever timezone the teacher had
+// active then (see functions/core/schedule.js, the canonical backend copy
+// this file mirrors). getNextLessonDateForSlot/getNextLessonDate are used
+// on the frontend for the recurring-schedule display (student-row.jsx) and
+// the "Следующие уроки" virtual-occurrence projection
+// (upcoming-lessons-list-dialog.jsx); real stored lesson dates still come
+// from the backend-written lesson doc. DEFAULT_TIME_ZONE here is only this
+// file's own safety-net default for a caller that doesn't pass one.
 const DEFAULT_TIME_ZONE = "Europe/Moscow"
 
 export function getZonedParts(date, timeZone) {
@@ -57,7 +58,13 @@ export function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-export function getNextLessonDateForSlot(slot) {
+// `timeZone` is the fallback used only for a slot with no `timeZone` field
+// of its own (legacy slots saved before per-slot anchoring existed) — a
+// slot's own stamped `timeZone` (set at save time, see student-row.jsx's
+// StudentEditModal) always wins over it, so a schedule set for "16:00
+// Europe/Moscow" stays pinned to that instant even after the teacher later
+// changes their own display timezone preference in Settings.
+export function getNextLessonDateForSlot(slot, timeZone = DEFAULT_TIME_ZONE) {
   if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
   }
@@ -67,16 +74,18 @@ export function getNextLessonDateForSlot(slot) {
     return null
   }
 
+  const effectiveTimeZone = slot.timeZone || timeZone
+
   const now = new Date()
-  const nowInMoscow = getZonedParts(now, DEFAULT_TIME_ZONE)
+  const nowZoned = getZonedParts(now, effectiveTimeZone)
   // A calendar date's day-of-week doesn't depend on time-of-day or zone
-  // offset, so reading it off a UTC-midnight Date built from Moscow's
+  // offset, so reading it off a UTC-midnight Date built from the zoned
   // year/month/day is safe.
-  const mskWeekday = new Date(Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day)).getUTCDay()
-  const daysUntil = (slot.dayOfWeek - mskWeekday + 7) % 7
+  const zonedWeekday = new Date(Date.UTC(nowZoned.year, nowZoned.month - 1, nowZoned.day)).getUTCDay()
+  const daysUntil = (slot.dayOfWeek - zonedWeekday + 7) % 7
 
   const candidateDay = new Date(
-    Date.UTC(nowInMoscow.year, nowInMoscow.month - 1, nowInMoscow.day + daysUntil),
+    Date.UTC(nowZoned.year, nowZoned.month - 1, nowZoned.day + daysUntil),
   )
 
   let candidate = zonedTimeToUtc(
@@ -85,7 +94,7 @@ export function getNextLessonDateForSlot(slot) {
     candidateDay.getUTCDate(),
     hours,
     minutes,
-    DEFAULT_TIME_ZONE,
+    effectiveTimeZone,
   )
 
   if (candidate <= now) {
@@ -117,6 +126,11 @@ export function normalizeScheduleSlots(data) {
       // existed; UI/logic that needs a concrete subject falls back to
       // student.subject[0] at read time (see resolveSlotSubject callers).
       subject: typeof slot.subject === "string" && slot.subject ? slot.subject : null,
+      // Per-slot timezone anchor — null for slots saved before this field
+      // existed; getNextLessonDateForSlot falls back to a passed-in
+      // timezone (the teacher's current one) for those, same "store null,
+      // resolve fallback at read time" shape as `subject` above.
+      timeZone: typeof slot.timeZone === "string" && slot.timeZone ? slot.timeZone : null,
     }))
   }
 
@@ -134,9 +148,9 @@ export function normalizeScheduleSlots(data) {
 }
 
 // Earliest next occurrence across every slot.
-export function getNextLessonDate(scheduleSlots) {
+export function getNextLessonDate(scheduleSlots, timeZone = DEFAULT_TIME_ZONE) {
   const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
-  const dates = slots.map(getNextLessonDateForSlot).filter(Boolean)
+  const dates = slots.map((slot) => getNextLessonDateForSlot(slot, timeZone)).filter(Boolean)
 
   if (dates.length === 0) {
     return null
@@ -167,18 +181,21 @@ export function formatNextLessonDate(date, timeZone = DEFAULT_TIME_ZONE) {
 
 // Full calendar date + time (e.g. "28 июля, 16:00") — used for concrete
 // lesson.date values, as opposed to formatNextLessonDate's weekday-only
-// format for the recurring weekly schedule.
-export function formatLessonDateTime(date, timeZone = DEFAULT_TIME_ZONE) {
+// format for the recurring weekly schedule. `locale` defaults to "ru-RU" so
+// every pre-existing (teacher-side) caller is unaffected — only the student
+// dashboard passes "en-US" explicitly, resolved from students/{id}.language
+// via useDateLocale() (src/lib/i18n.js).
+export function formatLessonDateTime(date, timeZone = DEFAULT_TIME_ZONE, locale = "ru-RU") {
   if (!date) {
     return ""
   }
 
-  const datePart = date.toLocaleDateString("ru-RU", {
+  const datePart = date.toLocaleDateString(locale, {
     timeZone,
     day: "numeric",
     month: "long",
   })
-  const timePart = date.toLocaleTimeString("ru-RU", {
+  const timePart = date.toLocaleTimeString(locale, {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",

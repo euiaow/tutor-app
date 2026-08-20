@@ -23,6 +23,11 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 // placeholders, not Firestore docs, so they render as a plain informational
 // row (no reschedule/cancel/homework actions, nothing to click) via
 // VirtualLessonRow below instead of the real UpcomingLessonCard.
+// No timeZone param passed through to getNextLessonDateForSlot on purpose —
+// a slot's own stamped timeZone always wins there, and a legacy slot with
+// none falls back to its own built-in Europe/Moscow default rather than the
+// viewer's current pref (see the identical reasoning in student-row.jsx's
+// "Расписание" block and core/lessons.js's ensureUpcomingLesson).
 function getVirtualOccurrences(scheduleSlots, realLessons, windowEnd) {
   const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
   const virtual = []

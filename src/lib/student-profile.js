@@ -5,8 +5,11 @@
 // examTarget's old EXAM_TARGET_OPTIONS/formatExamTarget are gone entirely —
 // exam type is now a teacher-owned examTypes doc (src/firebase/examTypes.js),
 // resolved by id where needed, not a static enum this module can format.
-export function formatSubjects(subjectNames) {
-  if (!subjectNames || subjectNames.length === 0) return "Предмет не указан"
+// `noneLabel` defaults to the original Russian fallback so every
+// pre-existing caller is unchanged; the student dashboard's exam-radar.jsx
+// passes a translated fallback via t("goals.noSubject").
+export function formatSubjects(subjectNames, noneLabel = "Предмет не указан") {
+  if (!subjectNames || subjectNames.length === 0) return noneLabel
   return subjectNames.join(", ")
 }
 

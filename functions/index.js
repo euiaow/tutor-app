@@ -49,6 +49,7 @@ const {
 const { createTeacherConnectToken } = require("./core/teacherConnect")
 const { deleteStudent, updateStudentSettings } = require("./core/students")
 const { addPayment } = require("./core/finance")
+const { openCase: openCaseCore, saveDecoration: saveDecorationCore } = require("./core/gamification")
 const {
   assignCurriculumTemplate,
   reassignProgram,
@@ -256,6 +257,39 @@ exports.submitHomeworkFile = onCall(
   },
 )
 
+// Gamification (sticker cases) — student-facing, no request.auth by design,
+// same shape as submitHomeworkFile above (studentId trusted from the
+// request body).
+exports.openCase = onCall(async (request) => {
+  const { studentId, setId } = request.data ?? {}
+
+  try {
+    return await openCaseCore(studentId, setId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to open case", error)
+    throw new HttpsError("internal", "Не удалось открыть кейс")
+  }
+})
+
+exports.saveDecoration = onCall(async (request) => {
+  const { studentId, zone, itemId } = request.data ?? {}
+
+  try {
+    return await saveDecorationCore(studentId, zone, itemId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to save decoration", error)
+    throw new HttpsError("internal", "Не удалось сохранить украшение")
+  }
+})
+
 exports.addPayment = onCall(
   { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
   async (request) => {
@@ -367,10 +401,10 @@ exports.setStudentGoal = onCall(async (request) => {
 // Student-facing, no request.auth check — same trust model as
 // setStudentGoal above (studentId knowledge). Multi-tenancy Phase 4a.
 exports.updateStudentSettings = onCall(async (request) => {
-  const { studentId, timezone, colorTheme } = request.data ?? {}
+  const { studentId, timezone, colorTheme, language } = request.data ?? {}
 
   try {
-    return await updateStudentSettings(studentId, { timezone, colorTheme })
+    return await updateStudentSettings(studentId, { timezone, colorTheme, language })
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -949,6 +983,19 @@ exports.disconnectGoogleCalendar = onCall(
   },
 )
 
+// The `calendar/embed` widget only supports one flat color for the whole
+// calendar (via &color=, not per-event) — it does accept an arbitrary hex
+// (confirmed: the first pick here, "#f691b2", did render, just too dark/
+// saturated per feedback). These two are soft, light pastels matching the
+// app's own pink/amber teacher themes, so the widget at least isn't a jarring
+// bright block — it still can't reflect per-event subject colors (see
+// systemPatterns.md — that would need a custom-built calendar view, not
+// this widget).
+const CALENDAR_EMBED_COLORS = {
+  pink: "#fce7f3", // light pastel pink
+  amber: "#fef3c7", // light pastel amber
+}
+
 exports.getCalendarEmbedInfo = onCall(
   { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
   async (request) => {
@@ -967,7 +1014,11 @@ exports.getCalendarEmbedInfo = onCall(
         throw new Error("Google userinfo did not return an email")
       }
 
-      const embedUrl = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(data.email)}&ctz=${encodeURIComponent("Europe/Moscow")}`
+      const teacherSnapshot = await db.collection("teachers").doc(request.auth.uid).get()
+      const colorTheme = teacherSnapshot.exists ? teacherSnapshot.data().colorTheme : null
+      const embedColor = CALENDAR_EMBED_COLORS[colorTheme] ?? CALENDAR_EMBED_COLORS.pink
+
+      const embedUrl = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(data.email)}&ctz=${encodeURIComponent("Europe/Moscow")}&color=${encodeURIComponent(embedColor)}`
 
       logger.info("Google Calendar embed URL built", { uid: request.auth.uid })
 

@@ -1,8 +1,10 @@
 import { useRef } from "react"
+import { useTranslation } from "react-i18next"
 
 const LENGTH = 4
 
 export function PinInput({ value, onChange, hasError, disabled, onComplete }) {
+  const { t } = useTranslation("student")
   const inputsRef = useRef([])
 
   const focusInput = (index) => {
@@ -58,7 +60,7 @@ export function PinInput({ value, onChange, hasError, disabled, onComplete }) {
   }
 
   return (
-    <div className="grid grid-cols-4 gap-3" role="group" aria-label="Код доступа из 4 цифр">
+    <div className="grid grid-cols-4 gap-3" role="group" aria-label={t("login.pinGroupAria")}>
       {Array.from({ length: LENGTH }).map((_, i) => (
         <input
           key={i}
@@ -72,7 +74,7 @@ export function PinInput({ value, onChange, hasError, disabled, onComplete }) {
           maxLength={1}
           disabled={disabled}
           value={value[i] ?? ""}
-          aria-label={`Цифра ${i + 1}`}
+          aria-label={t("login.digitAria", { index: i + 1 })}
           onChange={(e) => handleChange(i, e.target.value)}
           onKeyDown={(e) => handleKeyDown(i, e)}
           onPaste={handlePaste}

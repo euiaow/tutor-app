@@ -49,10 +49,13 @@ function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(utcGuess - offset)
 }
 
-// timeZone is the *teacher's* saved timezone (teachers/{uid}.timezone) —
-// the schedule is theirs to set, so "HH:MM" is interpreted as their local
-// wall-clock time, not a fixed Moscow assumption. Falls back to
-// DEFAULT_TIME_ZONE only if the caller has no resolved value at all.
+// `timeZone` (the teacher's *current* saved timezone) is only the fallback
+// for a slot with no `timeZone` of its own (legacy slots saved before
+// per-slot anchoring existed) — a slot's own stamped `timeZone` (set at
+// save time, client-side) always wins, so "16:00 Europe/Moscow" stays
+// pinned to that instant even after the teacher later changes their own
+// timezone preference in Settings. Falls back further to DEFAULT_TIME_ZONE
+// only if the caller has no resolved value at all.
 function getNextLessonDateForSlot(slot, timeZone = DEFAULT_TIME_ZONE) {
   if (!slot || typeof slot.dayOfWeek !== "number" || !slot.time) {
     return null
@@ -63,8 +66,10 @@ function getNextLessonDateForSlot(slot, timeZone = DEFAULT_TIME_ZONE) {
     return null
   }
 
+  const effectiveTimeZone = slot.timeZone || timeZone
+
   const now = new Date()
-  const nowZoned = getZonedParts(now, timeZone)
+  const nowZoned = getZonedParts(now, effectiveTimeZone)
   // A calendar date's day-of-week doesn't depend on time-of-day or zone
   // offset, so reading it off a UTC-midnight Date built from the zoned
   // year/month/day is safe.
@@ -81,7 +86,7 @@ function getNextLessonDateForSlot(slot, timeZone = DEFAULT_TIME_ZONE) {
     candidateDay.getUTCDate(),
     hours,
     minutes,
-    timeZone,
+    effectiveTimeZone,
   )
 
   if (candidate <= now) {
@@ -115,6 +120,10 @@ function normalizeScheduleSlots(data) {
       // care resolve the effective subject via resolveSlotSubject in
       // googleCalendar.js, defaulting to student.subject[0] at read time.
       subject: typeof slot.subject === "string" && slot.subject ? slot.subject : null,
+      // Per-slot timezone anchor — null for slots saved before this field
+      // existed; getNextLessonDateForSlot falls back to a passed-in
+      // timezone (the teacher's current one) for those.
+      timeZone: typeof slot.timeZone === "string" && slot.timeZone ? slot.timeZone : null,
     }))
   }
 

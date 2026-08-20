@@ -4,7 +4,6 @@ const { db } = require("./core/firestore")
 const { getZonedParts, zonedTimeToUtc, normalizeScheduleSlots } = require("./core/schedule")
 const { ensureUpcomingLesson } = require("./core/lessons")
 const { createNotification } = require("./core/notifier")
-const botMessages = require("./core/botMessages")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -111,13 +110,11 @@ async function dailyReminderMidday() {
         continue
       }
 
-      const timeZone = student.timezone || DEFAULT_TIME_ZONE
-      const message = botMessages.REMINDER_MIDDAY_SUMMARY(lessonsInWindow, now, timeZone)
       const { delivered } = await createNotification({
         target: "student",
         studentId,
         type: "lesson_reminder_midday",
-        text: message,
+        params: { lessons: lessonsInWindow, now },
         lessonId: null,
       })
 
@@ -179,14 +176,13 @@ async function dailyReminderPreLesson() {
         }
 
         const assignmentText = lesson.homework?.assignment?.text ?? ""
-        const timeZone = student.timezone || DEFAULT_TIME_ZONE
-        const message = botMessages.buildPreLessonMessage(date, assignmentText, timeZone)
+        const diffMinutes = Math.round((date.getTime() - now.getTime()) / 60000)
 
         const { delivered } = await createNotification({
           target: "student",
           studentId,
           type: "lesson_reminder_preLesson",
-          text: message,
+          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes },
           lessonId: lessonDoc.id,
         })
 
@@ -243,12 +239,13 @@ async function dailyReminderTenMin() {
         }
 
         const assignmentText = lesson.homework?.assignment?.text ?? ""
+        const diffMinutes = Math.max(0, Math.round((date.getTime() - now.getTime()) / 60000))
 
         const { delivered } = await createNotification({
           target: "student",
           studentId,
           type: "lesson_soon",
-          text: (tz) => botMessages.buildTenMinuteReminderMessage(date, assignmentText, tz),
+          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes },
           lessonId: lessonDoc.id,
         })
 

@@ -533,11 +533,19 @@ export function HomeworkLessonDialog({
   return (
     <TeacherDialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="teacher-theme fixed inset-0 z-[100] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
+        {/* This dialog is opened both standalone and from inside an already-
+            open TeacherDialog (Следующие уроки, История уроков, Все
+            прошедшие уроки) — always forceRender + the "elevated" z-tier so
+            its backdrop still shows when nested, same fix as
+            TeacherDialogContent's own `elevated` prop. */}
+        <DialogPrimitive.Backdrop
+          forceRender
+          className="teacher-theme fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0"
+        />
         <DialogPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}
-          className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-[101] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
+          className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
         >
           <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">

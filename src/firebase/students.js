@@ -52,6 +52,11 @@ export function mapStudentDoc(id, data) {
     examDate: data.examDate ?? null,
     timezone: data.timezone ?? null,
     colorTheme: data.colorTheme ?? null,
+    language: data.language ?? null,
+    // Gamification (sticker cases) — added proactively here, not
+    // discovered as a gap later, per the "mapStudentDoc's explicit field
+    // list is the real gate" lesson (see systemPatterns.md).
+    coinsBalance: data.coinsBalance ?? 0,
   }
 }
 
@@ -152,8 +157,8 @@ export async function setStudentGoal(studentId, programId, targetScore, examDate
 
 // Student-facing, no request.auth — same trust model (studentId knowledge)
 // as setStudentGoal above. Multi-tenancy Phase 4a.
-export async function updateStudentSettings(studentId, { timezone, colorTheme }) {
-  await updateStudentSettingsCallable({ studentId, timezone, colorTheme })
+export async function updateStudentSettings(studentId, { timezone, colorTheme, language }) {
+  await updateStudentSettingsCallable({ studentId, timezone, colorTheme, language })
 }
 
 // Backend does the real work (Google Calendar event, lessons subcollection
@@ -180,6 +185,16 @@ export async function getStudentTelegramChatId(studentId) {
   const ref = doc(db, STUDENTS_COLLECTION, studentId)
   const snapshot = await getDoc(ref)
   return snapshot.exists() ? (snapshot.data().telegramChatId ?? null) : null
+}
+
+// Read before the student is authorized (PIN screen) so the login screen
+// itself can render in the student's saved language, same trust model as
+// getStudentTelegramChatId above (a plain unauthenticated read of the
+// student's own doc).
+export async function getStudentLanguage(studentId) {
+  const ref = doc(db, STUDENTS_COLLECTION, studentId)
+  const snapshot = await getDoc(ref)
+  return snapshot.exists() ? (snapshot.data().language ?? null) : null
 }
 
 export async function verifyStudentAccessCode(studentId, code) {

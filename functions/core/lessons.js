@@ -4,7 +4,7 @@ const { getStorage } = require("firebase-admin/storage")
 const { HttpsError } = require("firebase-functions/v2/https")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
-const { normalizeScheduleSlots, getUpcomingLessonDates, DEFAULT_TIME_ZONE } = require("./schedule")
+const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
 const botMessages = require("./botMessages")
 const { rescheduleLessonEvent, deleteLessonEvent, createExtraLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
@@ -15,16 +15,6 @@ const LESSONS_SUBCOLLECTION = "lessons"
 
 function lessonsRef(studentId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION)
-}
-
-// The schedule is the teacher's own — "HH:MM" is interpreted in their
-// saved timezone (see core/schedule.js's full-rewrite note), so every
-// caller computing an actual occurrence date from scheduleSlots needs this
-// first.
-async function getTeacherTimeZone(teacherId) {
-  if (!teacherId) return DEFAULT_TIME_ZONE
-  const snapshot = await db.collection("teachers").doc(teacherId).get()
-  return snapshot.exists ? snapshot.data().timezone || DEFAULT_TIME_ZONE : DEFAULT_TIME_ZONE
 }
 
 function emptyHomework() {
@@ -103,8 +93,16 @@ async function ensureUpcomingLesson(studentId) {
   )
 
   const teacherId = studentSnapshot.data().teacherId ?? null
-  const teacherTimeZone = await getTeacherTimeZone(teacherId)
-  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length, teacherTimeZone)
+  // No teacher-profile-timezone fallback passed here on purpose — a slot's
+  // own stamped `timeZone` (set client-side at save time) always wins
+  // inside getNextLessonDateForSlot, and a legacy slot with none falls back
+  // to DEFAULT_TIME_ZONE (Europe/Moscow, the zone every schedule was
+  // implicitly set in before per-slot anchoring existed) rather than
+  // whatever the teacher's *current* Settings preference happens to be —
+  // otherwise a legacy "16:00" would silently mean a different real instant
+  // every time the teacher changes their own display timezone, which is
+  // exactly the bug this was meant to fix.
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
 
   for (const occurrence of occurrences) {
     if (idsBySlot.has(occurrence.slotIndex)) {
@@ -190,8 +188,9 @@ async function syncUpcomingLessonToSchedule(studentId) {
   const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").get()
   const bySlot = bucketUpcomingBySlot(existingUpcoming)
   const teacherId = studentSnapshot.data().teacherId ?? null
-  const teacherTimeZone = await getTeacherTimeZone(teacherId)
-  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length, teacherTimeZone)
+  // See the identical comment in ensureUpcomingLesson above — no
+  // teacher-profile-timezone fallback on purpose.
+  const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
   const idsBySlot = new Map()
 
   for (const occurrence of occurrences) {
@@ -283,7 +282,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "assignment_added",
-      text: (tz) => botMessages.ASSIGNMENT_ADDED(lessonDate, assignmentText, tz),
+      params: { lessonDate, assignmentText },
       lessonId,
     })
   } else if (textChanged) {
@@ -291,7 +290,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "assignment_updated",
-      text: (tz) => botMessages.ASSIGNMENT_UPDATED(lessonDate, assignmentText, tz),
+      params: { lessonDate, assignmentText },
       lessonId,
     })
   }
@@ -301,11 +300,7 @@ async function updateHomeworkAssignment(studentId, lessonId, { text, files }) {
       target: "student",
       studentId,
       type: "material_added",
-      text: (tz) => botMessages.ASSIGNMENT_FILES_ADDED(
-        lessonDate,
-        addedFiles.map((file) => file.title),
-        tz,
-      ),
+      params: { lessonDate, fileTitles: addedFiles.map((file) => file.title) },
       lessonId,
     })
   }
@@ -344,7 +339,7 @@ async function addLessonMaterial(studentId, lessonId, material) {
     target: "student",
     studentId,
     type: "material_added",
-    text: (tz) => botMessages.MATERIAL_ADDED(lessonDate, material.title, tz),
+    params: { lessonDate, materialTitle: material.title },
     lessonId,
   })
 }
@@ -411,7 +406,7 @@ async function createExtraLesson(studentId, date) {
     target: "student",
     studentId,
     type: "extra_lesson_assigned",
-    text: (tz) => botMessages.EXTRA_LESSON_ASSIGNED(date, tz),
+    params: { lessonDate: date },
     lessonId: lessonRef.id,
     teacherId,
   })
@@ -597,7 +592,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
       target: "student",
       studentId,
       type: "reschedule_proposed_to_student",
-      text: (tz) => botMessages.RESCHEDULE_PROPOSED_TO_STUDENT(oldDate, proposedDate, tz),
+      params: { oldDate, newDate: proposedDate },
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -713,7 +708,7 @@ async function confirmReschedule(studentId, lessonId, confirmedBy) {
   // swallow the other's already-in-flight send, and log-only rather than
   // throw since the reschedule itself (the write above) already succeeded.
   const [studentNotifResult, teacherNotifResult] = await Promise.allSettled([
-    createNotification({ target: "student", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId, teacherId }),
+    createNotification({ target: "student", studentId, type: "reschedule_confirmed", params: { newDate }, lessonId, teacherId }),
     createNotification({ target: "teacher", studentId, type: "reschedule_confirmed", text: buildMessage, lessonId, teacherId }),
   ])
   if (studentNotifResult.status === "rejected") {
@@ -779,7 +774,7 @@ async function cancelReschedule(studentId, lessonId) {
   if (initiator === "teacher") {
     await createNotification({ target: "teacher", studentId, type: "reschedule_rejected", text: buildMessage, lessonId })
   } else if (initiator === "student") {
-    await createNotification({ target: "student", studentId, type: "reschedule_rejected", text: buildMessage, lessonId })
+    await createNotification({ target: "student", studentId, type: "reschedule_rejected", params: { originalDate }, lessonId })
   }
 }
 
@@ -829,7 +824,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
       target: "student",
       studentId,
       type: "cancellation_proposed_to_student",
-      text: (tz) => botMessages.CANCELLATION_PROPOSED_TO_STUDENT(lessonDate, tz),
+      params: { lessonDate },
       lessonId,
       telegramReplyMarkup: keyboards.telegram,
       vkKeyboard: keyboards.vk,
@@ -938,7 +933,7 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
   const buildMessage = (tz) => botMessages.CANCELLATION_CONFIRMED(lessonDate, tz)
 
   const [studentNotifResult, teacherNotifResult] = await Promise.allSettled([
-    createNotification({ target: "student", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId, teacherId }),
+    createNotification({ target: "student", studentId, type: "cancellation_confirmed", params: { lessonDate }, lessonId, teacherId }),
     createNotification({ target: "teacher", studentId, type: "cancellation_confirmed", text: buildMessage, lessonId, teacherId }),
   ])
   if (studentNotifResult.status === "rejected") {
@@ -1000,7 +995,7 @@ async function cancelLessonDirectly(studentId, lessonId) {
     target: "student",
     studentId,
     type: "lesson_cancelled_by_teacher",
-    text: (tz) => botMessages.LESSON_CANCELLED_BY_TEACHER(lessonDate, tz),
+    params: { lessonDate },
     lessonId,
     teacherId,
   })
@@ -1039,7 +1034,7 @@ async function rejectCancellation(studentId, lessonId) {
   if (initiator === "teacher") {
     await createNotification({ target: "teacher", studentId, type: "cancellation_rejected", text: message, lessonId })
   } else if (initiator === "student") {
-    await createNotification({ target: "student", studentId, type: "cancellation_rejected", text: message, lessonId })
+    await createNotification({ target: "student", studentId, type: "cancellation_rejected", params: {}, lessonId })
   }
 }
 
@@ -1135,7 +1130,7 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
       target: "student",
       studentId,
       type: "homework_received",
-      text: botMessages.HOMEWORK_RECEIVED(),
+      params: {},
       lessonId,
       teacherId,
     }),

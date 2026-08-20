@@ -1,0 +1,223 @@
+{
+  "common": {
+    "confirm": "Подтвердить",
+    "reject": "Отклонить",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "saving": "Сохраняем...",
+    "back": "Назад",
+    "loading": "Загрузка...",
+    "noTopic": "Без темы",
+    "showAll": "Показать все",
+    "collapse": "Свернуть",
+    "expand": "Подробнее"
+  },
+  "header": {
+    "welcome": "Добро пожаловать",
+    "greeting": "Привет, {{name}}! ✌️",
+    "settingsAria": "Настройки"
+  },
+  "page": {
+    "title": "Моя панель",
+    "loadingStudent": "Загрузка данных ученика...",
+    "loadStudentError": "Не удалось загрузить данные ученика",
+    "studentNotFound": "Ученик не найден",
+    "checkingLogin": "Проверка входа..."
+  },
+  "nextLesson": {
+    "label": "Следующий урок",
+    "cancelled": "Урок отменён",
+    "noSchedule": "Преподаватель ещё не добавил расписание",
+    "allLessonsShort": "Все уроки",
+    "allLessonsFull": "Посмотреть все уроки",
+    "teacherProposesReschedule": "Репетитор предлагает перенос",
+    "rescheduleRequestSent": "Запрос на перенос отправлен",
+    "rescheduleConfirmed": "Перенос подтверждён",
+    "confirmCancellation": "Подтвердить отмену",
+    "teacherProposesCancellation": "Репетитор предлагает отменить этот урок",
+    "cancellationRequestSent": "Запрос на отмену отправлен",
+    "videoCall": "Видеовстреча",
+    "videoCallActive": "Ссылка активна",
+    "videoCallAvailableSoon": "Станет доступна за 3 минуты до начала",
+    "videoCallJoin": "Подключиться",
+    "assignment": "Задание",
+    "assignmentEmpty": "Задание пока не добавлено",
+    "myHomework": "Моя домашка",
+    "homeworkNotSubmitted": "Вы ещё не отправили домашнее задание",
+    "homeworkReceived": "Домашнее задание получено ✓",
+    "fileLabel": "Файл {{index}}",
+    "homeworkUploadError": "Не удалось загрузить файл",
+    "uploading": "Загрузка...",
+    "attachHomework": "Прикрепить домашку",
+    "orSendViaBot": "Или отправить в бот в ТГ/ВК",
+    "rescheduleButton": "Перенести урок",
+    "cancelButton": "Отменить урок"
+  },
+  "upcomingRow": {
+    "pendingStudent": "Ожидает вашего ответа",
+    "rescheduleProposed": "Перенос предложен",
+    "rescheduleConfirmed": "Перенос подтверждён",
+    "pendingStudentCancellation": "Ожидает вашего ответа (отмена)",
+    "cancellationProposed": "Отмена предложена"
+  },
+  "allUpcomingDialog": {
+    "title": "Мои уроки",
+    "description": "Все предстоящие занятия по расписанию",
+    "empty": "Пока нет запланированных уроков"
+  },
+  "rescheduleDialog": {
+    "title": "Предложить перенос",
+    "description": "Выберите новую дату и время урока",
+    "submitting": "Отправляем...",
+    "submit": "Предложить перенос",
+    "error": "Не удалось отправить запрос на перенос"
+  },
+  "cancelDialog": {
+    "title": "Отменить урок",
+    "descriptionWithDate": "Вы уверены, что хотите запросить отмену урока {{date}}?",
+    "descriptionNoDate": "Вы уверены, что хотите запросить отмену урока?",
+    "confirmButton": "Да, отменить",
+    "error": "Не удалось отправить запрос на отмену"
+  },
+  "goals": {
+    "myGoal": "Моя цель",
+    "myGoals": "Мои цели",
+    "noSubject": "Без предмета",
+    "targetLevel": "Целевой уровень",
+    "targetGrade": "Целевая оценка",
+    "targetScoreUnit": "Целевой {{unit}}",
+    "unitFallback": "балл",
+    "examDate": "Дата экзамена",
+    "noGoalHint": "Укажи цель, чтобы видеть свой прогресс к экзамену",
+    "fillIn": "Заполнить",
+    "editGoalAria": "Изменить цель",
+    "saveError": "Не удалось сохранить цель"
+  },
+  "examRadar": {
+    "status": {
+      "green": "Идёшь по плану",
+      "yellow": "Немного отстаёшь",
+      "red": "Критическое отставание",
+      "done": "Цель достигнута 🎉",
+      "past": "Дата экзамена уже прошла",
+      "final_week": "Последняя неделя — темп больше не считаем, просто закрывай оставшееся",
+      "no_data": "Пока нет данных"
+    },
+    "examLabel": "До {{examType}} по {{subject}}",
+    "staleWarning": "Прогресс не обновлялся {{days}} {{daysWord}} — попроси репетитора отметить пройденное",
+    "goalWasPrefix": "{{goalLabel}} была:",
+    "progressLine": "Тем/прототипов пройдено {{completed}} из {{total}} нужных",
+    "paceNow": "Темп сейчас",
+    "paceNeeded": "Нужно",
+    "perWeek": "/нед",
+    "topicsFor": "Темы для {{goal}}",
+    "prototypesFor": "Прототипы для {{goal}}"
+  },
+  "progress": {
+    "title": "Прогресс подготовки",
+    "titleWithSubject": "Прогресс подготовки — {{subject}}",
+    "topics": "Темы",
+    "prototypes": "Прототипы",
+    "prototypeTypes": "Типы задач",
+    "needsReview": "К повторению: ",
+    "andMore": " и ещё {{count}}",
+    "coveredThisWeek": "На этой неделе пройдено {{count}} {{word}}"
+  },
+  "curriculumGroups": {
+    "covered": "Пройдено · {{count}}",
+    "remaining": "Осталось · {{count}}",
+    "allCovered": "Все темы пройдены 🎉"
+  },
+  "notifications": {
+    "title": "Уведомления",
+    "empty": "Нет новых уведомлений",
+    "all": "Все",
+    "allDialogTitle": "Все уведомления",
+    "allDialogDescription": "Последние {{count}} уведомлений",
+    "confirmed": "Подтверждено",
+    "rejected": "Отклонено",
+    "alreadyHandled": "Уже обработано"
+  },
+  "materials": {
+    "title": "Материалы к урокам",
+    "loading": "Загрузка материалов...",
+    "empty": "Материалов пока нет",
+    "allDialogTitle": "Все материалы",
+    "allDialogDescription": "Файлы, прикреплённые к урокам"
+  },
+  "history": {
+    "title": "История уроков",
+    "loading": "Загрузка уроков...",
+    "loadError": "Не удалось загрузить историю уроков",
+    "empty": "Уроки пока не добавлены",
+    "showAll": "Показать всю историю",
+    "dialogTitle": "История уроков",
+    "cancelled": "Отменён",
+    "homeworkDone": "Домашка сделана",
+    "homeworkNotDone": "Домашка не сделана",
+    "attendance": {
+      "on_time": "Вовремя",
+      "late": "Опоздал",
+      "absent": "Не пришёл"
+    },
+    "rating": {
+      "excellent": "Отлично",
+      "good": "Хорошо",
+      "needs_work": "Старайся лучше"
+    }
+  },
+  "settings": {
+    "title": "Настройки",
+    "description": "Часовой пояс и цветовая тема кабинета",
+    "timezone": "Часовой пояс",
+    "language": "Язык",
+    "colorTheme": "Цветовая тема",
+    "saveError": "Не удалось сохранить настройки",
+    "colorThemeOptions": {
+      "pink": "Розовая (учительская)",
+      "amber": "Янтарная (ученическая)"
+    }
+  },
+  "login": {
+    "pageTitle": "Вход",
+    "heading": "Вход в ученический портал",
+    "subheading": "Введите персональный код доступа, чтобы продолжить",
+    "codeAccepted": "Код принят!",
+    "welcomeBack": "Добро пожаловать обратно.",
+    "invalidCode": "Неверный код доступа",
+    "verifyError": "Не удалось проверить код. Попробуйте ещё раз",
+    "verifying": "Проверяем...",
+    "submit": "Войти",
+    "footerHint": "Код доступа можно узнать у преподавателя.",
+    "pinGroupAria": "Код доступа из 4 цифр",
+    "digitAria": "Цифра {{index}}"
+  },
+  "gamification": {
+    "sectionTitle": "Кейсы и стикеры",
+    "noSets": "Кейсы пока не добавлены",
+    "openButton": "Открыть · {{price}} 🪙",
+    "openError": "Не удалось открыть кейс",
+    "notEnoughCoins": "Не хватает монет",
+    "collectionTitle": "Коллекция ({{count}})",
+    "collectionEmpty": "Пока пусто — откройте кейс, чтобы получить первый стикер",
+    "collectionHint": "Нажмите на стикер, затем на одну из 3 зон на странице, чтобы разместить его там",
+    "rarity": {
+      "common": "Обычный",
+      "rare": "Редкий",
+      "epic": "Эпический",
+      "legendary": "Легендарный"
+    },
+    "zoneRemoveTitle": "{{name}} — нажмите, чтобы убрать",
+    "zonePlaceTitle": "Нажмите, чтобы разместить стикер",
+    "showcaseTitle": "Витрина стикеров",
+    "showcaseHint": "Разместите здесь стикер из коллекции",
+    "caseOpening": {
+      "dialogTitle": "Открытие кейса",
+      "spinning": "Крутим ленту...",
+      "revealed": "Результат",
+      "duplicate": "Уже был в коллекции — конвертирован в {{coins}} 🪙",
+      "newItem": "Добавлен в коллекцию",
+      "continue": "Продолжить"
+    }
+  }
+}

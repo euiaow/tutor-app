@@ -159,6 +159,7 @@ async function deleteBotSessionsForStudent(studentId, student) {
 }
 
 const VALID_COLOR_THEMES = new Set(["pink", "amber"])
+const VALID_LANGUAGES = new Set(["ru", "en"])
 
 // Generic IANA-zone validity check (Intl throws RangeError for a bogus
 // zone) rather than checking against a fixed whitelist — the frontend's
@@ -184,8 +185,12 @@ function isValidTimeZone(timeZone) {
 // Multi-tenancy Phase 4a: the two per-user display preferences (see
 // teachers/{uid}'s identically-named fields, written directly by the
 // teacher via updateDoc rather than a callable — see App.jsx/
-// firebase/teachers.js).
-async function updateStudentSettings(studentId, { timezone, colorTheme } = {}) {
+// firebase/teachers.js). `language` added later (student dashboard i18n) —
+// optional/nullable on purpose: StudentSettingsDialog always sends the
+// current value either way, but the field predates this callable (was set
+// by hand in Firestore during the i18n rollout) so `undefined`/missing is
+// still tolerated rather than forced to "ru".
+async function updateStudentSettings(studentId, { timezone, colorTheme, language } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
@@ -195,6 +200,9 @@ async function updateStudentSettings(studentId, { timezone, colorTheme } = {}) {
   if (!VALID_COLOR_THEMES.has(colorTheme)) {
     throw new HttpsError("invalid-argument", "Некорректная цветовая тема")
   }
+  if (language != null && !VALID_LANGUAGES.has(language)) {
+    throw new HttpsError("invalid-argument", "Некорректный язык")
+  }
 
   const studentRef = db.collection(STUDENTS_COLLECTION).doc(studentId)
   const studentSnapshot = await studentRef.get()
@@ -202,9 +210,13 @@ async function updateStudentSettings(studentId, { timezone, colorTheme } = {}) {
     throw new HttpsError("not-found", "Ученик не найден")
   }
 
-  await studentRef.update({ timezone, colorTheme })
+  const update = { timezone, colorTheme }
+  if (language != null) {
+    update.language = language
+  }
+  await studentRef.update(update)
 
-  logger.info("updateStudentSettings: settings updated", { studentId, timezone, colorTheme })
+  logger.info("updateStudentSettings: settings updated", { studentId, timezone, colorTheme, language })
 
   return { success: true }
 }

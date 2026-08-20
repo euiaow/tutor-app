@@ -12,6 +12,7 @@ import {
   TeacherDialogTitle,
   TeacherModalFooter,
   TeacherSaveBtn,
+  TeacherSelect,
   Title,
   teacherInputCls,
 } from "@/components/teacher/theme-ui"
@@ -344,19 +345,15 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
           </Field>
 
           <Field label="Тип экзамена">
-            <select
+            <TeacherSelect
               value={examTypeId}
-              onChange={(e) => setExamTypeId(e.target.value)}
+              onChange={setExamTypeId}
               disabled={saving}
-              className={teacherInputCls}
-            >
-              {examTypes.map((type) => (
-                <option key={type.id} value={type.id}>
-                  {type.name}
-                </option>
-              ))}
-              <option value={NEW_EXAM_TYPE_VALUE}>+ Создать новый тип экзамена</option>
-            </select>
+              options={[
+                ...examTypes.map((type) => ({ value: type.id, label: type.name })),
+                { value: NEW_EXAM_TYPE_VALUE, label: "+ Создать новый тип экзамена" },
+              ]}
+            />
           </Field>
 
           {isCreatingNewType ? (

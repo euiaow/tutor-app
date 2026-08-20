@@ -6,7 +6,18 @@ import { useState } from "react"
 // topics, covered/remaining prototypes), so the show/hide logic lives in
 // one place instead of four near-identical copies. Expands in place, not a
 // modal — these lists already live inside an already-expanded block.
-export function TruncatedList({ items, limit = 3, renderItem, emptyLabel = null, className = "flex flex-col gap-1" }) {
+// `collapseLabel`/`showAllLabel` default to the original hardcoded Russian
+// strings so the teacher-side caller (student-row.jsx) is unaffected;
+// curriculum-item-groups.jsx (student-only) passes translated ones instead.
+export function TruncatedList({
+  items,
+  limit = 3,
+  renderItem,
+  emptyLabel = null,
+  className = "flex flex-col gap-1",
+  collapseLabel = "Свернуть",
+  showAllLabel = (count) => `Показать все (${count})`,
+}) {
   const [expanded, setExpanded] = useState(false)
 
   if (items.length === 0) {
@@ -26,7 +37,7 @@ export function TruncatedList({ items, limit = 3, renderItem, emptyLabel = null,
           onClick={() => setExpanded((value) => !value)}
           className="mt-1 self-start text-sm font-semibold text-primary hover:underline"
         >
-          {expanded ? "Свернуть" : `Показать все (${items.length})`}
+          {expanded ? collapseLabel : showAllLabel(items.length)}
         </button>
       ) : null}
     </>
