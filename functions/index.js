@@ -1034,7 +1034,19 @@ function isSlotEqual(a, b) {
   return (
     a.dayOfWeek === b.dayOfWeek &&
     a.time === b.time &&
-    (a.durationMinutes ?? 60) === (b.durationMinutes ?? 60)
+    (a.durationMinutes ?? 60) === (b.durationMinutes ?? 60) &&
+    // A timeZone-only change (e.g. re-saving a legacy slot after the
+    // teacher's own timezone preference changed, or after the per-slot
+    // anchor feature was added) must NOT be treated as "no change" — same
+    // dayOfWeek/time/duration but a different anchor means a genuinely
+    // different real-world instant, and syncUpcomingLessonToSchedule needs
+    // to actually run to recompute the already-created upcoming lesson's
+    // `date`. Found via a real timezone bug report: a student's slots had
+    // no timeZone stamp at all (fell back to getNextLessonDateForSlot's
+    // Europe/Moscow default), and even after intending to fix it, this
+    // comparison silently skipped the recompute since day/time/duration
+    // alone hadn't changed.
+    (a.timeZone ?? null) === (b.timeZone ?? null)
   )
 }
 
