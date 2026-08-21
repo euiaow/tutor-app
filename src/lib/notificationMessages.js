@@ -125,6 +125,26 @@ const BUILDERS = {
   cancellation_rejected: (_p, lang) =>
     lang === "en" ? "↩️ Cancellation declined. The lesson still stands." : "↩️ Отмена урока отклонена. Урок остаётся в силе.",
 
+  group_lesson_rescheduled: (p, lang) => {
+    const oldDate = formatDateTime(p.oldDate, p.timeZone, lang)
+    const newDate = formatDateTime(p.newDate, p.timeZone, lang)
+    return lang === "en"
+      ? `📅 Group lesson «${p.groupName}» moved from ${oldDate} to ${newDate}`
+      : `📅 Групповое занятие «${p.groupName}» перенесено с ${oldDate} на ${newDate}`
+  },
+
+  group_lesson_cancelled: (p, lang) => {
+    const date = formatDateTime(p.lessonDate, p.timeZone, lang)
+    return lang === "en"
+      ? `❌ Group lesson «${p.groupName}» on ${date} was cancelled by the teacher.`
+      : `❌ Групповое занятие «${p.groupName}» ${date} отменено репетитором.`
+  },
+
+  group_lesson_completed: (p, lang) =>
+    lang === "en"
+      ? `✅ Group lesson «${p.groupName}» is complete. Check your results.`
+      : `✅ Групповое занятие «${p.groupName}» завершено. Посмотри свои результаты.`,
+
   homework_received: (_p, lang) =>
     lang === "en" ? "✅ Homework received! The teacher will see it before the lesson." : "✅ Домашка получена! Репетитор увидит её перед уроком.",
 
@@ -144,7 +164,7 @@ const BUILDERS = {
     const lessons = p.lessons ?? []
 
     if (lessons.length === 1) {
-      const { date, assignmentText } = lessons[0]
+      const { date, assignmentText, groupName } = lessons[0]
       const label = dayLabel(toJsDate(date), now, p.timeZone, lang).toLowerCase()
       const time = formatDateTime(date, p.timeZone, lang).split(", ")[1]
       const tail = assignmentText
@@ -154,9 +174,16 @@ const BUILDERS = {
         : lang === "en"
           ? "Check whether you have homework — if so, send a photo here in the chat."
           : "Проверь, есть ли домашнее задание — если есть, пришли фото сюда в чат."
+      const subject = groupName
+        ? lang === "en"
+          ? `a group lesson («${groupName}»)`
+          : `групповое занятие «${groupName}»`
+        : lang === "en"
+          ? "a lesson"
+          : "урок"
       return lang === "en"
-        ? `🔔 Reminder: you have a lesson ${label} at ${time}!\n${tail}`
-        : `🔔 Напоминаем: ${label} в ${time} у тебя урок!\n${tail}`
+        ? `🔔 Reminder: you have ${subject} ${label} at ${time}!\n${tail}`
+        : `🔔 Напоминаем: ${label} в ${time} у тебя ${subject}!\n${tail}`
     }
 
     const lines = lessons.map(({ date, assignmentText }) => {
@@ -173,7 +200,14 @@ const BUILDERS = {
   lesson_reminder_preLesson: (p, lang) => {
     const timeStr = formatDurationFromNow(p.diffMinutes, lang)
     const lessonTimeFormatted = formatDateTime(p.lessonDate, p.timeZone, lang).split(", ")[1]
-    const head = lang === "en" ? `Lesson ${timeStr} (at ${lessonTimeFormatted})! 🕐\n` : `Урок ${timeStr} (в ${lessonTimeFormatted})! 🕐\n`
+    const subject = p.groupName
+      ? lang === "en"
+        ? `Group lesson «${p.groupName}»`
+        : `Групповое занятие «${p.groupName}»`
+      : lang === "en"
+        ? "Lesson"
+        : "Урок"
+    const head = lang === "en" ? `${subject} ${timeStr} (at ${lessonTimeFormatted})! 🕐\n` : `${subject} ${timeStr} (в ${lessonTimeFormatted})! 🕐\n`
     const tail = p.homeworkText
       ? lang === "en"
         ? `Don't forget your homework: ${p.homeworkText}\nSend a photo here if you haven't yet.`
@@ -186,8 +220,17 @@ const BUILDERS = {
 
   lesson_soon: (p, lang) => {
     const lessonTimeFormatted = formatDateTime(p.lessonDate, p.timeZone, lang).split(", ")[1]
+    const subject = p.groupName
+      ? lang === "en"
+        ? `Group lesson «${p.groupName}»`
+        : `Групповое занятие «${p.groupName}»`
+      : lang === "en"
+        ? "Lesson"
+        : "Урок"
     const head =
-      lang === "en" ? `🔔 Lesson in ${p.diffMinutes} minutes! (at ${lessonTimeFormatted})` : `🔔 Урок через ${p.diffMinutes} минут! (в ${lessonTimeFormatted})`
+      lang === "en"
+        ? `🔔 ${subject} in ${p.diffMinutes} minutes! (at ${lessonTimeFormatted})`
+        : `🔔 ${subject} через ${p.diffMinutes} минут! (в ${lessonTimeFormatted})`
     const tail = p.homeworkText
       ? lang === "en"
         ? "\nDon't forget your homework if you haven't sent it yet."

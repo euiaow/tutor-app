@@ -46,13 +46,12 @@ import {
   reassignProgram,
   deleteProgram,
 } from "@/firebase/curriculum"
-import { DAY_OPTIONS, formatLessonDateTime, formatNextLessonDate, getNextLessonDateForSlot } from "@/lib/schedule"
+import { formatLessonDateTime, formatNextLessonDate, getNextLessonDateForSlot } from "@/lib/schedule"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
 import { SubjectPicker } from "@/components/teacher/subject-picker"
 import { getSubjectColorClass } from "@/lib/subjects"
-
-const MAX_SCHEDULE_SLOTS = 7
+import { ScheduleSlotsEditor } from "@/components/teacher/schedule-slots-editor"
 
 function defaultSlot(subjects) {
   return { dayOfWeek: 1, time: "16:00", durationMinutes: 60, subject: subjects?.[0] ?? null }
@@ -449,18 +448,6 @@ function StudentEditModal({ student, open, onOpenChange }) {
     return unsubscribe
   }, [open, student.id])
 
-  function updateSlot(index, field, value) {
-    setSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, [field]: value } : slot)))
-  }
-
-  function addSlot() {
-    setSlots((prev) => (prev.length >= MAX_SCHEDULE_SLOTS ? prev : [...prev, defaultSlot(subject)]))
-  }
-
-  function removeSlot(index) {
-    setSlots((prev) => prev.filter((_, i) => i !== index))
-  }
-
   function toggleSubject(value) {
     setSubject((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]))
   }
@@ -506,57 +493,23 @@ function StudentEditModal({ student, open, onOpenChange }) {
               <CalendarIcon className="size-4 text-rose-deep" aria-hidden="true" />
               Расписание
             </p>
-            <div className="mt-3 space-y-2">
-              {slots.map((slot, index) => (
-                <div key={index} className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={slot.dayOfWeek}
-                      onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))}
-                      disabled={saving}
-                      className={teacherInputCls}
-                    >
-                      {DAY_OPTIONS.map((day) => (
-                        <option key={day.value} value={day.value}>
-                          {day.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="time"
-                      value={slot.time}
-                      onChange={(e) => updateSlot(index, "time", e.target.value)}
-                      disabled={saving}
-                      className={`${teacherInputCls} max-w-36`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeSlot(index)}
-                      disabled={saving}
-                      aria-label="Удалить слот"
-                      className="glass-tile grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-destructive disabled:opacity-50"
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                  {subject.length >= 2 ? (
+            <div className="mt-3">
+              <ScheduleSlotsEditor
+                slots={slots}
+                onChange={setSlots}
+                disabled={saving}
+                makeDefaultSlot={() => defaultSlot(subject)}
+                renderExtra={(slot, index, updateSlot) =>
+                  subject.length >= 2 ? (
                     <SlotSubjectTags
                       subjects={subject}
                       value={slot.subject ?? subject[0]}
                       onChange={(name) => updateSlot(index, "subject", name)}
                       disabled={saving}
                     />
-                  ) : null}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addSlot}
-                disabled={saving || slots.length >= MAX_SCHEDULE_SLOTS}
-                className="w-full rounded-full border border-dashed border-glass-border px-4 py-2.5 text-sm font-semibold text-muted-foreground transition hover:text-rose-deep disabled:opacity-50"
-              >
-                + Добавить слот
-              </button>
+                  ) : null
+                }
+              />
             </div>
           </div>
 

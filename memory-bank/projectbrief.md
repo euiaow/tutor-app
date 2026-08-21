@@ -54,7 +54,16 @@ integrations and Google Calendar sync.
   are both free-form per-teacher config now (`teachers/{uid}/examTypes`,
   `teachers/{uid}/customSubjects`), not a fixed enum/list — see
   `systemPatterns.md`.
-- Russian-language UI and error strings throughout.
+- **Student dashboard is bilingual (ru/en) as of session 16 — the
+  teacher panel is not and has no i18n dependency at all, by deliberate
+  scope.** A student's own `students/{id}.language` (editable via their
+  own Settings, default "ru") drives the whole page — UI text, dates,
+  typical subject/exam-unit names, and both the in-app notification feed
+  and the same event's Telegram/VK bot message. A teacher's own free-form
+  text (a custom subject, an assignment body, a material title) is never
+  auto-translated. See `systemPatterns.md` for the isolation mechanism.
+- Russian-language UI and error strings throughout the **teacher** panel;
+  the student dashboard is Russian-or-English per the point above.
 
 ## Source of truth
 

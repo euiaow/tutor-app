@@ -21,6 +21,7 @@ const {
 } = require("./core/googleAuth")
 const {
   syncScheduleSlots,
+  syncGroupScheduleSlots,
   deleteLessonEvent,
 } = require("./core/googleCalendar")
 const { normalizeScheduleSlots } = require("./core/schedule")
@@ -50,6 +51,19 @@ const { createTeacherConnectToken } = require("./core/teacherConnect")
 const { deleteStudent, updateStudentSettings } = require("./core/students")
 const { addPayment } = require("./core/finance")
 const { openCase: openCaseCore, saveDecoration: saveDecorationCore } = require("./core/gamification")
+const {
+  createGroup: createGroupCore,
+  updateGroup: updateGroupCore,
+  deleteGroup: deleteGroupCore,
+  groupsCollection,
+  ensureUpcomingGroupLessons,
+  proposeGroupReschedule: proposeGroupRescheduleCore,
+  cancelGroupLesson: cancelGroupLessonCore,
+  completeGroupLesson: completeGroupLessonCore,
+  assignGroupProgram: assignGroupProgramCore,
+  reassignGroupProgram: reassignGroupProgramCore,
+  deleteGroupProgram: deleteGroupProgramCore,
+} = require("./core/groups")
 const {
   assignCurriculumTemplate,
   reassignProgram,
@@ -287,6 +301,181 @@ exports.saveDecoration = onCall(async (request) => {
 
     logger.error("Failed to save decoration", error)
     throw new HttpsError("internal", "Не удалось сохранить украшение")
+  }
+})
+
+// Group lessons Phase 1 — CRUD only, teacher-only (unlike the student-
+// facing callables above, these always require request.auth; there is no
+// student-side equivalent, groups are managed entirely from the teacher
+// panel).
+exports.createGroup = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { name, subject, memberStudentIds, scheduleSlots } = request.data ?? {}
+
+  try {
+    return await createGroupCore(request.auth.uid, { name, subject, memberStudentIds, scheduleSlots })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to create group", error)
+    throw new HttpsError("internal", "Не удалось создать группу")
+  }
+})
+
+exports.updateGroup = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, name, subject, memberStudentIds, scheduleSlots } = request.data ?? {}
+
+  try {
+    return await updateGroupCore(request.auth.uid, groupId, { name, subject, memberStudentIds, scheduleSlots })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to update group", error)
+    throw new HttpsError("internal", "Не удалось обновить группу")
+  }
+})
+
+exports.deleteGroup = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId } = request.data ?? {}
+
+  try {
+    return await deleteGroupCore(request.auth.uid, groupId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to delete group", error)
+    throw new HttpsError("internal", "Не удалось удалить группу")
+  }
+})
+
+// These three transitively call createNotification (via core/groups.js) —
+// secrets MUST be declared here or bot delivery silently no-ops even
+// though the code looks completely correct (see systemPatterns.md's own
+// documented gotcha, hit twice already for createExtraLesson/
+// completeLesson before this).
+exports.proposeGroupReschedule = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, lessonId, newDate } = request.data ?? {}
+  const parsedDate = newDate ? new Date(newDate) : null
+
+  try {
+    return await proposeGroupRescheduleCore(request.auth.uid, groupId, lessonId, parsedDate)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to reschedule group lesson", error)
+    throw new HttpsError("internal", "Не удалось перенести занятие")
+  }
+})
+
+exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, lessonId } = request.data ?? {}
+
+  try {
+    return await cancelGroupLessonCore(request.auth.uid, groupId, lessonId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to cancel group lesson", error)
+    throw new HttpsError("internal", "Не удалось отменить занятие")
+  }
+})
+
+exports.completeGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, lessonId, attendeeUpdates } = request.data ?? {}
+
+  try {
+    return await completeGroupLessonCore(request.auth.uid, groupId, lessonId, attendeeUpdates)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to complete group lesson", error)
+    throw new HttpsError("internal", "Не удалось завершить занятие")
+  }
+})
+
+// Group programs — no createNotification anywhere in these 3, so no
+// secrets declaration needed (unlike the reschedule/cancel/complete
+// callables above).
+exports.assignGroupProgram = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, templateId } = request.data ?? {}
+
+  try {
+    return await assignGroupProgramCore(request.auth.uid, groupId, templateId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to assign group program", error)
+    throw new HttpsError("internal", "Не удалось назначить программу группе")
+  }
+})
+
+exports.reassignGroupProgram = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, programId, templateId } = request.data ?? {}
+
+  try {
+    return await reassignGroupProgramCore(request.auth.uid, groupId, programId, templateId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to reassign group program", error)
+    throw new HttpsError("internal", "Не удалось заменить программу группы")
+  }
+})
+
+exports.deleteGroupProgram = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, programId } = request.data ?? {}
+
+  try {
+    return await deleteGroupProgramCore(request.auth.uid, groupId, programId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to delete group program", error)
+    throw new HttpsError("internal", "Не удалось удалить программу группы")
   }
 })
 
@@ -1159,3 +1348,194 @@ exports.syncStudentScheduleToGoogleCalendar = onDocumentWritten(
     }
   },
 )
+
+// Group-lesson counterpart of syncUpcomingLessonOnScheduleChange above —
+// ensures every schedule slot has an upcoming draft the moment a group's
+// scheduleSlots actually changes, not just at the next scheduled reminders
+// run. Unlike syncUpcomingLessonToSchedule (the student-side function this
+// would otherwise mirror), there is no "recompute an already-created
+// draft's date" step for groups yet — ensureUpcomingGroupLessons is
+// strictly find-or-create, so an edited slot's *existing* draft keeps its
+// original date until it's completed/cancelled. Flagged here rather than
+// silently left for a later phase to discover.
+exports.ensureUpcomingGroupLessonsOnScheduleChange = onDocumentWritten(
+  { document: "teachers/{teacherId}/groups/{groupId}" },
+  async (event) => {
+    const { teacherId, groupId } = event.params
+    const beforeSnapshot = event.data.before
+    const afterSnapshot = event.data.after
+    const before = beforeSnapshot.exists ? beforeSnapshot.data() : null
+    const after = afterSnapshot.exists ? afterSnapshot.data() : null
+
+    if (!after) {
+      return
+    }
+
+    const beforeSlots = normalizeScheduleSlots(before)
+    const afterSlots = normalizeScheduleSlots(after)
+
+    if (isScheduleSlotsEqual(beforeSlots, afterSlots)) {
+      return
+    }
+
+    try {
+      await ensureUpcomingGroupLessons(teacherId, groupId)
+    } catch (error) {
+      logger.error("ensureUpcomingGroupLessonsOnScheduleChange: failed", { teacherId, groupId, error })
+    }
+  },
+)
+
+exports.syncGroupScheduleToGoogleCalendar = onDocumentWritten(
+  { document: "teachers/{teacherId}/groups/{groupId}", secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (event) => {
+    const { teacherId, groupId } = event.params
+    const beforeSnapshot = event.data.before
+    const afterSnapshot = event.data.after
+    const before = beforeSnapshot.exists ? beforeSnapshot.data() : null
+    const after = afterSnapshot.exists ? afterSnapshot.data() : null
+
+    if (!after) {
+      // Group doc deleted — deleteGroup already cleans up its Calendar
+      // events directly, nothing to do here.
+      return
+    }
+
+    const beforeSlots = normalizeScheduleSlots(before)
+    const afterSlots = normalizeScheduleSlots(after)
+
+    // Same self-write recursion guard as syncStudentScheduleToGoogleCalendar
+    // above — this trigger writes googleEventIds back onto the same
+    // document, which fires it again; bail out whenever the slots didn't
+    // change, regardless of what else changed.
+    if (isScheduleSlotsEqual(beforeSlots, afterSlots)) {
+      logger.info("Group Calendar sync: skip, schedule unchanged", { teacherId, groupId, action: "skip" })
+      return
+    }
+
+    if (afterSlots.length === 0) {
+      const existingEventIds = before?.googleEventIds ?? {}
+      const eventIdsToDelete = Object.values(existingEventIds)
+
+      if (eventIdsToDelete.length === 0) {
+        logger.info("Group Calendar sync: skip, no schedule and no events", { teacherId, groupId, action: "skip" })
+        return
+      }
+
+      logger.info("Group Calendar sync: deleting events", { teacherId, groupId, action: "delete", count: eventIdsToDelete.length })
+
+      for (const eventId of eventIdsToDelete) {
+        try {
+          await deleteLessonEvent(teacherId, eventId)
+        } catch (error) {
+          logger.error("Group Calendar sync: delete failed", { teacherId, groupId, action: "delete", eventId, error })
+        }
+      }
+
+      await afterSnapshot.ref.update({ googleEventIds: FieldValue.delete() })
+      return
+    }
+
+    try {
+      await syncGroupScheduleSlots(teacherId, groupId, after, afterSnapshot.ref)
+      logger.info("Group Calendar sync: slots synced", { teacherId, groupId, slotCount: afterSlots.length })
+    } catch (error) {
+      logger.error("Group Calendar sync: failed", { teacherId, groupId, error })
+    }
+  },
+)
+
+
+// TEMPORARY diagnostic, guarded by a query-param token — creates a real
+// group + lesson + curriculum template + group program (Admin SDK, bypasses
+// auth/rules) so it can report back the ids, then the caller runs the exact
+// unauthenticated CLIENT-SDK queries the UI itself makes against them
+// (Rules + indexes both matter here, Admin SDK bypasses both so this alone
+// wouldn't prove the client path works). Cleans up everything at the end
+// regardless of outcome.
+exports.diagnoseGroupSetupOnce = onRequest(async (req, res) => {
+  if (req.query.token !== "diagnose-group-setup-2026-08-21") {
+    res.status(403).send("forbidden")
+    return
+  }
+
+  const {
+    createGroup: cg,
+    deleteGroup: dg,
+    ensureUpcomingGroupLessons: euGL,
+    assignGroupProgram: aGP,
+    deleteGroupProgram: dGP,
+  } = require("./core/groups")
+
+  const log = []
+  const teacherId = "72272aszxOORbj7w3f2UAMj5Jln1"
+  const tmpStudentIds = []
+  let groupId = null
+  let templateId = null
+
+  try {
+    for (const name of ["ТЕСТ Setup А", "ТЕСТ Setup Б"]) {
+      const ref = await db.collection("students").add({
+        name, teacherId, subject: ["Тест"], paidLessonsBalance: 5, lowBalanceThreshold: 1,
+        autoRemindLowBalance: false, scheduleSlots: [],
+      })
+      tmpStudentIds.push(ref.id)
+    }
+    log.push(`created students: ${tmpStudentIds.join(", ")}`)
+
+    const now = new Date()
+    const testTime = new Date(now.getTime() + 5 * 60 * 1000)
+    const scheduleSlots = [{ dayOfWeek: testTime.getDay(), time: `${String(testTime.getHours()).padStart(2, "0")}:${String(testTime.getMinutes()).padStart(2, "0")}`, durationMinutes: 30 }]
+    const created = await cg(teacherId, { name: "ТЕСТ Group Setup", subject: "Тест", memberStudentIds: tmpStudentIds, scheduleSlots })
+    groupId = created.id
+    log.push(`created group ${groupId}`)
+
+    const lessonId = await euGL(teacherId, groupId)
+    log.push(`lessonId=${lessonId}`)
+
+    const templateRef = await db.collection("curriculumTemplates").add({
+      name: "ТЕСТ Шаблон", examTypeId: null, subject: "Тест", teacherId,
+      topics: [{ id: "t1", title: "Тема 1" }, { id: "t2", title: "Тема 2" }],
+      prototypes: [{ id: "p1", title: "Прототип 1" }],
+    })
+    templateId = templateRef.id
+    log.push(`created template ${templateId}`)
+
+    const programResult = await aGP(teacherId, groupId, templateId)
+    log.push(`assignGroupProgram -> programId=${programResult.programId}`)
+
+    // Verify each member got their own individual program too
+    for (const sid of tmpStudentIds) {
+      const progsSnap = await db.collection("students").doc(sid).collection("programs").where("templateId", "==", templateId).get()
+      log.push(`student ${sid} individual programs from this template: ${progsSnap.size}`)
+    }
+
+    await dGP(teacherId, groupId, programResult.programId)
+    log.push("group program deleted (cleanup verification)")
+
+    res.json({ ok: true, log, teacherId, groupId, lessonId, studentIds: tmpStudentIds })
+  } catch (error) {
+    log.push(`ERROR: ${error.message}`)
+    res.status(500).json({ ok: false, log, error: error.message, teacherId, groupId, studentIds: tmpStudentIds })
+  } finally {
+    try {
+      if (groupId) await dg(teacherId, groupId)
+    } catch (e) {
+      log.push(`cleanup group delete failed: ${e.message}`)
+    }
+    if (templateId) {
+      try {
+        await db.collection("curriculumTemplates").doc(templateId).delete()
+      } catch (e) {
+        log.push(`cleanup template delete failed: ${e.message}`)
+      }
+    }
+    for (const sid of tmpStudentIds) {
+      try {
+        await db.collection("students").doc(sid).delete()
+      } catch (e) {
+        log.push(`cleanup student ${sid} delete failed: ${e.message}`)
+      }
+    }
+  }
+})

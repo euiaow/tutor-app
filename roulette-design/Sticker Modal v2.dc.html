@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@800&amp;family=Bungee:wght@400&amp;family=Chakra+Petch:ital,wght@1,700&amp;family=JetBrains+Mono:wght@400;700&amp;family=Lobster+Two:ital,wght@1,700&amp;display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0}
+body{background:#0b0b0b;font-family:'JetBrains Mono',ui-monospace,monospace}
+a{color:#ffe800;text-decoration:none}
+a:hover{color:#ff2e9a}
+@keyframes tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes blink{0%,60%{opacity:1}61%,100%{opacity:.15}}
+@keyframes iattn{0%,49%{background:transparent;color:#111}50%,100%{background:#111;color:#ffe800}}
+@keyframes pop{0%,100%{transform:scale(.4) rotate(0deg);opacity:.35}50%{transform:scale(1.15) rotate(45deg);opacity:1}}
+@keyframes rise{from{transform:translateY(18px) scale(.86);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:200px 110px 190px;background:
+  repeating-linear-gradient(to right, rgba(255,255,255,.05) 0 1px, transparent 1px 34px),
+  repeating-linear-gradient(to bottom, rgba(255,255,255,.05) 0 1px, transparent 1px 34px),
+  #0b0b0b;">
+
+  <div style="position:relative;width:1040px;max-width:100%;">
+
+    <div style="position:absolute;top:-132px;left:-64px;z-index:6;pointer-events:none;width:340px;">
+      <img src="arcade-lettering-clean.png" alt="" style="display:block;width:100%;height:auto;image-rendering:pixelated;filter:drop-shadow(8px 8px 0 rgba(255,232,0,.85));">
+    </div>
+
+    <div style="position:absolute;top:-172px;right:-10px;z-index:7;display:flex;align-items:flex-end;gap:12px;">
+      <div style="position:relative;width:190px;background:#fff;border:4px solid #111;padding:9px 11px;box-shadow:6px 6px 0 0 #ff2e9a;margin-bottom:14px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:11px;line-height:1.45;color:#111;word-break:break-all;">{{ heroLine }}</span>
+        <div style="position:absolute;right:-14px;top:16px;display:grid;grid-template-columns:repeat(2,5px);grid-template-rows:repeat(3,5px);">
+          <div style="background:#111"></div><div></div>
+          <div style="background:#fff"></div><div style="background:#111"></div>
+          <div style="background:#111"></div><div></div>
+        </div>
+      </div>
+      <div style="position:relative;">
+        <div style="width:150px;height:150px;border:5px solid #111;background:#7cf03d;box-shadow:8px 8px 0 0 #ffe800;overflow:hidden;">
+          <img src="hero-cat.png" alt="" style="display:block;width:100%;height:100%;object-fit:cover;object-position:50% 20%;">
+        </div>
+        <span style="position:absolute;left:8px;top:8px;background:#111;padding:2px 5px;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.16em;color:#7cf03d;">CAT.EXE</span>
+      </div>
+    </div>
+
+    <div style="position:absolute;left:-162px;top:120px;z-index:5;pointer-events:none;transform:rotate(90deg);transform-origin:center;filter:drop-shadow(4px 4px 0 #111);">
+      <div style="display:grid;grid-template-columns:repeat(23,8px);grid-auto-rows:8px;">
+        <sc-for list="{{ playCells }}" as="p" hint-placeholder-count="161">
+          <div style="background:{{ p.c }};"></div>
+        </sc-for>
+      </div>
+    </div>
+
+
+    <div style="position:absolute;right:-52px;top:236px;z-index:5;pointer-events:none;display:grid;grid-template-columns:repeat(3,18px);grid-auto-rows:18px;gap:4px;">
+      <div style="background:#ff2e9a"></div><div></div><div style="background:#ff2e9a"></div>
+      <div></div><div style="background:#ff2e9a"></div><div></div>
+      <div style="background:#ff2e9a"></div><div style="background:#ff2e9a"></div><div></div>
+      <div></div><div></div><div style="background:#ff2e9a"></div>
+      <div style="background:#7cf03d"></div><div></div><div style="background:#ff2e9a"></div>
+    </div>
+    <div style="position:absolute;left:-44px;bottom:74px;z-index:5;pointer-events:none;display:grid;grid-template-columns:repeat(2,16px);grid-auto-rows:16px;gap:4px;">
+      <div style="background:#00e5ff"></div><div></div>
+      <div></div><div style="background:#00e5ff"></div>
+      <div style="background:#ffe800"></div><div></div>
+    </div>
+
+    <div style="position:relative;z-index:4;border:5px solid #111;background:#161616;box-shadow:0 0 0 5px #ffe800, 18px 18px 0 0 #111;background-image:repeating-linear-gradient(to right,rgba(255,255,255,.045) 0 1px,transparent 1px 26px),repeating-linear-gradient(to bottom,rgba(255,255,255,.045) 0 1px,transparent 1px 26px);">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;background:#ffe800;border-bottom:5px solid #111;padding:6px 8px 6px 12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="display:flex;gap:4px;">
+            <div style="width:13px;height:13px;background:#111"></div>
+            <div style="width:13px;height:13px;background:#ff2e9a;border:2px solid #111"></div>
+            <div style="width:13px;height:13px;background:#00e5ff;border:2px solid #111"></div>
+          </div>
+          <span style="font-family:'Bungee',sans-serif;font-size:12px;letter-spacing:.04em;color:#111;">STICKER WORKSHOP</span>
+          <div style="position:relative;">
+            <div onClick="{{ toggleAboutTip }}" style="{{ aboutBtnStyle }}" style-hover="background:#111;color:#ffe800">i</div>
+            <sc-if value="{{ isAboutTip }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;left:-6px;top:30px;z-index:40;width:250px;border:4px solid #111;background:#fff;box-shadow:6px 6px 0 0 #ff2e9a;padding:10px 11px;display:flex;flex-direction:column;gap:8px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.5;color:#111;">Это твоя коллекция стикеров! Зарабатывай монеты за хорошие оценки и открывай кейсы — там ждут стикеры разной редкости.</span>
+                <div onClick="{{ closeTip }}" style="align-self:flex-start;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;background:#111;color:#ffe800;padding:4px 7px;cursor:pointer;" style-hover="background:#ff2e9a;color:#111">понятно</div>
+              </div>
+            </sc-if>
+          </div>
+          <sc-if value="{{ showAttn }}" hint-placeholder-val="{{ true }}">
+            <span style="font-family:'Bungee',sans-serif;font-size:17px;color:#111;">!</span>
+          </sc-if>
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.2em;background:#111;color:#ffe800;padding:2px 5px;">v1.0</span>
+          <span style="font-family:'Bungee',sans-serif;font-size:11px;color:#ff2e9a;animation:blink 1.6s steps(1) infinite;">●</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div style="width:24px;height:24px;border:3px solid #111;display:flex;align-items:center;justify-content:center;font-family:'Bungee',sans-serif;font-size:10px;color:#111;">–</div>
+          <div style="width:24px;height:24px;border:3px solid #111;background:#111;display:flex;align-items:center;justify-content:center;font-family:'Bungee',sans-serif;font-size:10px;color:#ffe800;cursor:pointer;" style-hover="background:#ff2e9a;color:#111">X</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:stretch;gap:0;border-bottom:5px solid #111;background:#111;">
+        <div onClick="{{ showCases }}" style="{{ tabCasesStyle }}" style-hover="opacity:.9">КЕЙСЫ</div>
+        <div onClick="{{ showCollection }}" style="{{ tabCollStyle }}" style-hover="opacity:.9">КОЛЛЕКЦИЯ</div>
+        <div style="flex:1;min-width:0;background:repeating-linear-gradient(45deg,#ffe800 0 6px,#111 6px 12px);opacity:.55;"></div>
+        <div style="display:flex;align-items:center;gap:9px;padding:0 12px;border-left:5px solid #ffe800;background:#111;" data-comment-anchor="balance">
+          <div style="display:grid;grid-template-columns:repeat(23,3px);grid-auto-rows:3px;">
+            <sc-for list="{{ coinCells }}" as="p" hint-placeholder-count="161">
+              <div style="background:{{ p.c }};"></div>
+            </sc-for>
+          </div>
+          <span style="font-family:'Bungee',sans-serif;font-size:15px;color:#ffe800;">{{ balance }}</span>
+        </div>
+      </div>
+
+      <sc-if value="{{ isCases }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:14px 16px 16px;">
+          <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px;">
+            <span style="font-family:'Bungee',sans-serif;font-size:10px;color:#ff2e9a;">◆</span>
+            <span style="font-family:'Bungee',sans-serif;font-size:11px;color:#ffe800;letter-spacing:.02em;">В КАЖДОМ КЕЙСЕ — ОДИН СТИКЕР</span>
+            <span style="flex:1;height:3px;background:repeating-linear-gradient(to right,#ffe800 0 5px,transparent 5px 10px);"></span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;letter-spacing:.18em;color:#00e5ff;">03 / 03</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;">
+            <sc-for list="{{ sets }}" as="set" hint-placeholder-count="3">
+              <div onClick="{{ set.open }}" style="min-width:0;position:relative;border:5px solid #111;background:#fff;box-shadow:7px 7px 0 0 #ffe800;display:flex;flex-direction:column;cursor:pointer;" style-hover="box-shadow:7px 7px 0 0 #ff2e9a;transform:translate(-2px,-2px)">
+                <span style="position:absolute;top:-13px;left:-9px;z-index:2;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.1em;color:#111;background:#00e5ff;border:3px solid #111;padding:1px 5px;">{{ set.index }}</span>
+                <div style="position:relative;padding:12px 12px 10px;background:{{ set.cover }};border-bottom:5px solid #111;overflow:hidden;">
+                  <div style="position:absolute;inset:0;background-image:radial-gradient(rgba(17,17,17,.2) 1.5px, transparent 1.6px);background-size:7px 7px;"></div>
+                  <div style="position:relative;display:flex;align-items:center;justify-content:center;height:96px;min-width:0;">
+                    <sc-for list="{{ set.preview }}" as="st" hint-placeholder-count="3">
+                      <div style="{{ st.fanStyle }}">
+                        <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8px;line-height:1.2;text-align:center;color:{{ st.textColor }};text-wrap:pretty;">{{ st.name }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="position:absolute;top:8px;left:8px;background:#111;padding:3px 6px;">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#ffe800;text-transform:uppercase;">{{ set.poolLabel }}</span>
+                  </div>
+                </div>
+
+                <div style="position:relative;padding:11px 12px 20px;display:flex;flex-direction:column;gap:7px;flex:1;">
+                  <div style="{{ set.photoWrapStyle }}">
+
+                    <sc-if value="{{ set.isSlay }}" hint-placeholder-val="{{ false }}">
+                      <img src="slay-lettering-tight.png" alt="SLAY" style="position:absolute;left:6px;bottom:0;display:block;width:210px;height:136px;filter:drop-shadow(0 10px 12px rgba(0,0,0,.45));">
+                    </sc-if>
+
+                    <sc-if value="{{ set.isClean }}" hint-placeholder-val="{{ false }}">
+                      <img src="legacy-lettering.png" alt="CLEAN" style="position:absolute;left:6px;bottom:0;display:block;width:210px;height:133px;filter:drop-shadow(0 10px 12px rgba(0,0,0,.45));">
+                    </sc-if>
+
+                    <sc-if value="{{ set.isReels }}" hint-placeholder-val="{{ false }}">
+                      <img src="reels-lettering.png" alt="REELS" style="position: absolute; left: 3px; top: 7px; z-index: 4; display: block; box-sizing: border-box; width: 187px; height: 145px; object-fit: cover; object-position: 50% 18%; border: 5px solid #fff; box-shadow: 0 10px 18px rgba(0,0,0,.55),0 0 0 3px #111">
+                    </sc-if>
+
+                  </div>
+                  
+                  <sc-if value="{{ set.notReels }}" hint-placeholder-val="{{ true }}">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5f5b50;line-height:1.45;">{{ set.desc }}</span>
+                  </sc-if>
+                  <sc-if value="{{ set.isReels }}" hint-placeholder-val="{{ false }}">
+                    <span style="align-self:flex-end;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:11px;letter-spacing:.06em;color:#5f5b50;">{{ set.reelsTag }}</span>
+                  </sc-if>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:6px;border-top:3px dotted #111;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                      <div style="width:13px;height:13px;background:#ffe800;border:3px solid #111"></div>
+                      <span style="font-family:'Bungee',sans-serif;font-size:14px;color:#111;">{{ set.price }}</span>
+                    </div>
+                    <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#111;background:#ff2e9a;border:3px solid #111;padding:3px 6px;">что внутри →</span>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:12px 16px 16px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <div onClick="{{ backToCases }}" style="display:inline-flex;align-items:center;gap:6px;border:3px solid #ffe800;background:#111;padding:5px 10px;cursor:pointer;font-family:'Bungee',sans-serif;font-size:10px;color:#ffe800;" style-hover="background:#ffe800;color:#111">← ВСЕ КЕЙСЫ</div>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;letter-spacing:.2em;color:#7cf03d;">{{ current.crumb }}</span>
+            <span style="flex:1;height:3px;background:repeating-linear-gradient(to right,#ff2e9a 0 5px,transparent 5px 10px);"></span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:minmax(0,268px) minmax(0,1fr);gap:16px;align-items:start;">
+            <div style="min-width: 0; position: relative; border: 5px solid #111; background: #fff; box-shadow: 7px 7px 0 0 #ffe800; display: flex; flex-direction: column; width: 259px; height: 350px">
+              <span style="position:absolute;top:-13px;left:-9px;z-index:2;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.1em;color:#111;background:#00e5ff;border:3px solid #111;padding:1px 5px;">{{ current.index }}</span>
+              <div style="position:relative;padding:12px 12px 10px;background:{{ current.cover }};border-bottom:5px solid #111;overflow:hidden;">
+                <div style="position:absolute;inset:0;background-image:radial-gradient(rgba(17,17,17,.2) 1.5px, transparent 1.6px);background-size:7px 7px;"></div>
+                <div style="position:relative;display:flex;align-items:center;justify-content:center;height:96px;min-width:0;">
+                  <sc-for list="{{ current.preview }}" as="st" hint-placeholder-count="3">
+                    <div style="{{ st.fanStyle }}">
+                      <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8px;line-height:1.2;text-align:center;color:{{ st.textColor }};text-wrap:pretty;">{{ st.name }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="position:absolute;top:8px;left:8px;background:#111;padding:3px 6px;">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.1em;color:#ffe800;text-transform:uppercase;">{{ current.poolLabel }}</span>
+                </div>
+              </div>
+
+              <div style="position:relative;padding:11px 12px 16px;display:flex;flex-direction:column;gap:7px;flex:1;">
+                <div style="{{ current.photoWrapStyle }}">
+                  <sc-if value="{{ current.isSlay }}" hint-placeholder-val="{{ false }}">
+                    <img src="slay-lettering-tight.png" alt="SLAY" style="position:absolute;left:6px;bottom:0;display:block;width:210px;height:136px;filter:drop-shadow(0 10px 12px rgba(0,0,0,.45));">
+                  </sc-if>
+                  <sc-if value="{{ current.isClean }}" hint-placeholder-val="{{ false }}">
+                      <img src="legacy-lettering.png" alt="CLEAN" style="position:absolute;left:6px;bottom:0;display:block;width:210px;height:133px;filter:drop-shadow(0 10px 12px rgba(0,0,0,.45));">
+                    </sc-if>
+                  <sc-if value="{{ current.isReels }}" hint-placeholder-val="{{ false }}">
+                      <img src="reels-lettering.png" alt="REELS" style="position: absolute; left: 11px; top: 8px; z-index: 4; display: block; box-sizing: border-box; width: 178px; height: 148px; object-fit: cover; object-position: 50% 18%; border: 5px solid #fff; box-shadow: 0 10px 18px rgba(0,0,0,.55),0 0 0 3px #111">
+                    </sc-if>
+                </div>
+                <sc-if value="{{ current.notReels }}" hint-placeholder-val="{{ true }}">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5f5b50;line-height:1.45;">{{ current.desc }}</span>
+                </sc-if>
+                <sc-if value="{{ current.isReels }}" hint-placeholder-val="{{ false }}">
+                  <span style="align-self:flex-end;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:11px;letter-spacing:.06em;color:#5f5b50;">{{ current.reelsTag }}</span>
+                </sc-if>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:6px;border-top:3px dotted #111;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="width:13px;height:13px;background:#ffe800;border:3px solid #111"></div>
+                    <span style="font-family:'Bungee',sans-serif;font-size:14px;color:#111;">{{ current.price }}</span>
+                  </div>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#5f5b50;letter-spacing:.12em;text-transform:uppercase;">1 стикер</span>
+                </div>
+                <div onClick="{{ askConfirm }}" style="{{ current.btnStyle }}" style-hover="transform:translate(2px,2px)">{{ current.btnLabel }}</div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-family:'Bungee',sans-serif;font-size:10px;color:#7cf03d;">◆</span>
+                  <span style="font-family:'Bungee',sans-serif;font-size:11px;color:#ffe800;">ЧТО МОЖЕТ ВЫПАСТЬ</span>
+                </div>
+                <div style="display:flex;gap:10px;">
+                  <sc-for list="{{ rarities }}" as="r" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                      <div style="width:10px;height:10px;background:{{ r.color }};border:2px solid #fff"></div>
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#e8e4d6;">{{ r.label }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="display:flex;height:20px;border:3px solid #ffe800;margin:0 0 12px;">
+                <sc-for list="{{ current.odds }}" as="o" hint-placeholder-count="3">
+                  <div style="{{ o.barStyle }}">
+                    <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;color:{{ o.textColor }};letter-spacing:.04em;">{{ o.label }}</span>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;">
+                <sc-for list="{{ current.pool }}" as="d" hint-placeholder-count="8">
+                  <div style="{{ d.cardStyle }}" onClick="{{ d.open }}">
+                    <div style="height:6px;background:{{ d.rarityColor }};border-bottom:3px solid #111;"></div>
+                    <div style="padding:9px 8px 8px;display:flex;flex-direction:column;align-items:center;gap:7px;">
+                      <div style="{{ d.frameStyle }}">
+                        <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8.5px;line-height:1.2;text-align:center;color:{{ d.textColor }};text-wrap:pretty;">{{ d.name }}</span>
+                      </div>
+                      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:5px;min-width:0;flex-wrap:wrap;">
+                        <span style="min-width:0;font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;color:{{ d.rarityTextColor }};">{{ d.rarityShort }}</span>
+                        <span style="font-family:'Bungee',sans-serif;font-size:10px;color:#111;">{{ d.chance }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isCollection }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:14px 16px 16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-family:'Bungee',sans-serif;font-size:10px;color:#00e5ff;">◆</span>
+              <span style="font-family:'Bungee',sans-serif;font-size:11px;color:#ffe800;">МОИ СТИКЕРЫ</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#8b8676;">{{ ownedLabel }}</span>
+              <sc-if value="{{ hasPlaceNote }}" hint-placeholder-val="{{ false }}">
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;letter-spacing:.1em;text-transform:uppercase;background:#7cf03d;color:#111;padding:3px 6px;">{{ placeNote }}</span>
+              </sc-if>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <sc-for list="{{ rarities }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <div style="width:10px;height:10px;background:{{ r.color }};border:2px solid #fff"></div>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#e8e4d6;">{{ r.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:flex-start;gap:16px;">
+          <div style="{{ collGridStyle }}">
+            <sc-for list="{{ inventory }}" as="it" hint-placeholder-count="12">
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <div style="{{ it.frameStyle }}" onClick="{{ it.open }}">
+                  <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8.5px;line-height:1.2;text-align:center;color:{{ it.textColor }};text-wrap:pretty;">{{ it.name }}</span>
+                  <div style="position:absolute;top:-6px;right:-6px;width:12px;height:12px;background:{{ it.rarityColor }};border:3px solid #111;"></div>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:{{ it.rarityTextColor }};">{{ it.rarity }}</span>
+                <div onClick="{{ it.place }}" style="{{ it.placeBtnStyle }}" style-hover="background:#ffe800;color:#111">разместить</div>
+              </div>
+            </sc-for>
+
+            <sc-for list="{{ emptySlots }}" as="e" hint-placeholder-count="2">
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <div style="aspect-ratio:1;border:4px dashed rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;background-image:radial-gradient(rgba(255,255,255,.12) 1.5px, transparent 1.6px);background-size:7px 7px;">
+                  <span style="font-family:'Bungee',sans-serif;font-size:16px;color:rgba(255,255,255,.3);">?</span>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.32);">не открыт</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ isPlacing }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:none;width:318px;border:5px solid #111;background:#f4ecd8;box-shadow:7px 7px 0 0 #ffe800;display:flex;flex-direction:column;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:#111;">
+                <span style="font-family:'Bungee',sans-serif;font-size:10px;color:#ffe800;">ГДЕ РАЗМЕСТИТЬ</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7cf03d;">{{ placedCountLabel }}</span>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:4px solid #111;background:#e8dcc0;">
+                <div style="{{ placingSwatchStyle }}"></div>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;color:#3d372a;">{{ placingLabel }}</span>
+              </div>
+
+              <div style="margin:10px;border:4px solid #111;background:#fffaf0;max-height:300px;overflow-y:auto;">
+                <div style="position:relative;width:100%;">
+                  <img src="dashboard-screen.png" alt="Дашборд ученика" style="display:block;width:100%;height:auto;">
+                  <sc-for list="{{ zones }}" as="z" hint-placeholder-count="4">
+                    <div onClick="{{ z.select }}" style="{{ z.boxStyle }}" style-hover="box-shadow:0 0 0 3px #111,0 0 12px rgba(0,0,0,.4);filter:saturate(1.7) brightness(1.08)">
+                      <div style="width:100%;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:3px;overflow:hidden;">
+                        <span style="{{ z.labelStyle }}">{{ z.label }}</span>
+                        <sc-if value="{{ z.hasSticker }}" hint-placeholder-val="{{ false }}">
+                          <div style="display:flex;align-items:center;gap:2px;flex:none;">
+                            <div style="{{ z.thumbStyle }}"></div>
+                            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:6px;letter-spacing:0;text-transform:uppercase;color:#7a6a44;white-space:nowrap;">заменить</span>
+                            <div onClick="{{ z.clear }}" style="flex:none;width:11px;height:11px;display:flex;align-items:center;justify-content:center;font-family:'Bungee',sans-serif;font-size:7px;background:#111;color:#ffe800;cursor:pointer;" style-hover="background:#ff2e9a;color:#111">X</div>
+                          </div>
+                        </sc-if>
+                      </div>
+                      <sc-if value="{{ z.selected }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:absolute;top:-9px;right:-9px;width:18px;height:18px;background:#7cf03d;border:3px solid #111;display:flex;align-items:center;justify-content:center;font-family:'Bungee',sans-serif;font-size:9px;color:#111;">V</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="padding:0 10px 10px;display:flex;flex-direction:column;gap:8px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;line-height:1.5;color:#6b6248;">{{ placeHint }}</span>
+                <div onClick="{{ confirmPlacement }}" style="{{ confirmBtnStyle }}" style-hover="transform:translate(2px,2px)">ПОДТВЕРДИТЬ РАЗМЕЩЕНИЕ</div>
+              </div>
+            </div>
+          </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isConfirm }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:30;background:rgba(8,8,8,.92);display:flex;align-items:center;justify-content:center;">
+          <div style="border:5px solid #111;background:#fff;box-shadow:10px 10px 0 0 #ffe800;padding:22px 24px;display:flex;flex-direction:column;gap:16px;align-items:center;animation:rise .18s ease-out;">
+            <span style="font-family:'Bungee',sans-serif;font-size:18px;color:#111;">ПОДТВЕРДИ</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;color:#5f5b50;">{{ current.confirmLine }}</span>
+            <div style="display:flex;gap:12px;">
+              <div onClick="{{ confirmOpen }}" style="font-family:'Bungee',sans-serif;font-size:13px;padding:11px 20px;border:4px solid #111;background:#ff2e9a;color:#111;box-shadow:4px 4px 0 0 #111;cursor:pointer;" style-hover="transform:translate(2px,2px)">ОТКРЫТЬ</div>
+              <div onClick="{{ cancel }}" style="font-family:'Bungee',sans-serif;font-size:13px;padding:11px 20px;border:4px solid #111;background:#fff;color:#111;cursor:pointer;" style-hover="background:#ffe800">ОТМЕНА</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSpinning }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:30;background:rgba(8,8,8,.96);overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+          <sc-for list="{{ sparkles }}" as="s" hint-placeholder-count="12">
+            <div style="{{ s.style }}"></div>
+          </sc-for>
+          <span style="position:relative;font-family:'Bungee',sans-serif;font-size:20px;color:#ffe800;letter-spacing:.04em;">ОТКРЫВАЕМ...</span>
+          <div style="position:relative;width:100%;height:130px;border-top:5px solid #ffe800;border-bottom:5px solid #ffe800;overflow:hidden;background:rgba(255,232,0,.06);">
+            <div style="{{ spinStyle }}">
+              <sc-for list="{{ strip }}" as="s" hint-placeholder-count="12">
+                <div style="{{ s.frameStyle }}">
+                  <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;line-height:1.2;text-align:center;color:{{ s.textColor }};text-wrap:pretty;">{{ s.name }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="position:absolute;left:50%;top:0;bottom:0;width:4px;margin-left:-2px;background:#ff2e9a;box-shadow:0 0 16px #ff2e9a;z-index:3;"></div>
+            <div style="position:absolute;left:50%;top:0;margin-left:-9px;width:18px;height:12px;background:#ff2e9a;clip-path:polygon(0 0,100% 0,50% 100%);z-index:3;"></div>
+          </div>
+          <span style="position:relative;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.2em;color:#7cf03d;">КРУТИТЕ БАРАБАН...</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isResult }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:30;background:rgba(8,8,8,.96);overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
+          <sc-for list="{{ sparkles }}" as="s" hint-placeholder-count="12">
+            <div style="{{ s.style }}"></div>
+          </sc-for>
+          <span style="position:relative;font-family:'Bungee',sans-serif;font-size:22px;color:#ffe800;">{{ resultTitle }}</span>
+          <div style="position:relative;animation:rise .3s ease-out;">
+            <div style="{{ resultFrameStyle }}">
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;line-height:1.25;text-align:center;color:{{ result.textColor }};text-wrap:pretty;">{{ result.name }}</span>
+            </div>
+          </div>
+          <div style="position:relative;display:flex;align-items:center;gap:8px;">
+            <div style="width:12px;height:12px;background:{{ result.rarityColor }};border:3px solid #fff;"></div>
+            <span style="font-family:'Bungee',sans-serif;font-size:13px;color:#fff;">{{ result.rarity }}</span>
+          </div>
+          <span style="position:relative;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:11px;letter-spacing:.06em;color:#7cf03d;">{{ resultNote }}</span>
+          <div style="position:relative;display:flex;gap:12px;margin-top:4px;">
+            <div onClick="{{ goCollection }}" style="font-family:'Bungee',sans-serif;font-size:12px;padding:10px 18px;border:4px solid #111;background:#ffe800;color:#111;box-shadow:4px 4px 0 0 #fff;cursor:pointer;" style-hover="transform:translate(2px,2px)">В КОЛЛЕКЦИЮ</div>
+            <div onClick="{{ closeResult }}" style="font-family:'Bungee',sans-serif;font-size:12px;padding:10px 18px;border:4px solid #ffe800;background:#111;color:#ffe800;cursor:pointer;" style-hover="background:#ffe800;color:#111">ЕЩЁ РАЗ</div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isPeek }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:35;background:rgba(8,8,8,.96);overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;" onClick="{{ closePeek }}">
+          <div style="position:relative;display:flex;flex-direction:column;gap:8px;">
+            <span style="width:172px;text-align:left;font-family:'Bungee',sans-serif;font-size:16px;color:#ffe800;">{{ peek.name }}</span>
+            <div style="{{ peek.frameStyle }}">
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;line-height:1.25;text-align:center;color:{{ peek.textColor }};text-wrap:pretty;">{{ peek.name }}</span>
+            </div>
+          </div>
+          <div style="position:relative;display:flex;align-items:center;gap:8px;">
+            <div style="width:12px;height:12px;background:{{ peek.rarityColor }};border:3px solid #fff;"></div>
+            <span style="font-family:'Bungee',sans-serif;font-size:13px;color:#fff;">{{ peek.rarity }}</span>
+          </div>
+          <sc-if value="{{ peek.owned }}" hint-placeholder-val="{{ false }}">
+            <div onClick="{{ swallow }}" style="position:relative;display:flex;align-items:center;gap:8px;margin-top:2px;">
+              <div onClick="{{ placeFromPeek }}" style="font-family:'Bungee',sans-serif;font-size:12px;padding:11px 18px;border:4px solid #111;background:#ffe800;color:#111;box-shadow:4px 4px 0 0 #fff;cursor:pointer;" style-hover="transform:translate(2px,2px)">РАЗМЕСТИТЬ СТИКЕР</div>
+              <div style="position:relative;">
+                <div onClick="{{ togglePlaceTip }}" style="width:47px;font-family:'Bungee',sans-serif;font-size:16px;height:15px;line-height:15px;padding:11px 0;text-align:center;border:4px solid #111;background:#ffe800;color:#111;box-shadow:4px 4px 0 0 #fff;cursor:pointer;" style-hover="transform:translate(2px,2px)">i</div>
+                <sc-if value="{{ isPlaceTip }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;left:57px;top:50%;transform:translateY(-50%);z-index:40;width:236px;border:4px solid #111;background:#fff;box-shadow:6px 6px 0 0 #ff2e9a;padding:10px 11px;">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.5;color:#111;">Стикеры можно размещать прямо на сайте в указанных местах.</span>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </sc-if>
+          <div style="position:relative;font-family:'Bungee',sans-serif;font-size:12px;padding:10px 18px;border:4px solid #ffe800;background:#111;color:#ffe800;cursor:pointer;margin-top:4px;">ЗАКРЫТЬ</div>
+        </div>
+      </sc-if>
+
+      <div style="border-top:5px solid #111;background:#ffe800;overflow:hidden;padding:6px 0;">
+        <div style="display:flex;width:max-content;animation:tick 20s linear infinite;">
+          <span style="flex:none;width:max-content;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.2em;color:#111;text-transform:uppercase;white-space:nowrap;">{{ ticker }}</span>
+          <span style="flex:none;width:max-content;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:.2em;color:#111;text-transform:uppercase;white-space:nowrap;">{{ ticker }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accentColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#ff2e9a&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#ff2e9a&quot;,&quot;#ff5ec4&quot;,&quot;#00e5ff&quot;,&quot;#7cf03d&quot;]},&quot;balance&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:240,&quot;min&quot;:0,&quot;max&quot;:999,&quot;tsType&quot;:&quot;number&quot;},&quot;zones&quot;:{&quot;editor&quot;:null,&quot;default&quot;:null,&quot;tsType&quot;:&quot;Array&lt;{id:string,label:string,x:number,y:number,w:number,h:number,occupiedBy?:{name:string,color:string}}&gt;&quot;}}">
+class Component extends DCLogic {
+  state = { tab: 'cases', openSet: null, phase: 'idle', strip: [], result: null, dup: false, refund: 0, spinX: -80, spinTransition: 'none', coinDelta: 0, owned: null, peek: null, tip: null, tipSeen: false, placing: null, selectedZone: null, placed: {}, placeNote: '' };
+
+  spin(cur, balance) {
+    if (balance < cur.price) return;
+    const pool = cur.pool;
+    const total = pool.reduce((a, p) => a + p.weight, 0);
+    let r = Math.random() * total, result = pool[0];
+    for (const p of pool) { r -= p.weight; if (r <= 0) { result = p; break; } }
+
+    const ITEM = 104, WIN = 62;
+    const strip = [];
+    for (let i = 0; i < 74; i++) strip.push(Object.assign({ uid: i }, pool[Math.floor(Math.random() * pool.length)]));
+    strip[WIN] = Object.assign({ uid: WIN }, result);
+
+    const jitter = Math.round((Math.random() - 0.5) * 44);
+    const target = -(WIN * ITEM + 48) + jitter;
+
+    this.setState({ phase: 'spinning', strip, result, spinX: -80, spinTransition: 'none' });
+    setTimeout(() => this.setState({ spinX: target, spinTransition: 'transform 12000ms cubic-bezier(.04,.9,.03,1)' }), 60);
+    setTimeout(() => this.finish(cur, result), 12250);
+  }
+
+  finish(cur, result) {
+    const owned = this.state.owned || this.baseOwned;
+    const dup = owned.some(o => o[0] === result.name);
+    const refund = dup ? Math.round(cur.price * 0.4) : 0;
+    this.setState({
+      phase: 'result', dup, refund,
+      coinDelta: this.state.coinDelta - cur.price + refund,
+      owned: dup ? owned : owned.concat([[result.name, result.color, result.key]])
+    });
+  }
+
+  // 5x7 block letterforms — words are drawn as graphics, not type
+  static get GLYPHS() {
+    return {
+      A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+      C: ['.####', '#....', '#....', '#....', '#....', '#....', '.####'],
+      D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+      E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+      I: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '#####'],
+      L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+      N: ['#...#', '##..#', '##..#', '#.#.#', '#..##', '#..##', '#...#'],
+      O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+      P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+      R: ['####.', '#...#', '#...#', '####.', '#..#.', '#...#', '#...#'],
+      S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+      T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+      Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+      ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....']
+    };
+  }
+
+  // returns flat cell list for a word rendered as a 7-row block grid
+  word(text, colors) {
+    const G = Component.GLYPHS;
+    const letters = text.split('').map(ch => G[ch] || G[' ']);
+    const cells = [];
+    for (let row = 0; row < 7; row++) {
+      letters.forEach((glyph, li) => {
+        glyph[row].split('').forEach(ch => {
+          cells.push({ c: ch === '#' ? colors[li % colors.length] : 'transparent' });
+        });
+        if (li < letters.length - 1) cells.push({ c: 'transparent' });
+      });
+    }
+    return cells;
+  }
+
+  renderVals() {
+    const accent = this.props.accentColor ?? '#ff2e9a';
+    const balance = Math.max(0, (this.props.balance ?? 240) + this.state.coinDelta);
+
+    const ink = (fill) => {
+      const dark = ['#111111', '#111', accent.toLowerCase(), '#ff2e9a', '#e0257f', '#2b2b2b'];
+      return dark.indexOf(String(fill).toLowerCase()) >= 0 ? '#ffffff' : '#111111';
+    };
+
+    const rMap = {
+      common:    { label: 'обычный',     color: '#ffffff', glow: '' },
+      rare:      { label: 'редкий',      color: '#2f9bff', glow: ',0 0 12px rgba(47,155,255,.55),0 0 22px rgba(47,155,255,.28)' },
+      legendary: { label: 'легендарный', color: '#ffc400', glow: ',0 0 22px rgba(255,196,0,.95),0 0 48px rgba(255,196,0,.6),0 0 84px rgba(255,196,0,.35)' }
+    };
+    const rarities = [rMap.common, rMap.rare, rMap.legendary].map(r => ({ label: r.label, color: r.color }));
+
+    const stick = (name, color, key, chance) => ({
+      name, color, textColor: ink(color), chance: chance + '%', key, weight: chance,
+      rarity: rMap[key].label, rarityShort: key === 'legendary' ? 'легенд.' : rMap[key].label,
+      rarityColor: rMap[key].color, glow: rMap[key].glow,
+      cardStyle: `min-width:0;border:4px solid #111;background:#fff;box-shadow:4px 4px 0 0 #ffe800${rMap[key].glow};cursor:pointer;`,
+      frameStyle: `width:100%;aspect-ratio:1;background:${color};border:4px solid #fff;box-shadow:0 5px 10px rgba(0,0,0,.35),0 0 0 2px #111${rMap[key].glow};display:flex;align-items:center;justify-content:center;padding:5px;`,
+      rarityTextColor: key === 'common' ? '#5f5b50' : key === 'rare' ? '#1f7ad1' : '#a67a00',
+      open: () => this.setState({ peek: { name, color, textColor: ink(color), rarity: rMap[key].label, rarityColor: rMap[key].color, glow: rMap[key].glow } })
+    });
+
+    const rawSets = [
+      { id: 0, name: 'SLAY', price: 60, cover: '#ffe800',
+        desc: 'Стартовый кейс. Выпадет один стикер — чаще обычный, иногда редкий.',
+        odds: [['обычный', 78, '#ffffff'], ['редкий', 20, '#2f9bff'], ['легенд.', 2, '#ffc400']],
+        pool: [stick('ПЕРО', '#ffd9ec', 'common', 26), stick('МЕЛ', '#ffffff', 'common', 26), stick('ЛИНЕЙКА', '#ffe800', 'common', 26),
+               stick('ЗВЕЗДА', '#111111', 'rare', 12), stick('ФОНАРИК', '#00e5ff', 'rare', 8), stick('КОТ-ОТЛИЧНИК', '#7cf03d', 'legendary', 2)] },
+      { id: 1, name: 'CLEAN', price: 180, cover: '#00e5ff',
+        desc: 'Кейс со сдвигом в редкое. Один стикер, шанс легендарного заметно выше.',
+        odds: [['обычный', 55, '#ffffff'], ['редкий', 37, '#2f9bff'], ['легенд.', 8, '#ffc400']],
+        pool: [stick('ЛУНА', accent, 'common', 20), stick('ГЛИТЧ', '#ffd9ec', 'common', 20), stick('ДИСКЕТА', '#111111', 'common', 15),
+               stick('КОМЕТА', '#ffe800', 'rare', 15), stick('НЕОН', '#00e5ff', 'rare', 12), stick('ПРИЗРАК', '#ffffff', 'rare', 10),
+               stick('ДРАКОН', '#7cf03d', 'legendary', 5), stick('НЛО', '#111111', 'legendary', 3)] },
+      { id: 2, name: 'REELS', price: 420, cover: accent,
+        desc: '\n!@~0ewr9 ?????\n',
+        odds: [['редкий', 72, '#2f9bff'], ['легендарный', 28, '#ffc400']],
+        pool: [stick('КУБОК', '#ffe800', 'rare', 18), stick('КОД', '#ffd9ec', 'rare', 18), stick('СЕРДЦЕ', '#00e5ff', 'rare', 18),
+               stick('КОРОНА', '#ffffff', 'rare', 18), stick('ФЕНИКС', '#7cf03d', 'legendary', 12), stick('ЧЁРНАЯ ДЫРА', '#111111', 'legendary', 10),
+               stick('РАДУГА', '#ffe800', 'legendary', 4), stick('ПИКСЕЛЬ-БОСС', accent, 'legendary', 2)] }
+    ];
+
+    const btn = (afford) => afford
+      ? `font-family:'Bungee',sans-serif;font-size:13px;padding:12px 10px;text-align:center;border:4px solid #111;background:${accent};color:#111;box-shadow:4px 4px 0 0 #111;cursor:pointer;`
+      : `font-family:'Bungee',sans-serif;font-size:11px;padding:12px 10px;text-align:center;border:4px solid rgba(17,17,17,.35);background:#efece0;color:rgba(17,17,17,.45);cursor:not-allowed;`;
+
+    const fan = (i, color) => {
+      const rot = [-9, 0, 9][i % 3];
+      return `width:30%;aspect-ratio:1;flex:0 1 30%;min-width:0;margin:0 ${i === 1 ? '5px' : '0'};background:${color};border:4px solid #fff;box-shadow:0 6px 12px rgba(0,0,0,.35),0 0 0 2px #111;display:flex;align-items:center;justify-content:center;padding:3px;transform:rotate(${rot}deg) translateY(${i === 1 ? '-7px' : '0'});`;
+    };
+
+    const sets = rawSets.map((s, i) => ({
+      id: s.id, name: s.name, desc: s.desc, price: s.price, cover: s.cover,
+      index: '0' + (i + 1),
+      isSlay: s.name === 'SLAY', isClean: s.name === 'CLEAN', isReels: s.name === 'REELS', notReels: s.name !== 'REELS',
+      reelsTag: '!@~0ewr9 ?????',
+      photoWrapStyle: s.name === 'REELS'
+        ? 'position:relative;height:130px;margin:-64px -20px 6px;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:3;'
+        : 'position:relative;height:136px;margin:-64px -30px 6px;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:3;',
+      poolLabel: s.pool.length + ' в пуле · 1 выпадет',
+      preview: s.pool.slice(0, 3).map((p, k) => ({ name: p.name, textColor: p.textColor, fanStyle: fan(k, p.color) })),
+      open: () => this.setState({ tab: 'detail', openSet: s.id })
+    }));
+
+    const cur = this.state.openSet === null ? rawSets[0] : rawSets[this.state.openSet];
+    const afford = balance >= cur.price;
+    const current = {
+      name: cur.name, desc: cur.desc, price: cur.price, cover: cur.cover, pool: cur.pool,
+      crumb: 'КЕЙС 0' + (cur.id + 1) + ' / СОДЕРЖИМОЕ',
+      isSlay: cur.name === 'SLAY', notSlay: cur.name !== 'SLAY',
+      isClean: cur.name === 'CLEAN', isReels: cur.name === 'REELS', notReels: cur.name !== 'REELS',
+      reelsTag: '!@~0ewr9 ?????',
+      photoWrapStyle: cur.name === 'REELS'
+        ? 'position:relative;height:150px;margin:-64px -30px 6px;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:3;'
+        : 'position:relative;height:136px;margin:-64px -30px 6px;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:3;',
+      index: '0' + (cur.id + 1),
+      poolLabel: cur.pool.length + ' в пуле · 1 выпадет',
+      preview: cur.pool.slice(0, 3).map((p, k) => ({ name: p.name, textColor: p.textColor, fanStyle: fan(k, p.color) })),
+      btnStyle: btn(afford),
+      btnLabel: afford ? 'ОТКРЫТЬ КЕЙС' : 'НЕ ХВАТАЕТ МОНЕТ',
+      confirmLine: 'Открыть ' + cur.name + ' за ' + cur.price + ' монет?',
+      odds: cur.odds.map(([label, pct, color], i, arr) => ({
+        label: pct + '%',
+        textColor: ink(color),
+        barStyle: `flex:${pct} 1 38px;min-width:38px;overflow:hidden;background:${color};display:flex;align-items:center;justify-content:center;` +
+          (i < arr.length - 1 ? 'border-right:3px solid #111;' : '')
+      }))
+    };
+
+    this.baseOwned = this.baseOwned || [
+      ['ПЕРО', '#ffd9ec', 'common'], ['МЕЛ', '#ffffff', 'common'], ['ЗВЕЗДА', '#111111', 'rare'],
+      ['КОТ-ОТЛИЧНИК', '#7cf03d', 'legendary'], ['ГЛИТЧ', '#ff8ec7', 'common'], ['ЛУНА', accent, 'rare'],
+      ['КУБОК', '#ffe800', 'legendary'], ['КОД', '#ffd9ec', 'common'], ['ДИСКЕТА', '#111111', 'common'],
+      ['СЕРДЦЕ', '#00e5ff', 'rare'], ['КОМЕТА', '#ffe800', 'rare'], ['ЛАМПА', '#ffd9ec', 'common']
+    ];
+    const raw = this.state.owned || this.baseOwned;
+    const inventory = raw.map(([name, color, key]) => ({
+      name, color, textColor: ink(color),
+      rarity: rMap[key].label, rarityColor: rMap[key].color,
+      rarityTextColor: key === 'common' ? '#b9b4a4' : rMap[key].color,
+      frameStyle: `position:relative;aspect-ratio:1;background:${color};border:4px solid #fff;box-shadow:0 5px 10px rgba(0,0,0,.4),0 0 0 2px #111${rMap[key].glow};display:flex;align-items:center;justify-content:center;padding:6px;cursor:pointer;`,
+      open: () => this.setState({ tip: null, peek: { name, color, textColor: ink(color), rarity: rMap[key].label, rarityColor: rMap[key].color, glow: rMap[key].glow, owned: true } }),
+      placeBtnStyle: `font-family:'JetBrains Mono',monospace;font-weight:700;font-size:8px;letter-spacing:.1em;text-transform:uppercase;text-align:center;padding:4px 2px;border:3px solid ${this.state.placing === name ? '#ffe800' : 'rgba(255,255,255,.35)'};background:${this.state.placing === name ? '#ffe800' : 'transparent'};color:${this.state.placing === name ? '#111' : '#e8e4d6'};cursor:pointer;`,
+      place: (e) => { e.stopPropagation(); this.setState({ placing: name, placingColor: color, selectedZone: null, placeNote: '', peek: null }); }
+    }));
+
+    const zoneDefs = this.props.zones ?? [
+      { id: 'zone1', label: 'У ПРИВЕТСТВИЯ', x: 51, y: 1.6, w: 26, h: 4.4 },
+      { id: 'zone2', label: 'КАРТОЧКА УРОКА', x: 61, y: 9.6, w: 35, h: 4.4, occupiedBy: { name: 'МЕЛ', color: '#ffffff' } },
+      { id: 'zone3', label: 'МОЯ ЦЕЛЬ', x: 53, y: 50.8, w: 28, h: 4.6 },
+      { id: 'zone4', label: 'БЛОК FCE', x: 30, y: 67.6, w: 32, h: 5 }
+    ];
+    const zones = zoneDefs.map(z => {
+      const occ = (z.id in this.state.placed) ? this.state.placed[z.id] : (z.occupiedBy || null);
+      const selected = this.state.selectedZone === z.id;
+      const base = `position:absolute;left:${z.x}%;top:${z.y}%;width:${z.w}%;min-height:${z.h}%;box-sizing:border-box;padding:2px 3px;display:flex;align-items:center;cursor:pointer;`;
+      const look = selected
+        ? 'border:3px solid #4fbf12;background:rgba(124,240,61,.34);box-shadow:0 0 0 2px #111,0 0 12px rgba(79,191,18,.5);'
+        : occ
+          ? 'border:2px solid #b6a276;background:rgba(184,162,118,.4);'
+          : 'border:2px dashed #ff7a1a;background:rgba(255,122,26,.16);';
+      return {
+        id: z.id, label: z.label, selected, occupied: !!occ,
+        hasSticker: !!occ && !selected,
+        boxStyle: base + look,
+        labelStyle: `min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:6px;line-height:1.1;letter-spacing:0;white-space:nowrap;color:${selected ? '#1f4d0a' : occ ? '#6b5c37' : '#a34500'};`,
+        thumbStyle: `flex:none;width:9px;height:9px;background:${occ ? occ.color : '#fff'};border:1.5px solid #8a7b58;opacity:.55;`,
+        select: () => this.setState({ selectedZone: z.id }),
+        clear: (e) => {
+          e.stopPropagation();
+          const placed = Object.assign({}, this.state.placed);
+          placed[z.id] = null;
+          this.setState({ placed, placeNote: 'стикер убран с ' + z.label.toLowerCase() });
+        }
+      };
+    });
+
+    const isDetail = this.state.tab === 'detail';
+    const isCases = this.state.tab === 'cases';
+    const isColl = this.state.tab === 'collection';
+
+    const tabStyle = (active) => `font-family:'Bungee',sans-serif;font-size:12px;padding:11px 20px;border-right:5px solid #ffe800;cursor:pointer;` +
+      (active ? `background:#ffe800;color:#111;` : `background:#111;color:#ffe800;`);
+
+    return {
+      balance, sets, current, rarities, inventory,
+      arcadeCells: this.word('ARCADE', ['#ffe800', accent, '#00e5ff', '#7cf03d', '#ffe800', accent]),
+      insertCells: this.word('INSERT', ['#ffe800']),
+      coinBigCells: this.word('COIN', ['#ff2e9a', '#ff2e9a', '#ffe800', '#ffe800']),
+      playCells: this.word('PLAY', ['#7cf03d', '#7cf03d', '#00e5ff', '#00e5ff']),
+      coinCells: this.word('COIN', ['#ffe800']),
+      isCases, isDetail, isCollection: isColl,
+      heroLine: isDetail ? '&7%..-ds ~~09qw?? !@#0ewr9' : isCases ? '!@~0ewr9 &7%..-ds ??ы0lk~ *3#' : '~~ds9 %%..0 !? qwe4~~ -&8#zx',
+      emptySlots: [1, 2],
+      ownedLabel: inventory.length + ' / 18',
+      tabCasesStyle: tabStyle(isCases || isDetail),
+      tabCollStyle: tabStyle(isColl),
+      ticker: '◆ НОВЫЙ КЕЙС REELS ◆ ДУБЛИКАТЫ ОБМЕНИВАЮТСЯ НА МОНЕТЫ ◆ ЗА КАЖДЫЙ УРОК +15 МОНЕТ ◆ ШАНСЫ ОТКРЫТЫ ◆ ',
+      isConfirm: this.state.phase === 'confirm',
+      isSpinning: this.state.phase === 'spinning',
+      isResult: this.state.phase === 'result',
+      strip: this.state.strip.map(s => ({
+        name: s.name,
+        frameStyle: `flex:none;width:96px;height:96px;background:${s.color};border:4px solid #fff;box-shadow:0 6px 12px rgba(0,0,0,.5),0 0 0 2px #111,0 0 0 6px ${s.rarityColor}${s.glow};display:flex;align-items:center;justify-content:center;padding:6px;`,
+        textColor: s.textColor
+      })),
+      spinStyle: `position:absolute;top:16px;left:50%;display:flex;gap:8px;transform:translateX(${this.state.spinX}px);transition:${this.state.spinTransition};will-change:transform;`,
+      result: this.state.result || { name: '', color: '#fff', textColor: '#111', rarity: '', rarityColor: '#fff' },
+      resultFrameStyle: this.state.result
+        ? `width:172px;height:172px;background:${this.state.result.color};border:6px solid #fff;box-shadow:0 12px 26px rgba(0,0,0,.55),0 0 0 3px #111,0 0 0 10px ${this.state.result.rarityColor}${this.state.result.glow};display:flex;align-items:center;justify-content:center;padding:12px;`
+        : '',
+      isPeek: !!this.state.peek,
+      peek: this.state.peek
+        ? Object.assign({}, this.state.peek, {
+            frameStyle: `width:172px;height:172px;background:${this.state.peek.color};border:6px solid #fff;box-shadow:0 12px 26px rgba(0,0,0,.55),0 0 0 3px #111,0 0 0 10px ${this.state.peek.rarityColor}${this.state.peek.glow};display:flex;align-items:center;justify-content:center;padding:12px;`
+          })
+        : { name: '', color: '#fff', textColor: '#111', rarity: '', rarityColor: '#fff', frameStyle: '', owned: false },
+      closePeek: () => this.setState({ peek: null, tip: null }),
+      placeFromPeek: (e) => {
+        e.stopPropagation();
+        const p = this.state.peek;
+        if (!p) return;
+        this.setState({ peek: null, tip: null, tab: 'collection', placing: p.name, placingColor: p.color, selectedZone: null, placeNote: '' });
+      },
+      swallow: (e) => e.stopPropagation(),
+      isPlacing: true,
+      placingLabel: this.state.placing || 'выбери стикер слева',
+      placingSwatchStyle: `width:24px;height:24px;background:${this.state.placingColor || 'transparent'};border:3px ${this.state.placing ? 'solid' : 'dashed'} #111;box-shadow:3px 3px 0 0 #fff;`,
+      placedCountLabel: zones.filter(z => z.occupied).length + ' / ' + zones.length + ' занято',
+      collGridStyle: `flex:1;min-width:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;`,
+      zones,
+      placeHint: !this.state.placing
+        ? 'Нажми «разместить» под стикером слева, затем выбери зону на схеме.'
+        : this.state.selectedZone
+          ? 'Зона выбрана. Стикер появится на дашборде после подтверждения.'
+          : 'Выбери зону на схеме — занятые зоны можно заменить, X убирает стикер.',
+      confirmBtnStyle: this.state.selectedZone && this.state.placing
+        ? `font-family:'Bungee',sans-serif;font-size:11px;text-align:center;padding:11px 8px;border:4px solid #111;background:#ffe800;color:#111;box-shadow:4px 4px 0 0 #111;cursor:pointer;`
+        : `font-family:'Bungee',sans-serif;font-size:11px;text-align:center;padding:11px 8px;border:4px solid rgba(17,17,17,.3);background:#e2d9c2;color:rgba(17,17,17,.4);cursor:not-allowed;`,
+      cancelPlacing: () => this.setState({ placing: null, selectedZone: null }),
+      confirmPlacement: () => {
+        if (!this.state.selectedZone || !this.state.placing) return;
+        const placed = Object.assign({}, this.state.placed);
+        placed[this.state.selectedZone] = { name: this.state.placing, color: this.state.placingColor };
+        this.setState({ placed, placing: null, selectedZone: null, placeNote: this.state.placing + ' размещён' });
+      },
+      placeNote: this.state.placeNote,
+      hasPlaceNote: !!this.state.placeNote,
+      isAboutTip: this.state.tip === 'about',
+      showAttn: !this.state.tipSeen,
+      aboutBtnStyle: `width:22px;height:22px;border:3px solid #111;display:flex;align-items:center;justify-content:center;font-family:'Bungee',sans-serif;font-size:11px;cursor:pointer;`
+        + (this.state.tipSeen ? 'background:transparent;color:#111;' : 'animation:iattn 1s steps(1) infinite;'),
+      isPlaceTip: this.state.tip === 'place',
+      toggleAboutTip: (e) => { e.stopPropagation(); this.setState({ tipSeen: true, tip: this.state.tip === 'about' ? null : 'about' }); },
+      togglePlaceTip: (e) => { e.stopPropagation(); this.setState({ tip: this.state.tip === 'place' ? null : 'place' }); },
+      closeTip: (e) => { e.stopPropagation(); this.setState({ tip: null }); },
+      resultTitle: this.state.dup ? 'ДУБЛИКАТ' : 'НОВЫЙ СТИКЕР',
+      resultNote: this.state.dup
+        ? 'Такой стикер уже есть — обменяли на ' + this.state.refund + ' монет'
+        : 'Добавлен в коллекцию',
+      sparkles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i => {
+        const cols = ['#ffe800', accent, '#00e5ff', '#7cf03d'];
+        const x = [6, 18, 31, 44, 57, 70, 83, 92, 12, 38, 64, 88][i];
+        const y = [14, 62, 24, 78, 18, 70, 30, 66, 44, 86, 8, 52][i];
+        const sz = [14, 22, 10, 18, 26, 12, 20, 16, 24, 12, 18, 14][i];
+        return { style: `position:absolute;left:${x}%;top:${y}%;width:${sz}px;height:${sz}px;background:${cols[i % 4]};clip-path:polygon(50% 0,58% 42%,100% 50%,58% 58%,50% 100%,42% 58%,0 50%,42% 42%);animation:pop ${1.2 + (i % 4) * .35}s ease-in-out ${i * .13}s infinite;` };
+      }),
+      askConfirm: () => this.setState({ phase: 'confirm' }),
+      cancel: () => this.setState({ phase: 'idle' }),
+      confirmOpen: () => this.spin(cur, balance),
+      closeResult: () => this.setState({ phase: 'idle', result: null }),
+      goCollection: () => this.setState({ phase: 'idle', result: null, tab: 'collection' }),
+      showCases: () => this.setState({ tab: 'cases', phase: 'idle' }),
+      showCollection: () => this.setState({ tab: 'collection', phase: 'idle' }),
+      backToCases: () => this.setState({ tab: 'cases', phase: 'idle' }),
+      noop: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

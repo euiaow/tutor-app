@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0}
+body{background:#0c0a0d;font-family:'JetBrains Mono',ui-monospace,monospace;-webkit-font-smoothing:none}
+a{color:#ff2e9a;text-decoration:none}
+a:hover{color:#111}
+@keyframes stkFloat{0%{transform:translateY(0)}50%{transform:translateY(-4px)}100%{transform:translateY(0)}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:48px 24px;background:
+  repeating-linear-gradient(to right, rgba(255,46,154,.10) 0 1px, transparent 1px 40px),
+  repeating-linear-gradient(to bottom, rgba(255,46,154,.10) 0 1px, transparent 1px 40px),
+  radial-gradient(120% 90% at 50% 0%, #2a0d1e 0%, #0c0a0d 70%);">
+
+  <div style="width:1000px;max-width:100%;border:4px solid #111;background:#fff4f9;box-shadow:14px 14px 0 0 #ff2e9a, 0 0 0 4px #111, 0 40px 80px rgba(0,0,0,.55);">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;background:#ff2e9a;border-bottom:4px solid #111;padding:10px 12px 10px 16px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="display:grid;grid-template-columns:repeat(3,6px);grid-template-rows:repeat(3,6px);gap:2px;">
+          <div style="background:#111"></div><div style="background:#fff"></div><div style="background:#111"></div>
+          <div style="background:#fff"></div><div style="background:#111"></div><div style="background:#fff"></div>
+          <div style="background:#111"></div><div style="background:#fff"></div><div style="background:#111"></div>
+        </div>
+        <span style="font-family:'Silkscreen',monospace;font-size:15px;letter-spacing:.06em;color:#111;">STICKER_SHOP.EXE</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:26px;height:26px;border:3px solid #111;background:#fff4f9;display:flex;align-items:center;justify-content:center;font-family:'Silkscreen',monospace;font-size:11px;color:#111;">–</div>
+        <div style="width:26px;height:26px;border:3px solid #111;background:#111;display:flex;align-items:center;justify-content:center;font-family:'Silkscreen',monospace;font-size:11px;color:#ff2e9a;cursor:pointer;" style-hover="background:#fff4f9;color:#111">X</div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:20px 24px 0;">
+      <div style="display:flex;gap:0;">
+        <div onClick="{{ showCases }}" style="{{ tabCasesStyle }}" style-hover="opacity:.85">КЕЙСЫ</div>
+        <div onClick="{{ showCollection }}" style="{{ tabCollStyle }}" style-hover="opacity:.85">КОЛЛЕКЦИЯ</div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;border:3px solid #111;background:#111;padding:7px 12px 7px 9px;box-shadow:5px 5px 0 0 #ff2e9a;">
+        <div style="width:18px;height:18px;background:#ff2e9a;border:2px solid #fff;display:flex;align-items:center;justify-content:center;">
+          <div style="width:5px;height:5px;background:#fff;"></div>
+        </div>
+        <span style="font-family:'Silkscreen',monospace;font-size:14px;color:#fff;letter-spacing:.04em;">{{ balance }}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#ff8ec7;letter-spacing:.14em;text-transform:uppercase;">монет</span>
+      </div>
+    </div>
+
+    <div style="height:4px;background:#111;margin:-3px 0 0;"></div>
+
+    <sc-if value="{{ isCases }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:26px 24px 30px;">
+        <div style="display:flex;align-items:baseline;gap:12px;margin:0 0 18px;">
+          <span style="font-family:'Silkscreen',monospace;font-size:12px;color:#111;letter-spacing:.06em;">ДОСТУПНЫЕ НАБОРЫ</span>
+          <span style="flex:1;height:3px;background:repeating-linear-gradient(to right,#111 0 6px,transparent 6px 12px);"></span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;">
+          <sc-for list="{{ sets }}" as="set" hint-placeholder-count="3">
+            <div style="border:4px solid #111;background:#fff;box-shadow:7px 7px 0 0 #111;display:flex;flex-direction:column;" style-hover="box-shadow:7px 7px 0 0 #ff2e9a">
+              <div style="position:relative;padding:16px;background:{{ set.cover }};border-bottom:4px solid #111;">
+                <div style="position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(0,0,0,.10) 0 4px,transparent 4px 8px);"></div>
+                <div style="position:relative;display:flex;align-items:center;justify-content:center;height:104px;">
+                  <span style="font-family:'Silkscreen',monospace;font-size:13px;color:{{ set.coverTextColor }};text-align:center;line-height:1.5;letter-spacing:.04em;">{{ set.coverLabel }}</span>
+                </div>
+                <div style="position:relative;display:flex;gap:8px;margin-top:12px;">
+                  <sc-for list="{{ set.preview }}" as="st" hint-placeholder-count="3">
+                    <div style="width:46px;height:46px;background:{{ st.color }};border:3px solid #fff;box-shadow:0 3px 6px rgba(0,0,0,.35),0 0 0 1px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:2px;">
+                      <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:7px;line-height:1.15;color:{{ st.textColor }};text-align:center;text-wrap:pretty;">{{ st.name }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="width:46px;height:46px;border:3px dashed rgba(17,17,17,.45);display:flex;align-items:center;justify-content:center;font-family:'Silkscreen',monospace;font-size:9px;color:rgba(17,17,17,.6);">{{ set.moreLabel }}</div>
+                </div>
+              </div>
+
+              <div style="padding:14px 14px 16px;display:flex;flex-direction:column;gap:10px;flex:1;">
+                <span style="font-family:'Silkscreen',monospace;font-size:14px;color:#111;letter-spacing:.03em;line-height:1.4;">{{ set.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6b5c64;line-height:1.5;">{{ set.desc }}</span>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:auto;padding-top:6px;">
+                  <div style="display:flex;align-items:center;gap:7px;">
+                    <div style="width:14px;height:14px;background:#ff2e9a;border:2px solid #111;"></div>
+                    <span style="font-family:'Silkscreen',monospace;font-size:13px;color:#111;">{{ set.price }}</span>
+                  </div>
+                  <div onClick="{{ noop }}" style="{{ set.btnStyle }}" style-hover="transform:translate(2px,2px)">{{ set.btnLabel }}</div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isCollection }}" hint-placeholder-val="{{ false }}">
+      <div style="padding:26px 24px 30px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 18px;">
+          <div style="display:flex;align-items:baseline;gap:12px;">
+            <span style="font-family:'Silkscreen',monospace;font-size:12px;color:#111;letter-spacing:.06em;">МОИ СТИКЕРЫ</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6b5c64;">{{ ownedLabel }}</span>
+          </div>
+          <div style="display:flex;gap:14px;">
+            <sc-for list="{{ rarities }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <div style="width:11px;height:11px;background:{{ r.color }};border:2px solid #111;"></div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#111;">{{ r.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:16px;">
+          <sc-for list="{{ inventory }}" as="it" hint-placeholder-count="12">
+            <div style="display:flex;flex-direction:column;gap:7px;">
+              <div style="position:relative;aspect-ratio:1;background:{{ it.color }};border:4px solid #fff;box-shadow:0 5px 10px rgba(0,0,0,.30),0 0 0 1px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:8px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:9px;line-height:1.25;color:{{ it.textColor }};text-align:center;text-wrap:pretty;">{{ it.name }}</span>
+                <div style="position:absolute;top:-4px;right:-4px;width:12px;height:12px;background:{{ it.rarityColor }};border:2px solid #111;"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:{{ it.rarityTextColor }};">{{ it.rarity }}</span>
+              </div>
+            </div>
+          </sc-for>
+
+          <sc-for list="{{ emptySlots }}" as="e" hint-placeholder-count="2">
+            <div style="display:flex;flex-direction:column;gap:7px;">
+              <div style="aspect-ratio:1;border:4px dashed rgba(17,17,17,.3);display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(45deg,rgba(17,17,17,.05) 0 5px,transparent 5px 10px);">
+                <span style="font-family:'Silkscreen',monospace;font-size:16px;color:rgba(17,17,17,.35);">?</span>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:rgba(17,17,17,.4);">не открыт</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="border-top:4px solid #111;background:#111;padding:9px 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;color:#ff8ec7;text-transform:uppercase;">{{ statusLine }}</span>
+      <span style="font-family:'Silkscreen',monospace;font-size:9px;color:#fff;letter-spacing:.1em;">v1.0</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accentColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#ff2e9a&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#ff2e9a&quot;,&quot;#ff5ec4&quot;,&quot;#e0257f&quot;,&quot;#8affc1&quot;]},&quot;balance&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:240,&quot;min&quot;:0,&quot;max&quot;:999,&quot;tsType&quot;:&quot;number&quot;}}">
+class Component extends DCLogic {
+  state = { tab: 'cases' };
+
+  renderVals() {
+    const accent = this.props.accentColor ?? '#ff2e9a';
+    const balance = this.props.balance ?? 240;
+    const isCases = this.state.tab === 'cases';
+
+    const tab = (active) => `font-family:'Silkscreen',monospace;font-size:13px;letter-spacing:.05em;padding:12px 22px;border:4px solid #111;border-bottom:none;cursor:pointer;margin-right:-4px;position:relative;` +
+      (active
+        ? `background:#111;color:${accent};z-index:2;`
+        : `background:#ffd9ec;color:#111;z-index:1;`);
+
+    const btn = (afford) => afford
+      ? `font-family:'Silkscreen',monospace;font-size:11px;letter-spacing:.04em;padding:9px 13px;border:3px solid #111;background:${accent};color:#111;box-shadow:3px 3px 0 0 #111;cursor:pointer;`
+      : `font-family:'Silkscreen',monospace;font-size:11px;letter-spacing:.04em;padding:9px 13px;border:3px solid rgba(17,17,17,.4);background:#f0e6eb;color:rgba(17,17,17,.45);cursor:not-allowed;`;
+
+    const ink = (fill) => (fill === '#111111' || fill === accent || fill === '#ff2e9a' || fill === '#e0257f') ? '#ffffff' : '#111111';
+
+    const sets = [
+      { name: 'ПЕРВЫЙ УРОК', desc: 'Стартовый набор. 5 стикеров, редкость до редкой.', price: 60, cover: '#ffd9ec', coverLabel: 'ОБЛОЖКА\nКЕЙСА 01', moreLabel: '+2',
+        preview: [{ name: 'ПЕРО', color: '#ff8ec7' }, { name: 'МЕЛ', color: '#ffffff' }, { name: 'ЗВЕЗДА', color: '#111111' }] },
+      { name: 'НОЧНАЯ СЕРИЯ', desc: '7 стикеров. Шанс легендарного — 8%.', price: 180, cover: '#111111', coverLabel: 'ОБЛОЖКА\nКЕЙСА 02', moreLabel: '+4',
+        preview: [{ name: 'ЛУНА', color: '#ff2e9a' }, { name: 'ГЛИТЧ', color: '#ffd9ec' }, { name: 'КОТ', color: '#8affc1' }] },
+      { name: 'ЗОЛОТОЙ ФОНД', desc: '10 стикеров. Только редкие и легендарные.', price: 420, cover: '#ff2e9a', coverLabel: 'ОБЛОЖКА\nКЕЙСА 03', moreLabel: '+7',
+        preview: [{ name: 'КУБОК', color: '#ffffff' }, { name: 'ДРАКОН', color: '#111111' }, { name: 'КОД', color: '#ffd9ec' }] }
+    ].map(s => {
+      const afford = balance >= s.price;
+      return Object.assign({}, s, {
+        btnStyle: btn(afford),
+        btnLabel: afford ? 'ОТКРЫТЬ' : 'НЕ ХВАТИТ',
+        coverLabel: s.coverLabel.replace('\n', ' '),
+        coverTextColor: ink(s.cover),
+        preview: s.preview.map(p => Object.assign({}, p, { textColor: ink(p.color) }))
+      });
+    });
+
+    const rMap = {
+      common:    { label: 'обычный',     color: '#ffffff', text: '#6b5c64' },
+      rare:      { label: 'редкий',      color: accent,    text: accent },
+      legendary: { label: 'легендарный', color: '#8affc1', text: '#1c7a4d' }
+    };
+    const rarities = [rMap.common, rMap.rare, rMap.legendary].map(r => ({ label: r.label, color: r.color }));
+
+    const raw = [
+      ['ПЕРО', '#ffd9ec', 'common'], ['МЕЛ', '#ffffff', 'common'], ['ЗВЕЗДА', '#111111', 'rare'],
+      ['КОТ', '#8affc1', 'legendary'], ['ГЛИТЧ', '#ff8ec7', 'common'], ['ЛУНА', '#ff2e9a', 'rare'],
+      ['КУБОК', '#ffffff', 'legendary'], ['КОД', '#ffd9ec', 'common'], ['ДИСКЕТА', '#111111', 'common'],
+      ['СЕРДЦЕ', '#ff8ec7', 'rare'], ['ДРАКОН', '#8affc1', 'rare'], ['ЛАМПА', '#ffd9ec', 'common']
+    ];
+    const inventory = raw.map(([name, color, key]) => ({
+      name, color, textColor: ink(color),
+      rarity: rMap[key].label,
+      rarityColor: rMap[key].color,
+      rarityTextColor: rMap[key].text
+    }));
+
+    return {
+      balance, isCases, isCollection: !isCases, sets, rarities, inventory,
+      emptySlots: [1, 2, 3, 4, 5, 6],
+      ownedLabel: inventory.length + ' из 18 собрано',
+      tabCasesStyle: tab(isCases),
+      tabCollStyle: tab(!isCases),
+      statusLine: isCases ? '> выбери кейс и открой его за монеты' : '> дубликаты обмениваются на монеты',
+      showCases: () => this.setState({ tab: 'cases' }),
+      showCollection: () => this.setState({ tab: 'collection' }),
+      noop: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -163,14 +163,19 @@ async function createExtraLessonEvent(teacherId, student, date, durationMinutes 
   return createEventFromResource(teacherId, resource)
 }
 
-// Diffs a student's current scheduleSlots against their existing
-// googleEventIds map (keyed by slot index, e.g. {"0": eventId, "1": eventId})
-// and creates/updates/deletes events so the calendar ends up with exactly
-// one recurring event per slot. Writes the rebuilt map back onto the
-// student doc itself.
-async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
-  const scheduleSlots = normalizeScheduleSlots(student)
-  const existingEventIds = student.googleEventIds ?? {}
+// Diffs a set of scheduleSlots against an existing googleEventIds map
+// (keyed by slot index, e.g. {"0": eventId, "1": eventId}) and creates/
+// updates/deletes events so the calendar ends up with exactly one recurring
+// event per slot. Returns the rebuilt map — doesn't write it anywhere
+// itself, so it's equally usable for a student doc (studentRef) or a group
+// doc (groupRef), which have different fields/paths to write the result
+// back onto. Extracted from what used to be syncScheduleSlots's own inline
+// loop (session 15/16 shape) so group lessons (session 17) can reuse the
+// exact same create/update/delete diffing instead of a second hand-copied
+// version — `buildResource(slot)` is the only per-caller thing (student
+// events use the student's name/topic, group events use the group's
+// name/subject).
+async function syncSlotEvents(teacherId, logContext, scheduleSlots, existingEventIds, buildResource) {
   const nextEventIds = {}
 
   for (let index = 0; index < scheduleSlots.length; index += 1) {
@@ -180,13 +185,12 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
     // No teacher-profile-timezone fallback passed here on purpose — see the
     // identical comment in core/lessons.js's ensureUpcomingLesson. A slot's
     // own stamped `timeZone` always wins; a legacy slot with none falls
-    // back to DEFAULT_TIME_ZONE inside buildEventResourceForSlot/
-    // getNextLessonDateForSlot rather than the teacher's current Settings
-    // preference.
-    const resource = buildEventResourceForSlot(student, slot)
+    // back to DEFAULT_TIME_ZONE inside buildResource/getNextLessonDateForSlot
+    // rather than the teacher's current Settings preference.
+    const resource = buildResource(slot)
 
     if (!resource) {
-      logger.warn("syncScheduleSlots: cannot build event, invalid slot", { studentId, slotIndex: index })
+      logger.warn("syncSlotEvents: cannot build event, invalid slot", { ...logContext, slotIndex: index })
       if (existingEventId) {
         nextEventIds[key] = existingEventId
       }
@@ -197,10 +201,10 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
       try {
         await updateEventFromResource(teacherId, existingEventId, resource)
         nextEventIds[key] = existingEventId
-        logger.info("syncScheduleSlots: updated event", { studentId, slotIndex: index, eventId: existingEventId })
+        logger.info("syncSlotEvents: updated event", { ...logContext, slotIndex: index, eventId: existingEventId })
       } catch (error) {
-        logger.error("syncScheduleSlots: update failed, keeping existing mapping", {
-          studentId,
+        logger.error("syncSlotEvents: update failed, keeping existing mapping", {
+          ...logContext,
           slotIndex: index,
           eventId: existingEventId,
           error,
@@ -214,12 +218,12 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
       const eventId = await createEventFromResource(teacherId, resource)
       if (eventId) {
         nextEventIds[key] = eventId
-        logger.info("syncScheduleSlots: created event", { studentId, slotIndex: index, eventId })
+        logger.info("syncSlotEvents: created event", { ...logContext, slotIndex: index, eventId })
       } else {
-        logger.warn("syncScheduleSlots: create skipped, calendar not connected", { studentId, slotIndex: index })
+        logger.warn("syncSlotEvents: create skipped, calendar not connected", { ...logContext, slotIndex: index })
       }
     } catch (error) {
-      logger.error("syncScheduleSlots: create failed", { studentId, slotIndex: index, error })
+      logger.error("syncSlotEvents: create failed", { ...logContext, slotIndex: index, error })
     }
   }
 
@@ -229,13 +233,58 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
     }
     try {
       await deleteLessonEvent(teacherId, eventId)
-      logger.info("syncScheduleSlots: deleted stale event", { studentId, slotIndex: key, eventId })
+      logger.info("syncSlotEvents: deleted stale event", { ...logContext, slotIndex: key, eventId })
     } catch (error) {
-      logger.warn("syncScheduleSlots: failed to delete stale event, skipping", { studentId, slotIndex: key, error })
+      logger.warn("syncSlotEvents: failed to delete stale event, skipping", { ...logContext, slotIndex: key, error })
     }
   }
 
+  return nextEventIds
+}
+
+async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
+  const scheduleSlots = normalizeScheduleSlots(student)
+  const nextEventIds = await syncSlotEvents(
+    teacherId,
+    { studentId },
+    scheduleSlots,
+    student.googleEventIds ?? {},
+    (slot) => buildEventResourceForSlot(student, slot),
+  )
   await studentRef.update({ googleEventIds: nextEventIds })
+}
+
+// summary is the group's own name (not a student's), colorId comes from the
+// group's single subject (not per-slot — a group has one subject, unlike a
+// student's scheduleSlots which can bind a different subject per slot).
+function buildGroupEventResourceForSlot(group, slot) {
+  const start = getNextLessonDateForSlot(slot)
+  if (!start) {
+    return null
+  }
+
+  const durationMinutes = slot?.durationMinutes ?? 60
+  const end = new Date(start.getTime() + durationMinutes * 60 * 1000)
+
+  return {
+    summary: group.name,
+    start: { dateTime: toFloatingDateTime(start), timeZone: CALENDAR_TIME_ZONE },
+    end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
+    recurrence: ["RRULE:FREQ=WEEKLY"],
+    colorId: colorIdForSubject(group.subject),
+  }
+}
+
+async function syncGroupScheduleSlots(teacherId, groupId, group, groupRef) {
+  const scheduleSlots = normalizeScheduleSlots(group)
+  const nextEventIds = await syncSlotEvents(
+    teacherId,
+    { groupId },
+    scheduleSlots,
+    group.googleEventIds ?? {},
+    (slot) => buildGroupEventResourceForSlot(group, slot),
+  )
+  await groupRef.update({ googleEventIds: nextEventIds })
 }
 
 // Reschedules a single occurrence of the student's recurring lesson event
@@ -312,4 +361,13 @@ async function deleteLessonEvent(teacherId, eventId) {
   }
 }
 
-module.exports = { syncScheduleSlots, deleteLessonEvent, rescheduleLessonEvent, createExtraLessonEvent }
+module.exports = {
+  syncScheduleSlots,
+  syncGroupScheduleSlots,
+  deleteLessonEvent,
+  rescheduleLessonEvent,
+  createExtraLessonEvent,
+  createEventFromResource,
+  updateEventFromResource,
+  colorIdForSubject,
+}

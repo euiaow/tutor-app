@@ -51,7 +51,9 @@
     "attachHomework": "Attach homework",
     "orSendViaBot": "Or send it via the Telegram/VK bot",
     "rescheduleButton": "Reschedule lesson",
-    "cancelButton": "Cancel lesson"
+    "cancelButton": "Cancel lesson",
+    "groupLabel": "Group lesson «{{name}}»",
+    "groupNoActions": "Rescheduling or cancelling a group lesson is the teacher's call only"
   },
   "upcomingRow": {
     "pendingStudent": "Awaiting your response",
@@ -193,31 +195,7 @@
     "digitAria": "Digit {{index}}"
   },
   "gamification": {
-    "sectionTitle": "Cases and stickers",
-    "noSets": "No cases added yet",
-    "openButton": "Open · {{price}} 🪙",
-    "openError": "Failed to open the case",
-    "notEnoughCoins": "Not enough coins",
-    "collectionTitle": "Collection ({{count}})",
-    "collectionEmpty": "Empty for now — open a case to get your first sticker",
-    "collectionHint": "Tap a sticker, then tap one of the 3 zones on the page to place it there",
-    "rarity": {
-      "common": "Common",
-      "rare": "Rare",
-      "epic": "Epic",
-      "legendary": "Legendary"
-    },
-    "zoneRemoveTitle": "{{name}} — tap to remove",
-    "zonePlaceTitle": "Tap to place a sticker",
-    "showcaseTitle": "Sticker showcase",
-    "showcaseHint": "Place a sticker from your collection here",
-    "caseOpening": {
-      "dialogTitle": "Opening case",
-      "spinning": "Spinning the reel...",
-      "revealed": "Result",
-      "duplicate": "Already in your collection — converted to {{coins}} 🪙",
-      "newItem": "Added to your collection",
-      "continue": "Continue"
-    }
+    "portalTitle": "Cases and stickers",
+    "portalHint": "Open a case and build your collection"
   }
 }

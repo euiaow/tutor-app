@@ -19,7 +19,7 @@ const DECORATION_DOC_ID = "main"
 
 const DEFAULT_CASE_PRICE = 6
 const DUPLICATE_COIN_REWARD = 2
-const DECORATION_ZONES = ["zone1", "zone2", "zone3"]
+const DECORATION_ZONES = ["zone1", "zone2", "zone3", "zone4", "zone5"]
 
 function studentRef(studentId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId)

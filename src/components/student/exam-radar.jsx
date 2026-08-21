@@ -17,6 +17,7 @@ import { CurriculumItemGroups } from "@/components/student/curriculum-item-group
 import { round1, buildRadarComment } from "@/lib/examRadar"
 import { translateSubject } from "@/locales/subjectTranslations"
 import { translateUnitLabel } from "@/locales/examUnitTranslations"
+import { DecorationZone } from "@/components/student/decoration-zone"
 
 // Judgment call (Phase 3 — not specified): final_week gets the same amber
 // "pay attention" tone as yellow, without being as alarming as red — it's
@@ -58,6 +59,7 @@ export function ExamRadar({
   requiredTopics,
   requiredPrototypes,
   staleDays,
+  showDecoration = false,
 }) {
   const { t, i18n } = useTranslation("student")
   const [expanded, setExpanded] = useState(false)
@@ -103,7 +105,13 @@ export function ExamRadar({
   const remainingPrototypes = requiredPrototypes.filter((item) => !item.covered)
 
   return (
-    <section className="glass-soft mt-5 rounded-4xl p-6 sm:p-7">
+    <section className="glass-soft relative mt-5 rounded-4xl p-6 sm:p-7">
+      {showDecoration ? (
+        <>
+          <DecorationZone zone="zone4" className="top-[-40px] right-3 sm:top-[-56px] sm:right-5" />
+          <DecorationZone zone="zone5" className="bottom-[-40px] right-3 sm:bottom-[-56px] sm:right-6" />
+        </>
+      ) : null}
       <div className="flex items-center gap-3">
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"

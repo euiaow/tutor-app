@@ -42,19 +42,22 @@ import { resolveLessonSubject } from "@/lib/subjects"
 import { SubjectTag } from "@/components/student-tags"
 import { useTimeZone } from "@/lib/user-prefs-context"
 
-const ATTENDANCE_OPTIONS = [
+// Exported so group-lesson-dialog.jsx (Phase 3 of group lessons) can reuse
+// the exact same attendance/rating vocabulary and pill-toggle control for
+// its own per-attendee roster, instead of a second hand-copied version.
+export const ATTENDANCE_OPTIONS = [
   { value: "on_time", label: "Вовремя" },
   { value: "late", label: "Опоздал" },
   { value: "absent", label: "Не пришёл" },
 ]
 
-const RATING_OPTIONS = [
+export const RATING_OPTIONS = [
   { value: "excellent", label: "Отлично" },
   { value: "good", label: "Хорошо" },
   { value: "needs_work", label: "Старайся лучше" },
 ]
 
-function optionLabel(options, value) {
+export function optionLabel(options, value) {
   return options.find((option) => option.value === value)?.label ?? "—"
 }
 
@@ -62,7 +65,7 @@ function optionLabel(options, value) {
 // selectable (the mockup never draws this — it has no attendance/rating/
 // homework form at all) so it reuses the pill-toggle pattern from
 // StudentEditModal's subject picker instead of inventing a new one.
-function ToggleGroup({ options, value, onChange, disabled }) {
+export function ToggleGroup({ options, value, onChange, disabled }) {
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((option) => {

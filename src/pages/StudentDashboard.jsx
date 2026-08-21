@@ -61,6 +61,7 @@ import {
 } from "@/firebase/lessons"
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
+import { subscribeToNearestGroupLesson, getGroupLessonsForStudent } from "@/firebase/groups"
 import { subscribeToPrograms } from "@/firebase/curriculum"
 import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { openExternalLink } from "@/lib/telegramWebApp"
@@ -70,8 +71,8 @@ import { resolveTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/li
 import { updateStudentSettings } from "@/firebase/students"
 import { StudentSettingsDialog } from "@/components/student/student-settings-dialog"
 import { GamificationProvider } from "@/lib/gamification-context"
-import { GamificationSection } from "@/components/student/gamification-section"
-import { StickerZone } from "@/components/student/sticker-zone"
+import { StickerWorkshopButton } from "@/components/student/sticker-workshop-button"
+import { DecorationZone } from "@/components/student/decoration-zone"
 import { translateSubject } from "@/locales/subjectTranslations"
 import { translateUnitLabel } from "@/locales/examUnitTranslations"
 import { buildNotificationText } from "@/lib/notificationMessages"
@@ -675,21 +676,42 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   const lastLessonIdRef = useRef(null)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
 
-  // Reads off lesson.teacherId (denormalized onto every lesson doc, multi-
-  // tenancy Phase 1) rather than a separate student-doc field, since this
-  // component only ever loads studentId/hasSchedule as props — the lesson
-  // subscription below already has to run first regardless.
+  // Group lessons Phase 4 — the student's nearest upcoming group lesson
+  // (across every group they're in), compared below against `lesson`
+  // (their nearest individual one) to decide which is actually shown as
+  // "the next lesson." See firebase/groups.js's subscribeToNearestGroupLesson
+  // for why a plain `memberIds array-contains studentId` query is enough
+  // to never pick up an individual lesson doc by mistake.
+  const [groupLesson, setGroupLesson] = useState(null)
   useEffect(() => {
-    if (!lesson?.teacherId) {
+    const unsubscribe = subscribeToNearestGroupLesson(studentId, setGroupLesson, (error) =>
+      console.error("Failed to load nearest group lesson:", error),
+    )
+    return unsubscribe
+  }, [studentId])
+
+  const individualEffectiveDate = lesson ? (lesson.rescheduledDate ?? lesson.date) : null
+  const groupEffectiveDate = groupLesson ? (groupLesson.rescheduledDate ?? groupLesson.date) : null
+  const showGroupLesson = Boolean(groupLesson) && (!individualEffectiveDate || groupEffectiveDate < individualEffectiveDate)
+  const activeTeacherId = showGroupLesson ? groupLesson?.teacherId : lesson?.teacherId
+  const activeEffectiveDate = showGroupLesson ? groupEffectiveDate : individualEffectiveDate
+
+  // Reads off the currently-displayed lesson's teacherId (individual or
+  // group, whichever is winning above) rather than a separate student-doc
+  // field, since this component only ever loads studentId/hasSchedule as
+  // props — the lesson subscriptions above already have to run first
+  // regardless.
+  useEffect(() => {
+    if (!activeTeacherId) {
       setVideoCallUrl(null)
       return
     }
 
-    const unsub = subscribeToVideoCallUrl(lesson.teacherId, setVideoCallUrl, (error) =>
+    const unsub = subscribeToVideoCallUrl(activeTeacherId, setVideoCallUrl, (error) =>
       console.error("Failed to load video call url:", error),
     )
     return () => unsub()
-  }, [lesson?.teacherId])
+  }, [activeTeacherId])
 
   // Client-only availability window (replaces the old server-maintained
   // lesson.videoCallAvailable flag + its every-5-minutes Cloud Function —
@@ -704,9 +726,8 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   }, [])
 
   const videoCallActive = (() => {
-    const effectiveDate = lesson?.rescheduledDate ?? lesson?.date
-    if (!effectiveDate) return false
-    const msUntilStart = effectiveDate.getTime() - now.getTime()
+    if (!activeEffectiveDate) return false
+    const msUntilStart = activeEffectiveDate.getTime() - now.getTime()
     return msUntilStart <= 3 * 60 * 1000 && msUntilStart >= -60 * 60 * 1000
   })()
 
@@ -826,18 +847,23 @@ function NextLessonPlate({ studentId, hasSchedule }) {
     }
   }
 
-  const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson)
+  const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson && !showGroupLesson)
   const assignment = lesson?.homework.assignment
   const hasAssignment = Boolean(assignment) && (assignment.text.trim() !== "" || assignment.files.length > 0)
   const submissionFiles = lesson?.homework.submission.files ?? []
   const lastSubmission = submissionFiles[submissionFiles.length - 1]
 
   return (
-    <section aria-labelledby="next-lesson-title" className="glass rounded-4xl p-6 sm:p-8">
+    <section aria-labelledby="next-lesson-title" className="glass relative rounded-4xl p-6 sm:p-8">
+      <DecorationZone zone="zone1" className="top-[-64px] right-2 sm:top-[-116px] sm:right-4" />
+      <DecorationZone zone="zone2" className="top-[-64px] left-2 sm:top-[64%] sm:left-[-104px]" />
+      <DecorationZone zone="zone3" className="bottom-[-64px] right-2 sm:top-[46%] sm:right-[-104px] sm:bottom-auto" />
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-            {t("nextLesson.label")}
+            {!cancelledLesson && showGroupLesson
+              ? t("nextLesson.groupLabel", { name: groupLesson.groupName || groupLesson.subject })
+              : t("nextLesson.label")}
           </p>
           <h2
             id="next-lesson-title"
@@ -849,7 +875,9 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               ? t("nextLesson.cancelled")
               : showPlaceholder
                 ? t("nextLesson.noSchedule")
-                : formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
+                : showGroupLesson
+                  ? formatLessonDateTime(groupEffectiveDate, timeZone, dateLocale)
+                  : formatLessonDateTime(individualEffectiveDate, timeZone, dateLocale)}
           </h2>
         </div>
         {hasSchedule ? (
@@ -868,7 +896,14 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       <AllUpcomingLessonsDialog studentId={studentId} open={allLessonsOpen} onOpenChange={setAllLessonsOpen} />
 
       <div className="mt-5 flex flex-col gap-5">
-        {lesson?.rescheduleStatus === "pending_student" ? (
+        {/* Group lessons Phase 4 — reschedule/cancellation status plates and
+            the individual-only content block below are all specific to
+            `lesson` (this student's own individual lesson doc) and make no
+            sense to show when a group lesson is what's actually being
+            displayed above (its own reschedule/cancel history isn't
+            per-student and isn't surfaced to students at all, by this
+            feature's own explicit spec). */}
+        {!showGroupLesson && lesson?.rescheduleStatus === "pending_student" ? (
           <StatusPlate tone="warn" title={t("nextLesson.teacherProposesReschedule")}>
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
@@ -891,7 +926,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           </StatusPlate>
         ) : null}
 
-        {lesson?.rescheduleStatus === "pending_teacher" ? (
+        {!showGroupLesson && lesson?.rescheduleStatus === "pending_teacher" ? (
           <StatusPlate tone="warn" title={t("nextLesson.rescheduleRequestSent")}>
             <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground line-through">
@@ -907,11 +942,11 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           </StatusPlate>
         ) : null}
 
-        {lesson?.rescheduleStatus === "confirmed" ? (
+        {!showGroupLesson && lesson?.rescheduleStatus === "confirmed" ? (
           <StatusPlate tone="good" title={t("nextLesson.rescheduleConfirmed")} />
         ) : null}
 
-        {lesson?.cancellationStatus === "pending_student" ? (
+        {!showGroupLesson && lesson?.cancellationStatus === "pending_student" ? (
           <StatusPlate tone="bad" title={t("nextLesson.teacherProposesCancellation")}>
             <StatusPlateActions
               onConfirm={handleConfirmCancellation}
@@ -923,11 +958,45 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           </StatusPlate>
         ) : null}
 
-        {lesson?.cancellationStatus === "pending_teacher" ? (
+        {!showGroupLesson && lesson?.cancellationStatus === "pending_teacher" ? (
           <StatusPlate tone="bad" title={t("nextLesson.cancellationRequestSent")} />
         ) : null}
 
-        {lesson ? (
+        {showGroupLesson ? (
+          <>
+            {videoCallUrl ? (
+              <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
+                <div className="min-w-0">
+                  <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
+                    {t("nextLesson.videoCall")}
+                  </p>
+                  <p className="mt-1 truncate text-sm text-secondary-foreground">
+                    {videoCallActive ? t("nextLesson.videoCallActive") : t("nextLesson.videoCallAvailableSoon")}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openExternalLink(videoCallUrl)}
+                  disabled={!videoCallActive}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+                  style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+                >
+                  <Video className="h-4 w-4" aria-hidden="true" />
+                  {t("nextLesson.videoCallJoin")}
+                </button>
+              </div>
+            ) : null}
+
+            {/* No reschedule/cancel buttons, no other participants' names —
+                both deliberately omitted per this feature's own spec
+                (reschedule/cancel is the teacher's decision only for a
+                group lesson; privacy — a student doesn't need to see who
+                else is in the group). */}
+            <p className="text-xs text-muted-foreground">{t("nextLesson.groupNoActions")}</p>
+          </>
+        ) : null}
+
+        {!showGroupLesson && lesson ? (
           <>
             {videoCallUrl ? (
               <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
@@ -1171,7 +1240,7 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
 // the two cards to render at all, so a second independent listener here
 // would be redundant. `null` while the parent's own subscription hasn't
 // resolved yet, same as before.
-function CurriculumProgressCard({ progress, subjectLabel }) {
+function CurriculumProgressCard({ progress, subjectLabel, showDecoration = false }) {
   const { t, i18n } = useTranslation("student")
   const [expanded, setExpanded] = useState(false)
 
@@ -1198,7 +1267,13 @@ function CurriculumProgressCard({ progress, subjectLabel }) {
   }).length
 
   return (
-    <section className="glass-soft rounded-4xl p-6 sm:p-7">
+    <section className="glass-soft relative rounded-4xl p-6 sm:p-7">
+      {showDecoration ? (
+        <>
+          <DecorationZone zone="zone4" className="top-[-40px] right-3 sm:top-[-56px] sm:right-5" />
+          <DecorationZone zone="zone5" className="bottom-[-40px] right-3 sm:bottom-[-56px] sm:right-6" />
+        </>
+      ) : null}
       <div className="flex items-center gap-3">
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
@@ -1449,6 +1524,27 @@ function StudentDashboardContent({ studentId }) {
     return () => unsub()
   }, [studentId])
 
+  // Group lessons Phase 4 (points 4-5) — every group lesson this student is
+  // a member of, any status, one-time read (not a live subscription, same
+  // as getAllCompletedLessons's own shape) since neither MaterialsLibrary
+  // nor LessonHistory need real-time updates. Filtered to status ===
+  // "completed" at each actual usage site below, matching the individual-
+  // lesson library's own existing rule that only a completed lesson's
+  // materials/history entry ever surfaces to the student — an upcoming
+  // group lesson's materials aren't shown here either, for consistency.
+  const [groupLessons, setGroupLessons] = useState([])
+  useEffect(() => {
+    let cancelled = false
+    getGroupLessonsForStudent(studentId)
+      .then((data) => {
+        if (!cancelled) setGroupLessons(data)
+      })
+      .catch((fetchError) => console.error("Failed to load group lessons:", fetchError))
+    return () => {
+      cancelled = true
+    }
+  }, [studentId])
+
   // Block 4 — a student can have several programs at once (one per
   // subject); each renders its own goal/radar/progress block independently
   // below (MyGoalsSection + the per-program map further down), replacing
@@ -1501,19 +1597,69 @@ function StudentDashboardContent({ studentId }) {
 
   const firstName = getFirstName(student.name)
 
-  const completedMaterials = lessons
-    .filter((lesson) => lesson.status === "completed" || !lesson.status)
-    .flatMap((lesson) => [
-      ...(lesson.materials || []),
-      ...(lesson.homework?.assignment?.files || []),
-    ].map((material) => ({ ...material, lessonDate: lesson.date })))
+  const completedGroupLessons = groupLessons.filter((lesson) => lesson.status === "completed")
+
+  // Group lessons Phase 4, point 5 — a completed group lesson's history
+  // entry uses THIS student's own attendees.{studentId} values (attendance/
+  // homeworkDone/rating), never the group-wide data, per the task's own
+  // explicit "теперь это ЕГО личные значения" requirement. `materials`
+  // mirrors completeLesson's own merge-on-complete behavior for individual
+  // lessons (materials + assignment files combined) at read time here,
+  // since completeGroupLesson doesn't persist that merge server-side (see
+  // functions/core/groups.js's own module comment on why materials
+  // deliberately live only on the group lesson doc, not duplicated).
+  const groupHistoryEntries = completedGroupLessons.map((lesson) => {
+    const own = lesson.attendees[studentId] ?? {}
+    return {
+      id: lesson.id,
+      date: lesson.rescheduledDate ?? lesson.date,
+      status: lesson.status,
+      topic: lesson.topic,
+      attendance: own.attendance ?? null,
+      homeworkDone: Boolean(own.homeworkDone),
+      rating: own.rating ?? null,
+      materials: [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])],
+    }
+  })
+
+  const mergedLessonHistory = [...lessons.filter((lesson) => lesson.status !== "upcoming"), ...groupHistoryEntries].sort(
+    (a, b) => (b.date?.getTime?.() ?? 0) - (a.date?.getTime?.() ?? 0),
+  )
+
+  const completedMaterials = [
+    ...lessons
+      .filter((lesson) => lesson.status === "completed" || !lesson.status)
+      .flatMap((lesson) =>
+        [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])].map((material) => ({
+          ...material,
+          lessonDate: lesson.date,
+        })),
+      ),
+    // Group lessons Phase 4, point 4 — same shape as the individual branch
+    // above (materials + assignment files merged, tagged with the lesson's
+    // date), just sourced from every group the student is a member of.
+    ...completedGroupLessons.flatMap((lesson) =>
+      [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])].map((material) => ({
+        ...material,
+        lessonDate: lesson.rescheduledDate ?? lesson.date,
+      })),
+    ),
+  ]
 
   const seenMaterialUrls = new Set()
-  const dedupedMaterials = completedMaterials.filter((material) => {
-    if (seenMaterialUrls.has(material.url)) return false
-    seenMaterialUrls.add(material.url)
-    return true
-  })
+  const dedupedMaterials = completedMaterials
+    // Group lessons Phase 4, point 4 — individual and group materials are
+    // two separately-built arrays above, concatenated in source order, not
+    // interleaved by date — sorted here (newest lesson first) so the
+    // merged result reads as one chronological list, not "all individual
+    // materials, then all group materials."
+    .slice()
+    .sort((a, b) => (b.lessonDate?.getTime?.() ?? 0) - (a.lessonDate?.getTime?.() ?? 0))
+    .filter((material) => {
+      if (seenMaterialUrls.has(material.url)) return false
+      seenMaterialUrls.add(material.url)
+      return true
+    })
 
   const allMaterials = [...dedupedMaterials, ...LOCKED_MATERIALS]
 
@@ -1578,10 +1724,6 @@ function StudentDashboardContent({ studentId }) {
           <div className="glass-soft grid h-14 w-14 place-items-center rounded-full font-display text-lg text-foreground">
             {getInitial(firstName)}
           </div>
-          {/* Zone 1 of 3 (see task spec) — у аватара. */}
-          <div className="absolute -bottom-1.5 -right-1.5">
-            <StickerZone zone="zone1" size="sm" />
-          </div>
         </div>
       </header>
 
@@ -1601,10 +1743,7 @@ function StudentDashboardContent({ studentId }) {
       <MyGoalsSection studentId={studentId} programs={programs} examTypesById={examTypesById} />
 
       {programBlocks.map(({ program, examType, hasGoal, metrics, requiredTopics, requiredPrototypes, staleDays }, index) => (
-        // Zone 2 of 3 (see task spec) — в карточке прогресса. Only the
-        // first program's card carries it (a student can have several, but
-        // there are only 3 fixed zones total on the whole dashboard).
-        <div key={program.id} className={index === 0 ? "relative" : undefined}>
+        <div key={program.id}>
           {hasGoal && metrics ? (
             <ExamRadar
               subject={[program.subject].filter(Boolean)}
@@ -1617,37 +1756,28 @@ function StudentDashboardContent({ studentId }) {
               requiredTopics={requiredTopics}
               requiredPrototypes={requiredPrototypes}
               staleDays={staleDays}
+              showDecoration={index === 0}
             />
           ) : (
-            <CurriculumProgressCard progress={program} subjectLabel={translateSubject(program.subject, i18n.language)} />
+            <CurriculumProgressCard
+              progress={program}
+              subjectLabel={translateSubject(program.subject, i18n.language)}
+              showDecoration={index === 0}
+            />
           )}
-          {index === 0 ? (
-            <div className="absolute -top-2 -right-2">
-              <StickerZone zone="zone2" size="sm" />
-            </div>
-          ) : null}
         </div>
       ))}
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
 
-      <GamificationSection studentId={studentId} coinsBalance={student.coinsBalance} />
+      <StickerWorkshopButton studentId={studentId} coinsBalance={student.coinsBalance} />
 
       <LessonHistory
         studentId={studentId}
-        lessons={lessons.filter((lesson) => lesson.status !== "upcoming")}
+        lessons={mergedLessonHistory}
         loading={lessonsLoading}
         error={lessonsError}
       />
-
-      {/* Zone 3 of 3 (see task spec) — нижний баннер. */}
-      <section className="glass-soft flex items-center justify-between rounded-4xl p-5">
-        <div>
-          <p className="font-display text-sm text-foreground">{t("gamification.showcaseTitle")}</p>
-          <p className="text-xs text-muted-foreground">{t("gamification.showcaseHint")}</p>
-        </div>
-        <StickerZone zone="zone3" size="lg" />
-      </section>
     </div>
     </GamificationProvider>
     </UserPrefsProvider>

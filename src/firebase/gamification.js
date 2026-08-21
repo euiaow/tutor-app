@@ -13,7 +13,7 @@ const INVENTORY_SUBCOLLECTION = "inventory"
 const DECORATION_SUBCOLLECTION = "decoration"
 const DECORATION_DOC_ID = "main"
 
-export const DECORATION_ZONES = ["zone1", "zone2", "zone3"]
+export const DECORATION_ZONES = ["zone1", "zone2", "zone3", "zone4", "zone5"]
 
 const openCaseCallable = httpsCallable(functions, "openCase")
 const saveDecorationCallable = httpsCallable(functions, "saveDecoration")
@@ -22,6 +22,7 @@ function mapStickerSetDoc(id, data) {
   return {
     id,
     name: data.name ?? "",
+    description: data.description ?? "",
     coverUrl: data.coverUrl ?? "",
     price: Number(data.price) > 0 ? Number(data.price) : 6,
     stickers: Array.isArray(data.stickers)
@@ -75,6 +76,8 @@ function mapDecorationDoc(data) {
     zone1: data?.zone1 ?? null,
     zone2: data?.zone2 ?? null,
     zone3: data?.zone3 ?? null,
+    zone4: data?.zone4 ?? null,
+    zone5: data?.zone5 ?? null,
   }
 }
 

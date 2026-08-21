@@ -694,6 +694,62 @@ src/
   `where("teacherId", ...)` filter, and Rules for it are a plain
   `allow read: if true` with no ownership check at all.
 
+- **A Claude Design canvas export (`.dc.html`, its own `DCLogic`-class
+  component with a `state`/`renderVals()` shape) ports to a real React
+  component by a direct mechanical translation, not a rewrite from
+  scratch: `state = {...}` → one `useState` per field (or a few grouped),
+  `renderVals()`'s computed style strings → inline `style` objects computed
+  during render, `setState({...})` calls → the matching setter calls
+  (session 17, `sticker-workshop-modal.jsx` from `roulette-design/Sticker
+  Modal v2.dc.html`).** Any hardcoded demo content the canvas used to make
+  its mockup concrete (in this case: 3 named cases "SLAY/CLEAN/REELS" with
+  bespoke per-case artwork and hand-picked hex colors per demo sticker)
+  needs a real data-driven replacement, not a literal port — done here via
+  `set.coverUrl` (falls back to a deterministic name-hash color, same
+  `getSubjectColorClass`-style approach as `lib/subjects.js`) and a
+  per-sticker color hash instead of the design's bespoke per-item hex
+  values. A visual takeover meant to look nothing like the rest of the
+  app's own dialog system (an arcade cabinet vs. the app's glass aesthetic)
+  should render via `createPortal(..., document.body)` directly at a high
+  `z-index`, not through the shared `GlassDialog`/`ui/dialog.jsx`
+  primitives, which would fight it for both styling and z-index tier.
+  **When a canvas's client-side "spin the wheel" logic must actually be
+  backed by a server-authoritative result (a case-opening gamble, not a
+  cosmetic animation), gate the animation's start on the server response,
+  not the button click** — build the reel/strip only after the
+  Cloud Function call resolves, with the *real* returned item pinned at the
+  fixed landing index, and show a plain loading state in between; this is
+  the only way to guarantee the visual outcome can never disagree with
+  what was actually granted server-side. **Correction from session 20:
+  when a canvas branches per-item art by matching a hardcoded demo name
+  (`isSlay`/`isClean`/`isReels` keyed on `s.name === 'SLAY'` etc.), the
+  branch that actually matters is the *slot/index* the art was designed
+  for, not the literal name string** — session 18 initially treated
+  `reels-lettering.png` as irrelevant because the real 3rd case is named
+  "MYTHIC", not "REELS", and left it with a plain-text fallback; the
+  right read (confirmed by the user) was that the design's 3rd slot has
+  its own distinct visual treatment (a bordered photo card, since that
+  asset isn't lettering art like the other two) that belongs to whichever
+  case fills that slot. When porting a canvas with per-item demo
+  branches, check whether each branch represents a *content-specific*
+  choice (skip it if the real data has no equivalent) or a *positional/
+  stylistic* one (port it regardless of what the real item is named).
+- **Decorative overlays that must track a specific card, not the page
+  (session 21, `DecorationZone`/placed stickers on the student dashboard):
+  anchor each overlay with `position:absolute` inside that *specific*
+  card's own `position:relative` wrapper, never inside the page's outer
+  container.** The student dashboard already has a banner
+  (`StudentNotifications`) that can appear/disappear between two cards and
+  push everything below it down — an overlay positioned against the page
+  (fixed pixel offset from the top of the whole layout) would misalign the
+  instant that banner's visibility changed, while one anchored to its own
+  card's relative box moves automatically with normal document flow, with
+  zero banner-aware code needed. The tradeoff: an overlay can only overlap
+  its *own* anchor card's borders (via negative offsets), not some other
+  card's — if the desired visual position spans two cards, pick whichever
+  one is closer and let it overlap outward from there (see `activeContext.md`
+  session 21 for zone1-5's exact anchor choices).
+
 ## Component relationships
 
 - `TeacherDashboard.jsx` composes `components/teacher/student-row.jsx`
@@ -945,3 +1001,111 @@ src/
   class of bug can only be diagnosed by asking the user to paste the
   actual current rule text or a console error; don't assume a described/
   commented rule is live.
+
+- **A dedicated, per-feature i18next instance (`i18next.createInstance()`),
+  not the global singleton, is how student-page localization (session 16)
+  stays fully isolated from the teacher panel, which has zero i18n by
+  deliberate scope.** `studentI18n` (`src/lib/i18n.js`) loads
+  `src/locales/{ru,en}/student.json` and is wired via `I18nextProvider`
+  only inside `StudentDashboard.jsx`'s own tree (`StudentI18nGate`, a
+  wrapper that resolves `students/{id}.language` once via a plain
+  `getStudentLanguage` read — mirroring `getStudentTelegramChatId` —
+  *before* rendering the pre-auth PIN screen, then re-syncs
+  authoritatively once the live `student` doc loads). Because
+  `i18next.createInstance()` is used instead of the module-level
+  `i18next` singleton (which `initReactI18next.init()` would otherwise
+  register as react-i18next's global fallback for every `useTranslation()`
+  call with no explicit Provider in scope), a teacher-side component can
+  never accidentally pick this instance up. **Whenever a shared component
+  is also rendered by the teacher panel (`notifications-list.jsx`,
+  `settings-dialog.jsx`, `truncated-list.jsx`), do NOT add
+  `useTranslation()`/i18next imports into that file at all** — either
+  precompute the display value in a student-only wrapper before passing
+  it down as a prop (`StudentNotifications` resolves
+  `buildNotificationText` into a `text` field before handing notifications
+  to the shared `NotificationsList`), fork a dedicated student-only
+  sibling component (`student-settings-dialog.jsx` instead of touching
+  `settings-dialog.jsx`'s `variant === "student"` branch), or add an
+  optional prop with a default matching the exact original hardcoded
+  string (`TruncatedList`'s `collapseLabel`/`showAllLabel`). This is the
+  established pattern for "translate one side of a shared component
+  without touching the other side" going forward.
+- **Locale-aware helper functions in this codebase take the new locale/
+  language as a trailing optional parameter, default value = the exact
+  pre-existing hardcoded behavior — never a new required param, never a
+  changed default.** Established for `formatLessonDateTime`
+  (`lib/schedule.js`)/`formatRelativeTime` (`lib/notifications.js`)
+  (`locale = "ru-RU"`), `stickerRarityLabel` (`lib/stickerColors.js`,
+  `lang = "ru"`), and `formatSubjects` (`lib/student-profile.js`,
+  `noneLabel` defaulting to the original Russian fallback string) —
+  session 16. This is what lets a shared lib function serve both the
+  untouched teacher panel and the newly-bilingual student page from one
+  implementation without a parallel "translated" copy. Reach for this
+  shape (not a new function, not a required param) the next time a
+  shared formatter needs a language-dependent variant.
+- **Typical/seeded content (the fixed `STATIC_SUBJECTS` list, the two
+  seeded exam types' `scaleUnitLabel`) gets a small translation
+  dictionary; free-form teacher-authored content never does (session
+  16).** `src/locales/subjectTranslations.js`/`examUnitTranslations.js`
+  — `translateSubject(name, language)`/`translateUnitLabel(label,
+  language)` look the value up in a dictionary keyed by the exact known
+  Russian string and return it unchanged if there's no entry (a custom
+  subject, a custom exam type's own unit label) — there is no reliable
+  way to auto-translate arbitrary teacher-authored text, and showing it
+  untranslated reads as more correct than a garbled machine translation
+  would. Any future "translate some but not all instances of a field"
+  need should follow this same dictionary-with-pass-through shape rather
+  than trying to detect "is this a typical value" some other way.
+- **Student-facing notifications persist `type`+`params` (raw values), not
+  a pre-built string — resolved into text at render/send time via a
+  shared bilingual builder, `buildNotificationText(type, params,
+  language)` (session 16).** `functions/core/notificationMessages.js`
+  (CommonJS) mirrored by hand at `src/lib/notificationMessages.js` (ESM)
+  — same duplication shape this project already uses for
+  `schedule.js`/`subjects.js`. `core/notifier.js`'s `createNotification`
+  only does this for `target === "student"`; `target === "teacher"` is
+  completely unchanged (still a pre-built `text`/`(timeZone) => string`
+  builder), since the teacher panel has no i18n. `params.timeZone` is
+  filled in automatically by `createNotification` (it already resolves
+  the recipient's timezone for the old text-builder path) — call sites
+  never set it themselves. A notification whose underlying event is
+  inherently a point-in-time snapshot (the three reminder types'
+  "today"/"tomorrow" day label, a countdown's `diffMinutes`) has that
+  *computed* value frozen into `params` at send time, not a raw date the
+  display function would need to recompute relative to "now" — otherwise
+  a reminder re-opened later would silently relabel itself. Old
+  notifications (pre-session-16, `text` only, no `params`) are rendered
+  as-is with no migration — the student-side renderer
+  (`StudentNotifications`/`AllNotificationsDialog` in
+  `StudentDashboard.jsx`) checks `notification.params` and falls back to
+  `notification.text` when absent. **`mapNotificationDoc`
+  (`src/firebase/notifications.js`) needed `params` added to its explicit
+  field list — the "mapper's explicit field list is the real gate" bug
+  class (see `mapStudentDoc`/`mapLessonDoc` entries above) hit a fourth
+  time.**
+- **A Firestore trigger's before/after diff-check must compare every field
+  that actually affects the recomputation it gates, not just the fields
+  that look user-facing — confirmed as a real production bug, not a
+  hypothetical (session 16).** `isSlotEqual`
+  (`functions/index.js`, used by `syncUpcomingLessonOnScheduleChange` to
+  decide whether a schedule edit is "real" and should recompute an
+  already-created upcoming lesson's `date`) compared only
+  `dayOfWeek`/`time`/`durationMinutes` — not `timeZone`. A legacy schedule
+  slot saved with no `timeZone` stamp (falls back to
+  `getNextLessonDateForSlot`'s `Europe/Moscow` default, see the session-15
+  entry above) could NOT be fixed by a teacher simply re-opening and
+  re-saving the exact same schedule (same day/time/duration, now with a
+  real `timeZone`) — the trigger judged the slots "unchanged" and silently
+  skipped the recompute, so the wrong `lesson.date` (and every reminder
+  built from it) persisted regardless of how many times the teacher
+  re-saved. Fixed by adding `(a.timeZone ?? null) === (b.timeZone ??
+  null)` to the comparison. **Root-cause diagnosis used live production
+  data, not arithmetic guessing** — a temporary guarded `onRequest` Cloud
+  Function (same "deploy, invoke, delete" pattern as `migrateToPrograms`/
+  gamification verification, see `techContext.md`) read the actual
+  student doc and lesson doc, confirmed the exact 3-hour Moscow-vs-Omsk
+  offset in the stored instant, then confirmed the fix by re-stamping the
+  slot and watching the trigger correctly recompute the date. **Any
+  future trigger that diffs "before" vs "after" to decide whether to act
+  should be audited for every field the downstream computation actually
+  reads, not just the fields a human would call "the schedule."**

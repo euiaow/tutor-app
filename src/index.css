@@ -305,6 +305,21 @@
   border: 1px solid color-mix(in oklab, white 45%, transparent);
 }
 
+/* Decoration stickers (DecorationZone, StudentDashboard.jsx) cap their
+   longest edge at 130px on desktop, 76px on the ~640px-and-narrower mobile
+   layout where the dashboard cards go full-width and have far less spare
+   room — set as a CSS var (not a Tailwind size class) since the same value
+   feeds both an <img>'s max-width/max-height (to preserve its natural
+   aspect ratio) and a placeholder square's fixed width. */
+.decoration-sticker {
+  --sticker-max: 130px;
+}
+@media (max-width: 640px) {
+  .decoration-sticker {
+    --sticker-max: 76px;
+  }
+}
+
 /* Student page's own grain texture (StudentGrainBackground) — distinct from
    the teacher panel's grain-layer utility below (different size/opacity/
    blend-mode, matches "redesign student v3" byte-for-byte). */

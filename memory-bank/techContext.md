@@ -9,6 +9,12 @@
 - `lucide-react` for icons.
 - Firebase JS SDK (`firebase` ^12) for Auth/Firestore/Callables from the
   client (`src/firebase/*.js`).
+- `react-i18next` + `i18next` (session 16) — **student-page-only**, via a
+  dedicated `studentI18n` instance (`src/lib/i18n.js`), never the global
+  singleton. The teacher panel has zero i18n dependency and stays that
+  way by deliberate scope — see [[systemPatterns]] for the isolation
+  mechanism and the "fork or pass a prop, don't add `useTranslation()`
+  into a shared component" rule this establishes.
 
 ## Backend
 
@@ -197,4 +203,21 @@
   quotes (e.g. `VITE_FIREBASE_PROJECT_ID="princessschool-e678c"`) — a
   naive parser that doesn't strip them will pass the quote characters
   into the Firebase config and get a cryptic `INVALID_ARGUMENT` from
-  Firestore instead of a clear "bad project id" error.
+  Firestore instead of a clear "bad project id" error. **Session 16
+  addendum: the file also has CRLF line endings** — splitting on `"\n"`
+  alone leaves every line but the last with a trailing `\r`, which broke
+  the regex-based key/value parser silently (only the very last line
+  parsed; produced the exact same generic `INVALID_ARGUMENT` symptom
+  above, easy to misattribute to the quoting issue instead). Split on
+  `/\r?\n/`, not `"\n"`, when hand-parsing this file. For read-only
+  diagnosis of live data this same session, when a plain client-SDK
+  script hit `permission-denied` on a collection a real user isn't
+  authenticated for (e.g. `teachers/{uid}`, or a `lessons` subcollection
+  under Rules that require ownership), the reliable fallback — already
+  established for `migrateToPrograms`/gamification verification — is a
+  **temporary guarded `onRequest` Cloud Function** (Admin SDK bypasses
+  Rules entirely): write it, `firebase deploy --only
+  functions:<name>`, `curl` it, then `firebase functions:delete <name>
+  --region us-central1 --force` and remove the code from `index.js`
+  immediately after use. Don't try to work around a `permission-denied`
+  by loosening a read pattern — reach for this instead.

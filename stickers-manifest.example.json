@@ -1,0 +1,4 @@
+[
+  { "filename": "cat1.png", "caseId": "case-1", "id": "cat-1", "name": "КОТ-ОТЛИЧНИК", "rarity": "legendary", "weight": 5 },
+  { "filename": "pen1.png", "caseId": "case-1", "id": "pen", "name": "ПЕРО", "rarity": "common", "weight": 40 }
+]

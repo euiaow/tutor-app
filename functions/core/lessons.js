@@ -1077,12 +1077,85 @@ async function uploadHomeworkFile(studentId, buffer, contentType) {
 // arrayUnion() element, so each file entry gets a concrete Timestamp
 // instead — only the top-level submission.submittedAt uses the sentinel.
 async function recordHomeworkSubmission(studentId, fileUrl) {
+  // Group lessons (session 17 Phase 4) — a bot-sent photo (or the
+  // website's own submit button, same call site) must attach to whichever
+  // is actually sooner: this student's next individual lesson, or the
+  // next group lesson they're a member of. Required lazily (not at module
+  // top) purely to match this file's own existing lazy-require convention
+  // for cross-module calls, not because of an actual circular dependency.
+  const { findNearestUpcomingGroupLessonForStudent, groupLessonsRef, groupsCollection } = require("./groups")
+
   // getNearestUpcomingLesson first so a submission attaches to an extra
   // (isExtraLesson) lesson when one is nearer than the next scheduled slot
   // — ensureUpcomingLesson is blind to those (see its own comment). Falls
   // back to ensureUpcomingLesson (find-or-create) only when there's no
   // upcoming lesson doc of any kind yet, same as before this fix.
-  const nearest = await getNearestUpcomingLesson(studentId)
+  const [nearest, nearestGroup] = await Promise.all([
+    getNearestUpcomingLesson(studentId),
+    findNearestUpcomingGroupLessonForStudent(studentId),
+  ])
+
+  const nearestIndividualDate = nearest ? (nearest.rescheduledDate?.toDate?.() ?? nearest.date?.toDate?.() ?? null) : null
+  const useGroup = Boolean(
+    nearestGroup && (!nearestIndividualDate || nearestGroup.effectiveDate < nearestIndividualDate),
+  )
+
+  if (useGroup) {
+    await groupLessonsRef(nearestGroup.teacherId, nearestGroup.groupId)
+      .doc(nearestGroup.lessonId)
+      .update({
+        [`attendees.${studentId}.submissionFiles`]: FieldValue.arrayUnion({ url: fileUrl, submittedAt: Timestamp.now() }),
+      })
+
+    logger.info("recordHomeworkSubmission: submission recorded to group lesson", {
+      studentId,
+      groupId: nearestGroup.groupId,
+      lessonId: nearestGroup.lessonId,
+    })
+
+    const [studentSnapshot, groupSnapshot] = await Promise.all([
+      db.collection(STUDENTS_COLLECTION).doc(studentId).get(),
+      groupsCollection(nearestGroup.teacherId).doc(nearestGroup.groupId).get(),
+    ])
+    const studentName = studentSnapshot.exists ? studentSnapshot.data().name ?? "Ученик" : "Ученик"
+    const groupName = groupSnapshot.exists ? groupSnapshot.data().name ?? "" : ""
+
+    const [teacherNotifResult, studentNotifResult] = await Promise.allSettled([
+      createNotification({
+        target: "teacher",
+        studentId,
+        type: "homework_submitted",
+        text: () => `📎 ${studentName} прислал(а) домашку к групповому занятию «${groupName}»`,
+        lessonId: nearestGroup.lessonId,
+        teacherId: nearestGroup.teacherId,
+      }),
+      createNotification({
+        target: "student",
+        studentId,
+        type: "homework_received",
+        params: {},
+        lessonId: nearestGroup.lessonId,
+        teacherId: nearestGroup.teacherId,
+      }),
+    ])
+    if (teacherNotifResult.status === "rejected") {
+      logger.error("recordHomeworkSubmission: teacher notification failed (group)", {
+        studentId,
+        groupId: nearestGroup.groupId,
+        error: teacherNotifResult.reason,
+      })
+    }
+    if (studentNotifResult.status === "rejected") {
+      logger.error("recordHomeworkSubmission: student notification failed (group)", {
+        studentId,
+        groupId: nearestGroup.groupId,
+        error: studentNotifResult.reason,
+      })
+    }
+
+    return nearestGroup.lessonId
+  }
+
   const lessonId = nearest ? nearest.id : await ensureUpcomingLesson(studentId)
 
   if (!lessonId) {

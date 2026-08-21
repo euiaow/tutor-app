@@ -20,8 +20,11 @@ these files are for full verbatim narrative detail only, rarely needed.
   8 UI fixes, free-form exam types/subjects, full multi-program rewrite +
   migration run), session 14 (per-slot subject binding, language-level
   progression, designed topic/prototype picker, notifications
-  mark-as-read Rules bug found). Archived 2026-08-02, 2026-08-16,
-  2026-08-18, 2026-08-19, 2026-08-19, and 2026-08-19 respectively.
+  mark-as-read Rules bug found), session 15 (dialog backdrop audit,
+  custom dropdowns, video-call/schedule-timezone real root causes,
+  Google Calendar embed color, gamification MVP). Archived 2026-08-02,
+  2026-08-16, 2026-08-18, 2026-08-19, 2026-08-19, 2026-08-19, and
+  2026-08-20 respectively.
 
 `activeContext.md` itself keeps only the most recent 1 session inline —
 check there first for anything recent; come here only for older detail.

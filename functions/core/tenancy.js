@@ -32,6 +32,30 @@ async function assertOwnsStudent(studentId, teacherId) {
   return data
 }
 
+// Groups live at teachers/{teacherId}/groups/{groupId} (a subcollection of
+// the teacher's own doc), unlike students/templates which are top-level
+// collections with a stored teacherId field to compare against — so this
+// doesn't need assertMatchesOrUnowned's "stored field matches caller" check
+// at all. The path itself is the ownership boundary: a lookup at
+// teachers/{callerId}/groups/{groupId} can structurally never resolve to a
+// group belonging to a different teacher, so a mismatched groupId just
+// 404s here the same way it would for anyone. Kept as its own function
+// (mirroring assertOwnsStudent/assertOwnsTemplate's shape) for a
+// consistent "not found" error and to hand back the group's data, not
+// because groups need the same kind of ownership arithmetic.
+async function assertOwnsGroup(groupId, teacherId) {
+  if (!groupId || typeof groupId !== "string") {
+    throw new HttpsError("invalid-argument", "Не указан идентификатор группы")
+  }
+
+  const snapshot = await db.collection("teachers").doc(teacherId).collection("groups").doc(groupId).get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Группа не найдена")
+  }
+
+  return snapshot.data()
+}
+
 async function assertOwnsTemplate(templateId, teacherId) {
   if (!templateId || typeof templateId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор шаблона")
@@ -48,4 +72,4 @@ async function assertOwnsTemplate(templateId, teacherId) {
   return data
 }
 
-module.exports = { assertOwnsStudent, assertOwnsTemplate }
+module.exports = { assertOwnsStudent, assertOwnsTemplate, assertOwnsGroup }

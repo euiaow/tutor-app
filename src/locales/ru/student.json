@@ -51,7 +51,9 @@
     "attachHomework": "Прикрепить домашку",
     "orSendViaBot": "Или отправить в бот в ТГ/ВК",
     "rescheduleButton": "Перенести урок",
-    "cancelButton": "Отменить урок"
+    "cancelButton": "Отменить урок",
+    "groupLabel": "Групповое занятие «{{name}}»",
+    "groupNoActions": "Перенос и отмена группового занятия — только по решению репетитора"
   },
   "upcomingRow": {
     "pendingStudent": "Ожидает вашего ответа",
@@ -193,31 +195,7 @@
     "digitAria": "Цифра {{index}}"
   },
   "gamification": {
-    "sectionTitle": "Кейсы и стикеры",
-    "noSets": "Кейсы пока не добавлены",
-    "openButton": "Открыть · {{price}} 🪙",
-    "openError": "Не удалось открыть кейс",
-    "notEnoughCoins": "Не хватает монет",
-    "collectionTitle": "Коллекция ({{count}})",
-    "collectionEmpty": "Пока пусто — откройте кейс, чтобы получить первый стикер",
-    "collectionHint": "Нажмите на стикер, затем на одну из 3 зон на странице, чтобы разместить его там",
-    "rarity": {
-      "common": "Обычный",
-      "rare": "Редкий",
-      "epic": "Эпический",
-      "legendary": "Легендарный"
-    },
-    "zoneRemoveTitle": "{{name}} — нажмите, чтобы убрать",
-    "zonePlaceTitle": "Нажмите, чтобы разместить стикер",
-    "showcaseTitle": "Витрина стикеров",
-    "showcaseHint": "Разместите здесь стикер из коллекции",
-    "caseOpening": {
-      "dialogTitle": "Открытие кейса",
-      "spinning": "Крутим ленту...",
-      "revealed": "Результат",
-      "duplicate": "Уже был в коллекции — конвертирован в {{coins}} 🪙",
-      "newItem": "Добавлен в коллекцию",
-      "continue": "Продолжить"
-    }
+    "portalTitle": "Стикеры и кейсы",
+    "portalHint": "Открой кейс и собери коллекцию"
   }
 }

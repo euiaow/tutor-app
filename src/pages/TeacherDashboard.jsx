@@ -13,6 +13,8 @@ import {
 } from "lucide-react"
 import { usePageTitle } from "@/lib/usePageTitle"
 import { StudentRow } from "@/components/teacher/student-row"
+import { GroupsSection, GroupFormDialog } from "@/components/teacher/groups-section"
+import { subscribeToGroups } from "@/firebase/groups"
 import { UpcomingLessonCard } from "@/components/teacher/upcoming-lesson-card"
 import { RegistrationLinkDialog } from "@/components/teacher/registration-link-dialog"
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
@@ -427,6 +429,24 @@ export function TeacherDashboard() {
     return unsubscribe
   }, [])
 
+  // Lifted up from GroupsSection (rather than subscribed there) so this
+  // component can decide, by count, whether the whole "Группы" panel (and
+  // its own "+ Создать группу" button) shows at all, or whether that button
+  // instead lives in the "Ученики" panel until the first group exists — see
+  // the button-placement logic just below the "Ученики" Panel.
+  const [groups, setGroups] = useState([])
+  useEffect(() => {
+    const uid = auth.currentUser?.uid
+    if (!uid) return
+
+    const unsubscribe = subscribeToGroups(uid, setGroups, (groupsError) => {
+      console.error("Failed to load groups:", groupsError)
+    })
+
+    return unsubscribe
+  }, [])
+  const [groupFormOpen, setGroupFormOpen] = useState(false)
+
   // One-time batch read (not a subscription) — powers every collapsed row's
   // progress bar at once, cheaper than a live listener per student; the
   // currently-expanded row layers its own live subscription on top (see
@@ -697,7 +717,15 @@ export function TeacherDashboard() {
         <Panel>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Title>Ученики</Title>
-            <RegistrationLinkDialog />
+            <div className="flex items-center gap-2">
+              {/* "+ Создать группу" lives here only until the first group
+                  exists — once one does, GroupsSection renders below with
+                  its own header button instead, per explicit instruction. */}
+              {groups.length === 0 ? (
+                <SolidBtn onClick={() => setGroupFormOpen(true)}>+ Создать группу</SolidBtn>
+              ) : null}
+              <RegistrationLinkDialog />
+            </div>
           </div>
 
           <div className="mt-4">
@@ -720,6 +748,12 @@ export function TeacherDashboard() {
             )}
           </div>
         </Panel>
+
+        {groups.length === 0 ? (
+          <GroupFormDialog open={groupFormOpen} onOpenChange={setGroupFormOpen} students={students} group={null} />
+        ) : (
+          <GroupsSection students={students} groups={groups} />
+        )}
 
         <div className={`grid gap-5 ${completedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
           {completedLessons.length > 0 ? (

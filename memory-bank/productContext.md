@@ -61,6 +61,14 @@ teacher a proper web dashboard.
   Color theme is purely cosmetic (pink or amber, the two palettes that
   already existed for teacher/student respectively) — either side can
   pick either one.
+- **A student also has a language preference (session 16)** —
+  `students/{id}.language` ("ru"/"en", own Settings `<select>`), applied
+  the same "always read/see in *their own* setting" way the timezone
+  principle above already established: the site, every notification in
+  the in-app feed, and the same event's bot message all read in whichever
+  language that specific student picked, resolved independently per
+  student. This does not extend to the teacher panel, which stays
+  Russian-only by deliberate scope.
 
 ## User experience goals
 
@@ -70,5 +78,8 @@ teacher a proper web dashboard.
 - Student: no login required; either a simple web view or their existing
   Telegram/VK chat should be enough to see the next lesson and submit
   homework.
-- All user-facing strings are in Russian; error messages should read as
-  natural, specific Russian, not translated English.
+- All teacher-panel strings are in Russian; error messages should read as
+  natural, specific Russian, not translated English. The student
+  dashboard is Russian-or-English per that student's own language
+  preference (session 16) — English copy should read as natural English,
+  not a literal translation either.

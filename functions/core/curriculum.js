@@ -288,7 +288,18 @@ async function markTopicsCovered(studentId, lessonId, programId, { topicIds, pro
   const progRef = programRef(studentId, programId)
 
   await db.runTransaction(async (transaction) => {
-    const progressSnapshot = await transaction.get(progRef)
+    // Reads must precede writes in a transaction — checking whether this
+    // lessonId actually corresponds to a real students/{id}/lessons/{id}
+    // doc lets this function stay reusable for a group lesson's
+    // completion (session 17), whose lessonId lives at
+    // teachers/{uid}/groups/{groupId}/lessons/{lessonId} instead — there is
+    // no individual lesson doc to mirror coveredTopics/coveredPrototypes
+    // onto in that case, so that part is just skipped rather than throwing
+    // NOT_FOUND on a doc that was never meant to exist.
+    const [progressSnapshot, lessonSnapshot] = await Promise.all([
+      transaction.get(progRef),
+      transaction.get(lessonRef(studentId, lessonId)),
+    ])
     if (!progressSnapshot.exists) {
       logger.info("markTopicsCovered: program not found, no-op", { studentId, lessonId, programId })
       return
@@ -311,7 +322,9 @@ async function markTopicsCovered(studentId, lessonId, programId, { topicIds, pro
     })
 
     transaction.update(progRef, { topics: nextTopics, prototypes: nextPrototypes })
-    transaction.update(lessonRef(studentId, lessonId), { coveredTopics, coveredPrototypes })
+    if (lessonSnapshot.exists) {
+      transaction.update(lessonRef(studentId, lessonId), { coveredTopics, coveredPrototypes })
+    }
   })
 
   logger.info("markTopicsCovered: marked", {
