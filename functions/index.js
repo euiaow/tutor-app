@@ -57,12 +57,13 @@ const {
   deleteGroup: deleteGroupCore,
   groupsCollection,
   ensureUpcomingGroupLessons,
-  proposeGroupReschedule: proposeGroupRescheduleCore,
+  rescheduleGroupLesson: rescheduleGroupLessonCore,
   cancelGroupLesson: cancelGroupLessonCore,
   completeGroupLesson: completeGroupLessonCore,
   assignGroupProgram: assignGroupProgramCore,
   reassignGroupProgram: reassignGroupProgramCore,
   deleteGroupProgram: deleteGroupProgramCore,
+  createExtraGroupLesson: createExtraGroupLessonCore,
 } = require("./core/groups")
 const {
   assignCurriculumTemplate,
@@ -367,15 +368,15 @@ exports.deleteGroup = onCall(async (request) => {
 // though the code looks completely correct (see systemPatterns.md's own
 // documented gotcha, hit twice already for createExtraLesson/
 // completeLesson before this).
-exports.proposeGroupReschedule = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
-  const { groupId, lessonId, newDate } = request.data ?? {}
+  const { groupId, groupLessonKey, newDate } = request.data ?? {}
   const parsedDate = newDate ? new Date(newDate) : null
 
   try {
-    return await proposeGroupRescheduleCore(request.auth.uid, groupId, lessonId, parsedDate)
+    return await rescheduleGroupLessonCore(request.auth.uid, groupId, groupLessonKey, parsedDate)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -390,10 +391,10 @@ exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKE
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
-  const { groupId, lessonId } = request.data ?? {}
+  const { groupId, groupLessonKey } = request.data ?? {}
 
   try {
-    return await cancelGroupLessonCore(request.auth.uid, groupId, lessonId)
+    return await cancelGroupLessonCore(request.auth.uid, groupId, groupLessonKey)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -408,10 +409,10 @@ exports.completeGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TO
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
-  const { groupId, lessonId, attendeeUpdates } = request.data ?? {}
+  const { groupId, groupLessonKey, attendeeUpdates } = request.data ?? {}
 
   try {
-    return await completeGroupLessonCore(request.auth.uid, groupId, lessonId, attendeeUpdates)
+    return await completeGroupLessonCore(request.auth.uid, groupId, groupLessonKey, attendeeUpdates)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -447,10 +448,10 @@ exports.reassignGroupProgram = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
-  const { groupId, programId, templateId } = request.data ?? {}
+  const { groupId, templateId } = request.data ?? {}
 
   try {
-    return await reassignGroupProgramCore(request.auth.uid, groupId, programId, templateId)
+    return await reassignGroupProgramCore(request.auth.uid, groupId, templateId)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -465,10 +466,10 @@ exports.deleteGroupProgram = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
-  const { groupId, programId } = request.data ?? {}
+  const { groupId } = request.data ?? {}
 
   try {
-    return await deleteGroupProgramCore(request.auth.uid, groupId, programId)
+    return await deleteGroupProgramCore(request.auth.uid, groupId)
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -476,6 +477,27 @@ exports.deleteGroupProgram = onCall(async (request) => {
 
     logger.error("Failed to delete group program", error)
     throw new HttpsError("internal", "Не удалось удалить программу группы")
+  }
+})
+
+// Transitively calls createNotification — secrets required, see the same
+// note on rescheduleGroupLesson/cancelGroupLesson/completeGroupLesson.
+exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { groupId, date } = request.data ?? {}
+  const parsedDate = date ? new Date(date) : null
+
+  try {
+    return await createExtraGroupLessonCore(request.auth.uid, groupId, parsedDate)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+
+    logger.error("Failed to create extra group lesson", error)
+    throw new HttpsError("internal", "Не удалось создать внеплановое групповое занятие")
   }
 })
 
@@ -1446,96 +1468,3 @@ exports.syncGroupScheduleToGoogleCalendar = onDocumentWritten(
 )
 
 
-// TEMPORARY diagnostic, guarded by a query-param token — creates a real
-// group + lesson + curriculum template + group program (Admin SDK, bypasses
-// auth/rules) so it can report back the ids, then the caller runs the exact
-// unauthenticated CLIENT-SDK queries the UI itself makes against them
-// (Rules + indexes both matter here, Admin SDK bypasses both so this alone
-// wouldn't prove the client path works). Cleans up everything at the end
-// regardless of outcome.
-exports.diagnoseGroupSetupOnce = onRequest(async (req, res) => {
-  if (req.query.token !== "diagnose-group-setup-2026-08-21") {
-    res.status(403).send("forbidden")
-    return
-  }
-
-  const {
-    createGroup: cg,
-    deleteGroup: dg,
-    ensureUpcomingGroupLessons: euGL,
-    assignGroupProgram: aGP,
-    deleteGroupProgram: dGP,
-  } = require("./core/groups")
-
-  const log = []
-  const teacherId = "72272aszxOORbj7w3f2UAMj5Jln1"
-  const tmpStudentIds = []
-  let groupId = null
-  let templateId = null
-
-  try {
-    for (const name of ["ТЕСТ Setup А", "ТЕСТ Setup Б"]) {
-      const ref = await db.collection("students").add({
-        name, teacherId, subject: ["Тест"], paidLessonsBalance: 5, lowBalanceThreshold: 1,
-        autoRemindLowBalance: false, scheduleSlots: [],
-      })
-      tmpStudentIds.push(ref.id)
-    }
-    log.push(`created students: ${tmpStudentIds.join(", ")}`)
-
-    const now = new Date()
-    const testTime = new Date(now.getTime() + 5 * 60 * 1000)
-    const scheduleSlots = [{ dayOfWeek: testTime.getDay(), time: `${String(testTime.getHours()).padStart(2, "0")}:${String(testTime.getMinutes()).padStart(2, "0")}`, durationMinutes: 30 }]
-    const created = await cg(teacherId, { name: "ТЕСТ Group Setup", subject: "Тест", memberStudentIds: tmpStudentIds, scheduleSlots })
-    groupId = created.id
-    log.push(`created group ${groupId}`)
-
-    const lessonId = await euGL(teacherId, groupId)
-    log.push(`lessonId=${lessonId}`)
-
-    const templateRef = await db.collection("curriculumTemplates").add({
-      name: "ТЕСТ Шаблон", examTypeId: null, subject: "Тест", teacherId,
-      topics: [{ id: "t1", title: "Тема 1" }, { id: "t2", title: "Тема 2" }],
-      prototypes: [{ id: "p1", title: "Прототип 1" }],
-    })
-    templateId = templateRef.id
-    log.push(`created template ${templateId}`)
-
-    const programResult = await aGP(teacherId, groupId, templateId)
-    log.push(`assignGroupProgram -> programId=${programResult.programId}`)
-
-    // Verify each member got their own individual program too
-    for (const sid of tmpStudentIds) {
-      const progsSnap = await db.collection("students").doc(sid).collection("programs").where("templateId", "==", templateId).get()
-      log.push(`student ${sid} individual programs from this template: ${progsSnap.size}`)
-    }
-
-    await dGP(teacherId, groupId, programResult.programId)
-    log.push("group program deleted (cleanup verification)")
-
-    res.json({ ok: true, log, teacherId, groupId, lessonId, studentIds: tmpStudentIds })
-  } catch (error) {
-    log.push(`ERROR: ${error.message}`)
-    res.status(500).json({ ok: false, log, error: error.message, teacherId, groupId, studentIds: tmpStudentIds })
-  } finally {
-    try {
-      if (groupId) await dg(teacherId, groupId)
-    } catch (e) {
-      log.push(`cleanup group delete failed: ${e.message}`)
-    }
-    if (templateId) {
-      try {
-        await db.collection("curriculumTemplates").doc(templateId).delete()
-      } catch (e) {
-        log.push(`cleanup template delete failed: ${e.message}`)
-      }
-    }
-    for (const sid of tmpStudentIds) {
-      try {
-        await db.collection("students").doc(sid).delete()
-      } catch (e) {
-        log.push(`cleanup student ${sid} delete failed: ${e.message}`)
-      }
-    }
-  }
-})

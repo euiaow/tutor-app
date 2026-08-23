@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import {
   AlertCircle,
-  BookOpen,
   Check,
   ChevronDown,
   ExternalLink,
@@ -21,6 +20,7 @@ import {
   TeacherPopover,
   TeacherPopoverContent,
   TeacherPopoverTrigger,
+  TeacherSelect,
   teacherInputCls,
   teacherTextareaCls,
 } from "@/components/teacher/theme-ui"
@@ -94,7 +94,7 @@ export function ToggleGroup({ options, value, onChange, disabled }) {
 // covered:true (via markTopicsCovered) together with completeLesson. Only
 // uncovered items are ever listed here; already-covered ones live in the
 // interactive tiles on the expanded student row instead.
-function CoveredMaterialChecklist({ label, items, selections, onChange, allCoveredLabel }) {
+export function CoveredMaterialChecklist({ label, items, selections, onChange, allCoveredLabel }) {
   const available = items.filter((item) => !item.covered)
 
   if (available.length === 0) {
@@ -139,7 +139,7 @@ function CoveredMaterialChecklist({ label, items, selections, onChange, allCover
 // topic as a topic's own, so both lists feed the same picker now, not just
 // topics). Picking an item only fills the free-text field below; the
 // teacher can still edit it afterward — same as the old select's behavior.
-function ProgramTopicPicker({ program, programLabel, onSelect, disabled }) {
+export function ProgramTopicPicker({ program, programLabel, onSelect, disabled }) {
   const [open, setOpen] = useState(false)
   const topics = program?.topics?.filter((item) => !item.covered) ?? []
   const prototypes = program?.prototypes?.filter((item) => !item.covered) ?? []
@@ -543,12 +543,12 @@ export function HomeworkLessonDialog({
             TeacherDialogContent's own `elevated` prop. */}
         <DialogPrimitive.Backdrop
           forceRender
-          className="teacher-theme fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0"
+          className="teacher-theme themed fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0"
         />
         <DialogPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}
-          className="teacher-theme glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
+          className="teacher-theme themed glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
         >
           <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">
@@ -582,31 +582,38 @@ export function HomeworkLessonDialog({
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-hidden p-6 pt-5 sm:p-7 sm:pt-5">
-              <Section icon={BookOpen} label="Тема урока">
-                {isEditableAssignment ? (
-                  <div className="flex flex-col gap-2">
-                    <ProgramTopicPicker
-                      program={selectedProgram}
-                      programLabel={selectedProgramLabel}
-                      onSelect={setTopic}
-                      disabled={saving}
-                    />
-                    <input
-                      type="text"
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                      disabled={saving}
-                      placeholder="Present Simple"
-                      className={teacherInputCls}
-                    />
+              {/* Merged into one block/one save button — updateHomeworkAssignment
+                  and updateLessonTopic were already saved together by the
+                  same handleSaveAssignment call below, this only changes
+                  the two cards reading as one visual section instead of two. */}
+              <Section icon={ListChecks} label="Тема урока и задание">
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-muted-foreground">Тема урока</span>
+                    {isEditableAssignment ? (
+                      <div className="flex flex-col gap-2">
+                        <ProgramTopicPicker
+                          program={selectedProgram}
+                          programLabel={selectedProgramLabel}
+                          onSelect={setTopic}
+                          disabled={saving}
+                        />
+                        <input
+                          type="text"
+                          value={topic}
+                          onChange={(e) => setTopic(e.target.value)}
+                          disabled={saving}
+                          placeholder="Present Simple"
+                          className={teacherInputCls}
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{topic || "Тема не указана"}</p>
+                    )}
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">{topic || "Тема не указана"}</p>
-                )}
-              </Section>
 
-              <Section icon={ListChecks} label="Задание">
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 border-t border-glass-border pt-4">
+                  <span className="text-xs font-semibold text-muted-foreground">Задание</span>
                   {isEditableAssignment ? (
                     <textarea
                       value={assignmentText}
@@ -679,6 +686,7 @@ export function HomeworkLessonDialog({
                       )}
                     </SolidBtn>
                   ) : null}
+                </div>
                 </div>
               </Section>
 
@@ -763,22 +771,19 @@ export function HomeworkLessonDialog({
                     <div className="flex flex-col gap-4">
                       <span className="text-sm font-bold text-ink">Пройденный материал</span>
                       {programs.length > 1 ? (
-                        <select
+                        <TeacherSelect
                           value={selectedProgramId}
-                          onChange={(e) => {
-                            setSelectedProgramId(e.target.value)
+                          onChange={(value) => {
+                            setSelectedProgramId(value)
                             setTopicSelections([])
                             setPrototypeSelections([])
                           }}
                           disabled={completing}
-                          className={teacherInputCls}
-                        >
-                          {programs.map((program) => (
-                            <option key={program.id} value={program.id}>
-                              {program.subject || "Без предмета"}
-                            </option>
-                          ))}
-                        </select>
+                          options={programs.map((program) => ({
+                            value: program.id,
+                            label: program.subject || "Без предмета",
+                          }))}
+                        />
                       ) : null}
                       <CoveredMaterialChecklist
                         label="Темы"

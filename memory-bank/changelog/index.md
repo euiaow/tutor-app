@@ -22,9 +22,19 @@ these files are for full verbatim narrative detail only, rarely needed.
   progression, designed topic/prototype picker, notifications
   mark-as-read Rules bug found), session 15 (dialog backdrop audit,
   custom dropdowns, video-call/schedule-timezone real root causes,
-  Google Calendar embed color, gamification MVP). Archived 2026-08-02,
-  2026-08-16, 2026-08-18, 2026-08-19, 2026-08-19, 2026-08-19, and
-  2026-08-20 respectively.
+  Google Calendar embed color, gamification MVP), session 16 (student-page
+  i18n, bilingual notifications, `isSlotEqual`/timezone bug found live),
+  session 17 (Sticker Workshop design import + real-data wiring, plus its
+  own addendum), session 18 (Sticker Workshop visual polish pass), session
+  19 (group lessons v1, all 5 phases in one pass), session 20 (Sticker
+  Workshop MYTHIC case art), session 21 (placed stickers rendering live on
+  the dashboard, 5 zones), session 22 (group lessons follow-up: button
+  placement, missing index, group-level curriculum programs), session 23
+  (six independent follow-ups: student Finance section, Settings dropdowns
+  + autofocus-glow fix, Group 69 art, bot registration-link auto-pin).
+  Archived 2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19 (×3), 2026-08-20,
+  and 2026-08-23 (sessions 16-23, in one batch) respectively.
 
-`activeContext.md` itself keeps only the most recent 1 session inline —
-check there first for anything recent; come here only for older detail.
+`activeContext.md` itself keeps only the most recent sessions inline (as of
+2026-08-23: sessions 24-30) — check there first for anything recent; come
+here only for older detail.

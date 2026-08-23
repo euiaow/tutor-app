@@ -40,7 +40,7 @@ export function TeacherLogin() {
   }
 
   return (
-    <main className="teacher-theme relative grid min-h-dvh place-items-center overflow-hidden px-5 py-14">
+    <main className="teacher-theme themed relative grid min-h-dvh place-items-center overflow-hidden px-5 py-14">
       <div aria-hidden className="bg-grain-blobs">
         <div className="blob-a" />
         <div className="blob-b" />

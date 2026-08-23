@@ -8,6 +8,7 @@ import {
   Loader2,
   LogOut,
   Play,
+  Plus,
   RefreshCw,
   Settings,
 } from "lucide-react"
@@ -64,6 +65,7 @@ import {
   startGoogleOAuth,
 } from "@/firebase/google-calendar"
 import { subscribeToTeacherProfile, updateTeacherSettings } from "@/firebase/teachers"
+import { getThemeById } from "@/lib/themes"
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
 import { resolveTimeZone } from "@/lib/timezone"
 import { SettingsDialog } from "@/components/settings-dialog"
@@ -98,6 +100,34 @@ function selectClusteredUpcomingLessons(lessons) {
   }
 
   return selected
+}
+
+// A group lesson is fanned out as one real lesson doc per member (see
+// core/groups.js) — subscribeToUpcomingLessons therefore returns N
+// duplicate-looking entries for the same class session, one per attendee.
+// Collapsed here into a single synthetic entry per groupLessonKey (built
+// off the first mirror found, plus the full member id list) before
+// clustering/rendering, so the dashboard shows one card per session, not
+// one per member — the same "это один урок, не несколько" a group lesson
+// already gets everywhere else (reminders, income, etc).
+function collapseGroupLessons(lessons) {
+  const individual = []
+  const byGroupKey = new Map()
+
+  for (const lesson of lessons) {
+    if (!lesson.isGroupLesson || !lesson.groupLessonKey) {
+      individual.push(lesson)
+      continue
+    }
+    const existing = byGroupKey.get(lesson.groupLessonKey)
+    if (existing) {
+      existing.memberIds.push(lesson.studentId)
+    } else {
+      byGroupKey.set(lesson.groupLessonKey, { ...lesson, id: lesson.groupLessonKey, memberIds: [lesson.studentId] })
+    }
+  }
+
+  return [...individual, ...byGroupKey.values()]
 }
 
 function PastLessonCard({ lesson, studentName, student }) {
@@ -521,7 +551,7 @@ export function TeacherDashboard() {
     }
   }, [googleCalendarConnected])
 
-  const clusteredUpcomingLessons = selectClusteredUpcomingLessons(upcomingLessons)
+  const clusteredUpcomingLessons = selectClusteredUpcomingLessons(collapseGroupLessons(upcomingLessons))
 
   // Статы — новый блок из макета, без прямого аналога в текущем коде.
   // Считаются из данных, уже загруженных на этой странице (без
@@ -546,12 +576,12 @@ export function TeacherDashboard() {
     { value: String(paymentDue), label: "Оплата ожидается" },
   ]
 
-  // Multi-tenancy Phase 4a: colorTheme "amber" swaps the whole teacher-scope
-  // CSS variable block (index.css's .amber-scope, mirroring .teacher-theme's
-  // shape with the student page's own hues) instead of the pink one — see
-  // useColorTheme's callers in theme-ui.jsx/ui/dialog.jsx for why portaled
-  // dialogs need this same class applied to themselves, not just this root.
-  const themeClass = teacherProfile?.colorTheme === "amber" ? "amber-scope" : "teacher-theme"
+  // Theme registry (src/lib/themes.js) resolves colorTheme -> {cssClassName,
+  // ...}. "themed" always rides alongside the theme's own cssClassName (see
+  // index.css's shared `.themed` derivation block) — see useThemeClass's
+  // other callers in theme-ui.jsx/ui/dialog.jsx for why portaled dialogs
+  // need this same pair of classes applied to themselves, not just this root.
+  const themeClass = `${getThemeById(teacherProfile?.colorTheme ?? "pink").cssClassName} themed`
   const resolvedTimeZone = resolveTimeZone(teacherProfile?.timezone)
 
   return (
@@ -641,7 +671,7 @@ export function TeacherDashboard() {
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
               </button>
-              <ExtraLessonDialog students={students} />
+              <ExtraLessonDialog students={students} groups={groups} />
             </div>
           </div>
 
@@ -702,12 +732,17 @@ export function TeacherDashboard() {
               </SolidBtn>
             </div>
             <ul className="mt-4 space-y-3">
+              {/* A group lesson is a real per-student entry in this same
+                  feed now (see core/groups.js) — no separate source/row
+                  type needed, UpcomingLessonCard tells the two apart via
+                  lesson.isGroupLesson on its own. */}
               {clusteredUpcomingLessons.map((lesson) => (
                 <UpcomingLessonCard
                   key={lesson.id}
                   lesson={lesson}
                   studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
                   student={students.find((s) => s.id === lesson.studentId)}
+                  students={students}
                 />
               ))}
             </ul>
@@ -722,7 +757,10 @@ export function TeacherDashboard() {
                   exists — once one does, GroupsSection renders below with
                   its own header button instead, per explicit instruction. */}
               {groups.length === 0 ? (
-                <SolidBtn onClick={() => setGroupFormOpen(true)}>+ Создать группу</SolidBtn>
+                <SolidBtn onClick={() => setGroupFormOpen(true)}>
+                  <Plus className="size-3.5" aria-hidden="true" />
+                  Создать группу
+                </SolidBtn>
               ) : null}
               <RegistrationLinkDialog />
             </div>

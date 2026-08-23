@@ -85,6 +85,17 @@ function mapLessonDoc(id, studentId, data) {
     // systemPatterns.md — found here for lessons, not just students).
     slotIndex: typeof data.slotIndex === "number" ? data.slotIndex : null,
     isExtraLesson: Boolean(data.isExtraLesson),
+    // A group lesson's mirror (see core/groups.js) — a real doc in this same
+    // collection, tagged so the UI can show a "Группа" badge and route
+    // reschedule/cancel/topic-editing to the group-level dialog/callables
+    // instead of this lesson's own individual ones (which refuse to touch
+    // it server-side regardless, see core/lessons.js's assertNotGroupMirror
+    // — this flag is purely for the UI to make the right choice up front).
+    isGroupLesson: Boolean(data.isGroupLesson),
+    groupId: data.groupId ?? null,
+    groupLessonKey: data.groupLessonKey ?? null,
+    groupName: data.groupName ?? null,
+    subject: data.subject ?? null,
   }
 }
 
@@ -389,6 +400,8 @@ function mapPlainLessonDoc(document) {
         files: Array.isArray(data.homework?.assignment?.files) ? data.homework.assignment.files : [],
       },
     },
+    isGroupLesson: Boolean(data.isGroupLesson),
+    groupName: data.groupName ?? null,
   }
 }
 

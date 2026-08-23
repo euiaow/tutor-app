@@ -163,6 +163,23 @@ async function createExtraLessonEvent(teacherId, student, date, durationMinutes 
   return createEventFromResource(teacherId, resource)
 }
 
+// Group counterpart of createExtraLessonEvent above — summary is the
+// group's own name, colorId comes from the group's single subject
+// (colorIdForSubject directly, not colorIdForStudent, since a group has no
+// per-member subject list to read [0] off of).
+async function createExtraGroupLessonEvent(teacherId, group, date, durationMinutes = 60) {
+  const end = new Date(date.getTime() + durationMinutes * 60 * 1000)
+
+  const resource = {
+    summary: `${group.name} (доп. занятие)`,
+    start: { dateTime: toFloatingDateTime(date), timeZone: CALENDAR_TIME_ZONE },
+    end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
+    colorId: colorIdForSubject(group.subject),
+  }
+
+  return createEventFromResource(teacherId, resource)
+}
+
 // Diffs a set of scheduleSlots against an existing googleEventIds map
 // (keyed by slot index, e.g. {"0": eventId, "1": eventId}) and creates/
 // updates/deletes events so the calendar ends up with exactly one recurring
@@ -367,6 +384,7 @@ module.exports = {
   deleteLessonEvent,
   rescheduleLessonEvent,
   createExtraLessonEvent,
+  createExtraGroupLessonEvent,
   createEventFromResource,
   updateEventFromResource,
   colorIdForSubject,

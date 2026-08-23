@@ -1,6 +1,8 @@
 import { Trash2 } from "lucide-react"
 import { DAY_OPTIONS } from "@/lib/schedule"
-import { teacherInputCls } from "@/components/teacher/theme-ui"
+import { TeacherSelect, teacherInputCls } from "@/components/teacher/theme-ui"
+
+const DAY_SELECT_OPTIONS = DAY_OPTIONS.map((day) => ({ value: day.value, label: day.label }))
 
 export const MAX_SCHEDULE_SLOTS = 7
 
@@ -42,18 +44,13 @@ export function ScheduleSlotsEditor({
       {slots.map((slot, index) => (
         <div key={index} className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
-            <select
+            <TeacherSelect
               value={slot.dayOfWeek}
-              onChange={(e) => updateSlot(index, "dayOfWeek", Number(e.target.value))}
+              onChange={(value) => updateSlot(index, "dayOfWeek", Number(value))}
               disabled={disabled}
-              className={teacherInputCls}
-            >
-              {DAY_OPTIONS.map((day) => (
-                <option key={day.value} value={day.value}>
-                  {day.label}
-                </option>
-              ))}
-            </select>
+              options={DAY_SELECT_OPTIONS}
+              className="min-w-0 flex-1"
+            />
             <input
               type="time"
               value={slot.time}

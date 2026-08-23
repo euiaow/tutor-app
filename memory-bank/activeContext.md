@@ -1,596 +1,382 @@
 # Active Context
 
-_Last updated: 2026-08-21 (session 21)_
+_Last updated: 2026-08-23 (session 30)_
 
 ## Current work focus
 
-### Session 21 — Placed stickers now render on the live dashboard (5 zones, up from 3), closing a gap flagged since session 17
+### Session 30 — quick follow-up polish on session 29's group work
 
-Session 17 deleted the old 3 dashed "+" placeholder zones from the live
-dashboard when it migrated to the arcade-cabinet sticker-workshop modal,
-leaving `saveDecoration` writing real zone data that **nothing on the
-actual dashboard page ever displayed** — placement only showed up inside
-the modal's own screenshot-based picker. This was a known, disclosed gap
-(see the session 17/18/19 entries below and `progress.md`'s "Known
-issues"), not fixed until now. The user handed this session a reference
-screenshot of the target 5-sticker layout and asked to both extend
-3→5 zones and build the actual rendering.
+Small, frontend-only (no backend redeploy needed):
+1. Group's hourly rate now **sums** every member's own rate (was min–max range) — matches how group income is actually billed (each attendee their own rate, per finance-section.jsx's computeWeeklyIncome).
+2. Student's own info panel "Предмет" row (student-row.jsx) now renders as colored tag pill(s), matching the group info panel's own subject tag — was plain text via `SummaryListRow`.
+3. The group program's template-name/percent/Заменить/Удалить row moved to sit **above** the Темы/Прототипы tiles (was below), now bold with a real `ProgressBar` under it instead of just inline percent text.
+4. Group's "Следующие занятия" list rebuilt to match the student's own `UpcomingLessonsListDialog` exactly: the real loaded occurrence renders as a full `UpcomingLessonCard` (name/tags/date/reschedule/cancel — group-aware since session 29 already taught it `lesson.isGroupLesson`), and further not-yet-created weekly occurrences render as read-only `VirtualLessonRow` placeholders (`getVirtualOccurrences`, exported from `upcoming-lessons-list-dialog.jsx` for reuse) — was a much plainer one-line-per-occurrence `GroupLessonRow` (now deleted).
 
-**Data model, 3→5 zones.** `DECORATION_ZONES` now `["zone1".."zone5"]` in
-both `functions/core/gamification.js` (server-side validation gate for
-`saveDecoration`) and `src/firebase/gamification.js` (client constant +
-`mapDecorationDoc`, which now reads `zone4`/`zone5` too); old
-zone1-3 data is untouched and stays backward-compatible since the doc is
-just a flat map of zone key → inventory item id or null.
-`gamification-context.jsx`'s initial `decoration` state gained the 2 new
-keys. `sticker-workshop-modal.jsx`'s `ZONE_DEFS` (the "ГДЕ РАЗМЕСТИТЬ"
-picker panel — a generic `.map()` over this array, so extending it was
-the only change needed there) gained `zone4`/`zone5` entries with
-approximate percentage placements over `dashboard-screen.png`, same
-"cosmetic placement aid, not pixel-perfect" caveat the existing 3 already
-carried in their own comment.
+**Real bug caught and fixed while doing this**: reusing `UpcomingLessonCard` from `groups-section.jsx` would have created a circular import (`upcoming-lesson-card.jsx` already imported `GroupRescheduleDialog`/`GroupCancelDialog` FROM `groups-section.jsx`). Fixed by relocating those two dialogs into `group-lesson-dialog.jsx` (which neither of the other two files imports), so the dependency graph stays one-directional: `groups-section.jsx` → `upcoming-lesson-card.jsx` → `group-lesson-dialog.jsx`.
 
-**New `src/components/student/decoration-zone.jsx` (`DecorationZone`)** —
-the actual live-dashboard renderer, reading `decoration`/`inventory` off
-the existing `useGamification()` context (no new subscriptions). Resolves
-a zone's inventory item id to the real sticker (image/name/rarity) the
-same way the modal's `collection`/`buildStick` does, but deliberately
-**does not** import the modal's `hashColor`/`ink` — those are scoped to
-the modal's arcade neon palette (`ACCENT`/`YELLOW`/`SWATCHES` etc, not
-exported) and reaching into an unrelated component's internals for an
-unexported helper felt worse than a small intentional duplication, so a
-new `stickerPlaceholderColor(key)` (same djb2-hash-over-fixed-palette
-shape) was added to `src/lib/stickerColors.js` instead — single source of
-truth for the *live dashboard's* sticker color, separate from the modal's
-own. Renders `<img>` with `max-width`/`max-height` both set to a
-`--sticker-max` CSS var (preserves the sticker's real aspect ratio,
-capping only the longer edge, per the task's explicit "not necessarily
-square" requirement) when `imageUrl` exists — which per
-`functions/core/gamification.js`'s own comment is **empty on every real
-sticker until actual pixel art is uploaded**, so today every zone renders
-its no-imageUrl placeholder (name text on the hashed-color square) instead
-of a photo; this isn't a bug, just the pre-existing state of the seed
-data carried forward.
+`mapGroupLessonMirror` (`firebase/groups.js`) extended with the fields `UpcomingLessonCard` reads unconditionally but a group mirror never actually has (`homework.submission`, `rescheduleStatus`, `cancellationStatus`, `rescheduleProposedDate`, `rescheduled`) — present as empty/null rather than omitted, plus real ones it was missing (`teacherId`, `groupName`, `groupSlotIndex`, `isGroupLesson: true`).
 
-**`--sticker-max` (`src/index.css`)**: `130px` desktop, `76px` under the
-project's existing `640px` breakpoint (Tailwind v4 default `sm:`,
-confirmed no `@theme` override exists) — one CSS var feeds both the
-`<img>`'s max-width/max-height and the placeholder square's fixed width,
-so the single mobile/desktop size rule lives in exactly one place.
+Deployed: hosting only (no backend logic changed this round).
 
-**Anchoring — each zone is `position:absolute` inside its own
-`position:relative` anchor `<section>`, never positioned against the
-page.** `zone1`/`zone2`/`zone3` live inside `NextLessonPlate`'s own
-section (`StudentDashboard.jsx`); `zone4`/`zone5` live inside whichever
-card renders for `programBlocks[0]` — `ExamRadar` when that first
-program has a goal set, `CurriculumProgressCard` otherwise (both gained
-a `showDecoration` boolean prop, passed as `index === 0` from the
-`.map()` in `StudentDashboard.jsx` — only the first program's card gets
-zone4/5, matching the reference screenshot's single "До X дней" card;
-a student with zero programs or whose first program has no goal simply
-never sees zone4/5, an accepted consequence of "which card is that" not
-being specified further). Because every zone's positioning is relative to
-its own anchor's border box (not the viewport), the already-existing
-`StudentNotifications` banner between `NextLessonPlate` and
-`MyGoalsSection` reflows the page exactly as intended with **zero extra
-code** — zone1-3 are anchored above/beside a card the banner never moves,
-zone4-5 are anchored inside a card that's already below the banner in
-normal document flow, so both automatically follow their card when the
-banner appears/disappears. This was the whole point of the
-anchor-inside-card requirement and required no explicit "listen for
-banner state" logic.
+### Session 29 — Group lessons collapsed to one card (not N per-member duplicates), group program deduplication against individual assignments, group detail page redesigned to match the student page, group deletion now cascades program cleanup
 
-**Positioning specifics, all via Tailwind arbitrary-value classes (mobile
-= default, `sm:` = desktop ≥640px):**
-- `zone1` — same treatment both breakpoints (small top-right overlap of
-  `NextLessonPlate`'s top border, near the header): `top-[-64px] right-2`
-  mobile, `sm:top-[-116px] sm:right-4` desktop (bigger offset for the
-  bigger 130px cap, kept to a shallow ~12-18px overlap into the card so it
-  can't reach the "Посмотреть все уроки" link in that same corner).
-- `zone2` — mobile: top-left corner overlap of the same card (mirrors
-  zone1). Desktop: moves into the **left page margin**,
-  `sm:top-[64%] sm:left-[-104px]`, vertically roughly at "Моя домашка"'s
-  level.
-- `zone3` — mobile: bottom-right corner overlap (shallow, `-64px`, tuned
-  so it can't reach the "Перенести/Отменить урок" buttons at the very
-  bottom of that card). Desktop: **right page margin**,
-  `sm:top-[46%] sm:right-[-104px] sm:bottom-auto`, roughly at "Задание"'s
-  level.
-- `zone4`/`zone5` — same treatment both breakpoints (no page-margin
-  variant needed since they were never in a margin to begin with):
-  `zone4` top-right corner overlap of the card
-  (`top-[-40px] right-3 sm:top-[-56px] sm:right-5`), `zone5` bottom-right
-  corner overlap (`bottom-[-40px] right-3 sm:bottom-[-56px] sm:right-6`,
-  clear of that card's own left-aligned "Развернуть" expand link).
+Direct follow-up to session 28's group-lesson rearchitecture, closing 5 gaps the user found in real use.
 
-**No live browser measurement was possible** (same standing environment
-gap as sessions 17-19 — no DevTools automation here) — every offset above
-was reverse-engineered from the user's reference screenshot's visual
-proportions plus each card's actual JSX structure (confirmed by reading
-`StudentDashboard.jsx`/`exam-radar.jsx` directly, not guessed), not
-measured pixel-for-pixel against a running page. Verified via `npx vite
-build` (clean) and `npx eslint` scoped to every touched/new file (zero new
-violations — the only errors ESLint reports are the same pre-existing
-`react-hooks/set-state-in-effect`/`react-hooks/purity` violations already
-present throughout this codebase before this session, confirmed by
-running eslint against just the new/changed files in isolation). Deployed
-`saveDecoration` (functions, the only backend change — the 5-zone
-validation gate) and hosting.
+1. **"+ Создать группу"/"+ Добавить ученика" now both use the `Plus` icon component**, not a literal "+" text character — trivial but requested explicitly for visual consistency between the two buttons (`TeacherDashboard.jsx`, `groups-section.jsx`).
 
-**Loose end to verify next session with real DevTools**: whether the
-approximate zone1-5 offsets actually land where the reference screenshot
-shows on a real render, at both the default and `~640px` breakpoints, and
-whether any zone visually collides with a button on an unusually narrow
-or unusually wide viewport (the tightest case is a desktop window between
-~640px and ~810px, where the outer page container has little to no side
-margin left for zone2/zone3's negative-left/right desktop offsets before
-they'd start pushing past the actual viewport edge — not something a
-build/lint check can catch).
+2. **"Ближайшие уроки" was showing N duplicate cards for one group session (one per member)** — session 28 made group lessons real per-student mirror docs so they'd flow through the same feed as individual lessons "for free", but never collapsed them back into one card for display, so a 3-person group session showed as 3 near-identical rows. Fixed with `collapseGroupLessons()` (`TeacherDashboard.jsx`) — groups the raw `upcomingLessons` array by `groupLessonKey` into one synthetic entry before clustering, same "one card per session, not per attendee" shape the group row's own "Следующие уроки" list (`subscribeToUpcomingGroupLessonOccurrences`) already had. `UpcomingLessonCard` now shows the group name as the card's title (not a member's name) plus a member-count badge when `lesson.isGroupLesson`, and hides the single-student `ContactIconButton` for it (contacting "the group" isn't a thing).
+
+3. **Group detail page redesigned to match the student row's own expanded layout** (`groups-section.jsx`): `grid md:grid-cols-3` — `GroupInfoPanel` (1/3: schedule, subject, participants, program name, hourly rate summary, "Редактировать") + the program's topics/prototypes tiles (2/3, reusing `CurriculumTile` — see point 4). Every sub-block now has `border border-glass-border` (previously `glass-tile` alone with no border, which the user said "all blends together white-on-white") — applies to the info panel and both curriculum tiles.
+
+4. **Real architecture fix — a student individually assigned a subject AND in a group teaching that same subject no longer gets two silently-diverging program docs.** The group's program was a separate stored copy under `teachers/{uid}/groups/{groupId}/programs` (session 22/24) — deleted entirely. A group now just remembers `programTemplateId`; assigning it (`functions/core/groups.js`'s rewritten `assignGroupProgram`) reuses a member's existing program if they already have one for that subject (tags it `sourceGroupId`, `createdByGroup: false` — it's still fundamentally *their* data), or creates a fresh one via `assignCurriculumTemplate` (tagged `createdByGroup: true` — this copy exists *because of* the group). The group's own "progress" is computed at read time (`getGroupProgramView`, `firebase/groups.js`) by intersecting every linked member's own program — a topic reads "covered by the group" only once every member's own program has it checked, and a student's own extra progress beyond that naturally shows as higher on their own page, exactly the "групповой прогресс = минимум, у ученика может быть больше" the user asked for. Marking a topic covered from the group view (`setGroupCurriculumItemCovered`, new signature: fans out to every linked member's own program via the existing `setCurriculumItemCovered`) now genuinely reaches each student's real progress — it never did before (the group-shared copy was a dead end nothing else read).
+
+5. **Deleting a group now cleans up the programs it assigned — it never did before** (only the narrower "delete just the program" path did). `deleteGroup` runs the same unlink-or-delete rule `deleteGroupProgram` uses: a member's own pre-existing program is unlinked (survives, keeps all progress), one that only exists because of the group is deleted with it.
+
+**Backend signature changes** (both call sites updated, not backward-compatible — fine, single-teacher app, no migration needed): `reassignGroupProgram(groupId, templateId)` and `deleteGroupProgram(groupId)` both dropped their now-meaningless `programId` parameter (a group has at most one program at a time now, matching its own single subject — no list to pick from).
+
+**Verified for real** (deployed-and-deleted diagnostics, both against live throwaway data): the lesson-mirror pipeline (create/reschedule/complete/extra/cancel, all correct) and the program dedup/propagation pipeline specifically — student1 pre-assigned individually, student2 fresh via the group: after `assignGroupProgram`, student1's program count stayed at 1 (reused, not duplicated) while student2 got a real new one; student1's own prior progress survived untouched; marking a topic via the group flow propagated to both members' real programs; deleting the group left student1's program alive and unlinked (progress intact) while deleting student2's group-only copy entirely.
+
+Deployed: functions, hosting (no new Firestore indexes needed this round — `getGroupProgramView` is pure client-side aggregation over each member's own already-indexed `programs` subcollection, no new query shape).
+
+
+### Session 28 — Group-program cascade-delete: root-caused (not a bug) + Group lessons rearchitected as real per-student mirror docs
+
+**Part 1 — investigation, no code change needed.** User reported deleting a group's program still left it on each member. Root-caused via production logs: the `sourceGroupProgramId`-stamping fix (session 24) genuinely works — but the specific real programs the user tested were assigned at 04:36/05:28, and the fix's revision didn't deploy until 05:58 that same session. Those 4 already-existing student program docs simply predate the fix and have no way to be traced back to a group program retroactively. New assignments (post-05:58) cascade-delete correctly — confirmed by a live diagnostic. No code changed for this part.
+
+**Part 2 — real architecture change, per explicit user request.** User asked why group lessons "sit obscure" from the rest of the app (separate reschedule/cancel model with no confirm handshake, own dashboard row type instead of appearing inline in "Ближайшие уроки", own Calendar/reminder/notification code paths) and asked for group lessons to literally duplicate into each member's own schedule. Agreed direction after 3 clarifying answers: reschedule/cancel is teacher-only and applies to the whole group at once (no per-student override); one shared Calendar event per occurrence (unchanged); notifications reuse the *existing* individual-lesson delivery functions so language/timezone always resolve correctly, with no separate/duplicate reminder sent for the same window.
+
+**What changed**: A group lesson is no longer its own doc under `teachers/{uid}/groups/{groupId}/lessons` — creating one now fans out one real `students/{studentId}/lessons/{id}` "mirror" doc per member (`functions/core/groups.js`, reusing `createUpcomingDraft` from `core/lessons.js`), tagged `isGroupLesson`, `groupId`, `groupLessonKey` (a fresh `randomUUID()` tying one occurrence's N mirrors together — no single doc is "the" lesson anymore), `groupSlotIndex`, `subject`, `groupName`. `slotIndex` on every mirror is always `null` so it can never collide with that same student's own personal schedule-slot bucketing — closed via a real fix to `bucketUpcomingBySlot` (`core/lessons.js`) which used to default a non-numeric `slotIndex` into bucket 0 (a latent bug for extra lessons too, not just new for groups).
+
+Because mirrors are real `students/{id}/lessons` docs, they now show up **for free** everywhere an individual lesson already does: the teacher's "Ближайшие уроки" feed (`subscribeToUpcomingLessons`), all 3 reminder tiers (`dailyReminderMidday/PreLesson/TenMin` — the old parallel `sendGroupReminder`/`forEachUpcomingGroupLesson` machinery in `functions/reminders.js` is gone, ~150 lines), weekly income (`subscribeToIncomeLessons` — `subscribeToIncomeGroupLessons`/`computeWeeklyGroupIncome` in finance-section.jsx deleted, would have double-counted otherwise), the student's own "next lesson"/history/materials (`StudentDashboard.jsx`'s old `subscribeToNearestGroupLesson`/`getGroupLessonsForStudent` dual-source merge deleted — one query now, not two), and `recordHomeworkSubmission`'s "attach to nearest lesson" logic (the `findNearestUpcomingGroupLessonForStudent` branch deleted — `getNearestUpcomingLesson` alone already sees mirrors).
+
+Topic/assignment/material edits on a group lesson are **not** special any more — `GroupLessonDialog` fans the exact same `updateLessonTopic`/`updateHomeworkAssignment`/`addLessonMaterial`/`removeLessonMaterial` (`firebase/lessons.js`) out to every member's mirror, once each, instead of writing to one shared doc — each member gets their own properly-localized notification for free. Reschedule/cancel/complete/create-extra remain group-level orchestration (`rescheduleGroupLesson` — renamed from `proposeGroupReschedule` since it's immediate, not a proposal; `cancelGroupLesson`; `completeGroupLesson` — reuses `completeLesson` per attendee verbatim, not a reimplementation; `createExtraGroupLesson`), all keyed by `groupLessonKey`, all fanning a Firestore write out to every mirror + resolving the one shared Calendar event off any single mirror (they all carry an identical copy of the same `googleEventId`).
+
+**Safety guard**: `proposeReschedule`/`proposeCancellation`/`cancelLessonDirectly` (`core/lessons.js`) now throw `failed-precondition` (`assertNotGroupMirror`) if called on a doc with `isGroupLesson: true` — protects every entry point (bot included) from one student's individual "перенести"/"отменить" action desyncing their mirror from the rest of the group, without needing to audit/patch every bot menu individually.
+
+**Notifications**: `reschedule_confirmed`, `lesson_cancelled_by_teacher`, and `extra_lesson_assigned` (`functions/core/notificationMessages.js` + hand-mirrored `src/lib/notificationMessages.js`) now accept an optional `groupName` param and switch to group-flavored wording when present — the 4 dedicated `group_lesson_rescheduled`/`group_lesson_cancelled`/`group_lesson_completed`/`group_extra_lesson_assigned` builders were deleted as redundant. `lesson_reminder_midday/preLesson/lesson_soon` already had `groupName`-aware wording from session 17, unchanged.
+
+**Frontend**: `UpcomingLessonCard` (shared by the teacher dashboard and the student-row "Следующие уроки" dialog) now detects `lesson.isGroupLesson` and routes its click/reschedule/cancel actions to `GroupLessonDialog`/`GroupRescheduleDialog`/`GroupCancelDialog` (the latter two newly exported from `groups-section.jsx`) instead of the individual ones, and shows a "Группа: {name}" badge — a group lesson now renders as a normal-looking lesson card inline in the same list, sorted by date alongside individual ones, not as a separate obscure block at the end (this was the user's core visual complaint). `GroupLessonDialog` itself was rewritten to operate on the array of mirrors (one-time load via new `getGroupLessonMirrors(teacherId, groupLessonKey)`) instead of one doc with an `attendees` map. `groups-section.jsx`'s `GroupLessonsList`/`GroupUpcomingLessonsDialog` now source from `subscribeToUpcomingGroupLessonOccurrences` (collapses N mirrors per occurrence down to one row via `groupLessonKey`) instead of the old lessons subcollection.
+
+**Indexes**: two new composite indexes (`{teacherId,groupId,status}`, `{teacherId,groupLessonKey}`) plus two field-overrides (`lessons`/`groupId` and `lessons`/`groupLessonKey`, both `COLLECTION_GROUP` ascending) — collectionGroup queries need an explicit index even for a single equality field, confirmed the hard way when the live diagnostic below failed until the override finished building. The old dead `memberIds array-contains + status` index was removed from `firestore.indexes.json` (not force-deleted remotely, harmless leftover).
+
+**Verified for real**: a temporary diagnostic (deployed, invoked, deleted) created 2 throwaway students + a group with a real weekly schedule slot, called `ensureUpcomingGroupLessons` (confirmed 2 mirrors created, `slotIndex: null`, correct `groupSlotIndex`/`subject`), `rescheduleGroupLesson` (confirmed both mirrors' `rescheduled` flipped true), `completeGroupLesson` with different per-student attendance (confirmed both mirrors independently completed with their own attendance/homeworkDone), confirmed the next occurrence auto-created, `createExtraGroupLesson` (confirmed 2 mirrors, `isExtraLesson: true`), and `cancelGroupLesson` on it (confirmed both cancelled) — all real, all correct, no data left behind afterward. Migration of pre-existing old-shape group lesson data was explicitly declined by the user ("не важны"); a one-off cleanup deleted 0 leftover docs (this teacher's group had none).
+
+Deployed: functions, firestore indexes, hosting.
+
+
+
+Small, fast follow-up to session 26. Two independent asks.
+
+**zone1 further left.** `right-[190px]` → `right-[230px]`
+(`NextLessonPlate`, `StudentDashboard.jsx`) — a plain further nudge in the
+same direction session 26 already established was correct, no new
+reasoning needed.
+
+**Placement picker enlarged to be the tab's main visual focus
+(`sticker-workshop-modal.jsx`).** The user's framing: an average student
+will place close to all 5 zones, so the "ГДЕ РАЗМЕСТИТЬ" panel — until now
+a small 318px-wide side panel next to the sticker inventory grid, with its
+`MiniDashboard` preview capped at `maxHeight:300` and force-scrolling —
+should dominate the tab's space instead of playing second fiddle to the
+inventory list. New `MINI_DASHBOARD_SCALE = 1.6` constant scales the whole
+mockup+zone-marker subtree via a CSS `transform: scale()` wrapper, rather
+than hand-multiplying every one of `MiniDashboard`'s and `ZONE_DEFS`' hand-
+authored pixel values — everything inside (the mockup's rects/lines, each
+zone's absolute-positioned marker, the `StickerFrame` thumbnails, the
+label text) stays authored at the original 260×470 base size and scales
+uniformly as a unit; click hit-testing works correctly through a CSS
+transform so `onClick={() => setSelectedZone(z.id)}` needed no changes.
+Panel width now derives from the scaled mockup size
+(`MINI_DASHBOARD_WIDTH * MINI_DASHBOARD_SCALE + 38`) instead of a hardcoded
+`318`; the inventory grid to its left changed from a growing
+`flex:"1 1 320px"` to a fixed, non-growing `flex:"0 1 240px"` so it stops
+competing with the picker for leftover row space. The old `maxHeight:300`
+scroll cap (sized for the small pre-scale mockup, would have clipped most
+of a 1.6×-scaled one) became `maxHeight:"72vh"` — generous enough that the
+now-larger mockup should rarely need its own internal scrollbar, with a
+viewport-relative cap still there as a safety net rather than removed
+outright.
+
+**No live browser verification possible in this environment** — the
+panel's real proportions at the modal's actual 1040px-wide container, and
+whether `72vh` is the right cap on a real device, are unconfirmed against
+a running page.
 
 ---
 
-### Session 20 — Sticker Workshop: MYTHIC's missing case-lettering closed, corrected by the user
+## Current work focus
 
-Follow-up on session 18's flagged gap. Session 18 concluded "MYTHIC" (the
-3rd seeded case) had no matching lettering asset anywhere in
-`roulette-design/` and left it as plain text, having judged
-`reels-lettering.png` irrelevant (it's a demo anime photo tied to the
-design's "REELS" case, not text art, and our 3rd case is named MYTHIC).
-**User corrected this**: the design's 3rd case slot always used a
-different treatment than SLAY/LEGACY — a bordered `object-fit:cover`
-*photo card*, not transparent-background lettering — specifically
-*because* its asset isn't stylized text. That treatment belongs to
-whichever case fills the 3rd slot, independent of the demo name. Wired
-`reels-lettering.png` in as `src/assets/gamification/mythic-lettering.png`
-for the MYTHIC case, using the design's exact `isReels` photo-card
-styling (bordered, `object-fit:cover`, distinct card-vs-detail dimensions
-`187×145`/`178×148`) rather than forcing it into the SLAY/LEGACY sticker
-layout. `CaseTitle` (`sticker-workshop-modal.jsx`) now takes a
-`type: "sticker" | "photo"` per entry in `CASE_LETTERING` plus a
-`variant: "card" | "detail"` prop, so the two visual treatments coexist
-cleanly. All 3 seeded cases now show photo/lettering art, closing the gap
-flagged in session 18 — **no case names are missing artwork anymore.**
-Added to `CRITICAL_IMAGES` (preload list from session 18's loading
-gate). Verified via `npx vite build` + `npx eslint` (clean, same single
-pre-existing violation as before). Deployed hosting only (no functions
-changes).
+### Session 26 — Sticker positions corrected again after real user testing (root-caused stacking-order bug), one-sticker-one-slot enforced, Sticker Workshop modal made responsive
 
-### Session 19 — Group lessons, all 5 phases in one pass (data model → CRUD/UI → generation/Calendar → completing → student-side merge → finance), deployed and verified end-to-end
+Direct follow-up to session 25 — the user tested the actual deployed page
+(not just reviewed screenshots) and reported specific remaining overlaps,
+then mid-session added an unrelated but adjacent request: the case-picker
+modal itself had no mobile layout at all.
 
-The user handed all 5 phases as one continuous spec ("write everything, deploy and test all at once at the end"), so this session has no per-phase checkpoint the way most sessions do — implemented straight through, then deployed functions+hosting+a new Firestore index in one batch and ran a real end-to-end backend diagnostic before reporting done.
+**Anchor/position corrections, desktop (screenshots showed real overlaps):**
+- `zone1` ("kitten"): was landing on the "Посмотреть все уроки" link,
+  which turned out to be *wider* than the header's own gear+avatar cluster
+  session 25 sized the clearance against — the link's text extends further
+  left than the icons above it, so clearing only the icons wasn't enough.
+  Moved further left and higher (`top-[-104px] right-[190px]`, was
+  `top-[-72px] right-[140px]`).
+- `zone2` ("pretty soul"): user's own correction — "почти целиком в блоке"
+  (should sit almost entirely *inside* the card, not mostly hanging past
+  its right edge as session 25 had it). Changed from a `right:-70px`
+  outside-the-border offset to `right:8px`, a small *inset*.
+- `zone3` ("МГУ", on `GoalCard`): user's correction — should overlap the
+  notifications banner above *more*, but must never touch the "Русский
+  язык" title or the "Заполнить" button, both of which span nearly this
+  card's entire height in its no-goal state (title left, button far
+  right — there's no safe vertical band to dip into at all). Pushing the
+  offset more negative (`top-[-84px]`, was `-54px`) fixes both at once:
+  less of the sticker reaches down into the card in the first place.
+  Shifted right too (`left-[52%]`, was `28%`) to clear both the title and
+  stay left of the button.
+- **`zone4`/`zone5` no longer ever render on `CurriculumProgressCard`** —
+  the user was explicit: only the `ExamRadar` card should ever carry a
+  sticker, never the plain no-goal progress card. Session 25's
+  `showDecoration={index === 0}` was wrong for this — for a student whose
+  *first* program has no goal (this test student's "Русский язык"), index
+  0 renders `CurriculumProgressCard`, not `ExamRadar`, so the sticker was
+  landing on the wrong card by construction, not just a wrong offset.
+  Fixed by computing `firstExamRadarIndex = programBlocks.findIndex(b =>
+  b.hasGoal && b.metrics)` in `StudentDashboard.jsx` and gating `ExamRadar`
+  on `index === firstExamRadarIndex` instead — `CurriculumProgressCard`
+  lost its `showDecoration` prop entirely, by design, not an oversight.
+- **Root-caused a real stacking-order bug, not just an offset**: zone5 (on
+  `ExamRadar`) was rendering *behind* the next card down (`MaterialsLibrary`
+  or whatever program block follows). A `position:relative` ancestor with
+  no `z-index` of its own doesn't win a stacking comparison against a
+  later DOM sibling, no matter what z-index its own overflowing child
+  carries — the child's `z-10` only out-ranks other elements *inside that
+  same stacking context*, not a separate sibling section entirely. Fixed
+  by adding `z-10` to `ExamRadar`'s own `<section>` (`relative z-10`), not
+  just to the `DecorationZone` inside it. This only matters for
+  *bottom*-overlapping zones reaching into a *later* sibling — top
+  overlaps into an *earlier* sibling already win by plain DOM order, no
+  fix needed there (confirmed this is why zone1/zone3/zone4's top overlaps
+  never showed this symptom). Also nudged zone5 further down per the
+  user's request (`bottom-[-68px]`, was `-56px`).
+- **Unified every position to one value for all breakpoints** (dropped
+  every `sm:` split introduced in session 25), per the user's own explicit
+  direction after testing on a real phone — confirmed zone4/zone5's
+  existing *mobile*-specific offsets already looked correct there, and
+  said a single set of offsets plus the existing `--sticker-max` responsive
+  size (unchanged, still 130px/70px) would be enough. Not fully
+  width-safe in principle for a very narrow phone (zone1/zone2 use fixed
+  px offsets that don't scale down with a narrower header, unlike zone3/
+  zone4's percentage-based ones) — accepted deliberately on the user's own
+  real-device confirmation rather than re-litigated with more untestable
+  guesses.
+- Fixed rotation angles (`decoration-zone.jsx`) were already correct from
+  session 25 (+3/-5/+2/-4/+5) — untouched this session.
 
-**Data model.** `teachers/{uid}/groups/{groupId}` (name/subject/memberStudentIds/scheduleSlots/teacherId, mirrors the student edit form's shape) and `teachers/{uid}/groups/{groupId}/lessons/{lessonId}` (status/date/rescheduledDate/slotIndex/subject/topic/homework/materials/attendees map/`memberIds` array/teacherId/durationMinutes/googleEventId). **`memberIds` (a plain array mirroring `attendees`'s keys) is the load-bearing field for every student-facing query in this feature** — a `collectionGroup("lessons").where("memberIds","array-contains",studentId)` query structurally can never match an individual `students/{id}/lessons/{id}` doc (those never have that field at all, array-contains on a missing field never matches), confirmed via a real deployed diagnostic, not just assumed — this is what let student-side reads skip needing any other discriminator between the two doc shapes that share the same collection id "lessons".
+**One-sticker-one-slot enforced (`sticker-workshop-modal.jsx`).** Nothing
+previously stopped the same inventory item from being written into
+multiple zones — `placeArmed(zoneId)` now looks up every other zone
+(`DECORATION_ZONES`, imported from `firebase/gamification.js`) that
+already holds `placingItemId` and clears them (`saveDecorationApi(...,
+null)`) before writing the new placement, so placing a sticker somewhere
+new always *moves* it rather than cloning it onto a second spot.
+Client-side only, matching this app's existing trust model for other
+student-facing writes — not pushed into the `saveDecoration` Cloud
+Function itself this session.
 
-**Backend (`functions/core/groups.js`, new).** CRUD (`createGroup`/`updateGroup`/`deleteGroup`, `deleteGroup` also cleans up every generated lesson + Calendar event, not just the group doc) + `ensureUpcomingGroupLessons` (mirrors `core/lessons.js`'s `ensureUpcomingLesson` exactly — idempotent find-or-create per slot) + `proposeGroupReschedule`/`cancelGroupLesson` (one-sided, immediate, no propose/confirm dance — a deliberate spec choice, not individual lessons' dual-actor pattern) + `completeGroupLesson` (loops every attendee through the same building blocks `completeLesson` already uses — `deductLessonFromBalance`, `markTopicsCovered`, `createNotification` — via `Promise.allSettled` so one student's failure can't block the rest, confirmed in the diagnostic). `functions/core/tenancy.js` gained `assertOwnsGroup` — structurally different from `assertOwnsStudent`: a group's path (`teachers/{teacherId}/groups/{groupId}`) already scopes ownership, so this is a "does it exist at this exact path" check, not a stored-field comparison.
+**Sticker Workshop modal — mobile layout added where none existed
+(new request, arrived mid-session, not part of the positioning fixes
+above).** The "коллекция" (collection) tab was already responsive and
+untouched, per the user's own instruction. The cases grid (`tab ===
+"cases"`) and the case-detail view (`tab === "detail"`) had a fixed
+3-column / two-column-side-by-side layout with no mobile variant at all.
+New `useIsMobile(breakpoint = 640)` hook (genuinely reactive — a resize
+listener, not a one-time check) added alongside the file's existing
+`useModalFonts`/`useBodyScrollLock` hooks; deliberately *not* reusing the
+file's two pre-existing `window.innerWidth < 760` one-off checks (those
+only apply at initial paint, sizing decorative header art where a stale
+value after rotation/resize is a minor cosmetic mismatch — a whole page
+layout staying stuck in the wrong column count after rotating the phone
+would be a much more visible bug). Cases grid: `repeat(3,minmax(0,1fr))`
+→ `1fr` on mobile (single column, cases stack vertically). Detail view:
+`minmax(0,268px) minmax(0,1fr)` two-column grid → `1fr` single column on
+mobile, with the left "cover card" (fan-preview art, title, description,
+price, "ОТКРЫТЬ КЕЙС" button) switching from a fixed `width:259` to
+`width:"100%"` — description card stays first in source order either way,
+so going single-column naturally puts description on top and the "ЧТО
+МОЖЕТ ВЫПАСТЬ" sticker-pool grid below it, matching the request directly
+without needing to reorder any JSX.
 
-**Reused, not duplicated, per the task's own repeated instruction:** `getUpcomingLessonDates`/`normalizeScheduleSlots` (schedule.js) untouched; `createEventFromResource`/`updateEventFromResource`/`colorIdForSubject` in `googleCalendar.js` were previously *internal* (not exported) — exported them rather than reimplementing, and extracted the create/update/delete diff loop itself into a new shared `syncSlotEvents(teacherId, logContext, scheduleSlots, existingEventIds, buildResource)` so `syncScheduleSlots` (student) and the new `syncGroupScheduleSlots` (group) share one diffing implementation instead of two near-copies. `markTopicsCovered` (curriculum.js) got one small tolerance fix — it used to unconditionally `transaction.update` an individual `students/{id}/lessons/{lessonId}` doc to mirror `coveredTopics`, which doesn't exist for a group lesson id; now checks existence first and skips that one write when there's nothing there, everything else about the function is unchanged. **Group topic→program matching is text-only** (`completeGroupLessonForAttendee`): the group lesson dialog only has a free-text "Тема урока" field, no per-student `ProgramTopicPicker` like the individual dialog, so a topic counts as "from the program" only via exact case-insensitive title match against that student's own program for the group's subject — flagged as an approximation in the code comment, not hidden.
-
-**Google Calendar.** One event per schedule slot (not per member), summary = group name, colorId from the group's subject via the same hash-based `colorIdForSubject` individual lessons use. `cancelGroupLesson` deletes the slot's recurring event the same way `cancelLessonDirectly` already does for an individual lesson tied to a recurring slot — mirrored deliberately, not redesigned (this is arguably a pre-existing quirk — cancelling one occurrence removes the whole recurring series until the schedule is next re-saved — but out of this task's scope to fix, and the task explicitly said reuse the existing functions as-is).
-
-**Reminders (`functions/reminders.js`).** All three tiers (midday/pre-lesson-2h/10-min) gained a parallel group loop (`forEachUpcomingGroupLesson`, iterates every teacher's groups via one `collectionGroup("groups")` read) sending a **separate** notification per member per group lesson — never merged into that member's individual-lesson reminder for the same window, per the task's explicit "два отдельных, различимых напоминания" requirement. `notificationMessages.js` (both the CommonJS `core/` and its hand-mirrored ESM `src/lib/` twin — kept in sync by hand, same pairing shape as `schedule.js`) gained an optional `groupName` param on the 3 reminder builders (renders "групповое занятие «X»" instead of "урок" when present) plus 3 new types (`group_lesson_rescheduled`/`_cancelled`/`_completed`).
-
-**Bot homework attach (`recordHomeworkSubmission`, `core/lessons.js`) now compares nearest individual vs. nearest group lesson and attaches to whichever is actually sooner** — this one function is the single call site for both bots (`telegram.js`/`vk.js`) and the website's own submit button, so fixing it once covers all three surfaces at once (confirmed by reading the call sites before touching it, not assumed).
-
-**Frontend — teacher side.** `src/components/teacher/schedule-slots-editor.jsx` (new) — extracted the day/time slot list out of `StudentEditModal` (`student-row.jsx`), which used to hand-draw it inline, into a shared component both the student edit form and the new group form now render identically, instead of a second hand-copied version (the task explicitly asked for this reuse). `groups-section.jsx` (new): the "Группы" panel (row list, not cards, matching the post-redesign "Ученики" section's own shape) sits directly under "Ученики" in `TeacherDashboard.jsx`; each row expands to its generated lesson list with immediate (no-confirm) reschedule/cancel dialogs; clicking a lesson opens `group-lesson-dialog.jsx` (new) — same fixed-header/scroll-middle/sticky-footer shape as `HomeworkLessonDialog` (its `ATTENDANCE_OPTIONS`/`RATING_OPTIONS`/`ToggleGroup`/`optionLabel` were exported from that file and reused here rather than recreated), "upcoming" mode shows just member names, "completing" mode (entered via its own button, not automatic) grows the full per-attendee roster.
-
-**Frontend — student side (`StudentDashboard.jsx`).** "Следующий урок" now compares the individual lesson (`subscribeToUpcomingLesson`) against the nearest group lesson (`subscribeToNearestGroupLesson`, new in `firebase/groups.js`) and shows whichever is sooner — reschedule/cancel buttons and every reschedule/cancellation status plate are gated behind `!showGroupLesson` (left the individual-only JSX completely untouched rather than threading an `isGroup` conditional through it, to avoid destabilizing an already-complex, heavily state-coupled component), no participant names shown, video call button still works (now keyed off whichever lesson is currently showing, not always the individual one). MaterialsLibrary and the **preview list** (`VISIBLE_COUNT=3`) of LessonHistory both merge in completed group lessons (`getGroupLessonsForStudent`, one-time read, filtered to `status==="completed"` at each actual usage site — matches the individual-lesson library's own existing rule that an upcoming lesson's materials never surface early); a completed group lesson's history entry uses **that student's own** `attendees.{studentId}` values, never the group-wide data. **Known, disclosed gap: `LessonHistoryDialog`'s own "Показать все" full-history view still queries only `students/{id}/lessons` directly** (its own separate `subscribeToLessons` call, not the merged array) — the always-visible 3-item preview is merged, the deeper "show everything" dialog isn't, left this way deliberately to avoid touching a second subscription path under this session's time budget rather than silently shipping it half-fixed.
-
-**Finance.** `computeWeeklyGroupIncome` (`finance-section.jsx`) sums `hourlyRate × (durationMinutes/60)` once per attendee of every group lesson in the current week (a 3-member group lesson contributes 3 amounts, not 1), added to the existing individual-lesson total. Balance deduction needed no code change — confirmed via the diagnostic, not just assumed (see below). **Skipped, per the task's own "if it doesn't fit simply, skip and say so" permission**: the optional per-member balance-color indicator inside the group row's participant list.
-
-**Deployed and verified for real, not just built.** `firestore.indexes.json` gained one new composite index (`lessons` collectionGroup, `memberIds array-contains` + `status ==` — the array-contains discriminator this whole feature leans on needed its own index, distinct from the 4 existing `lessons` indexes keyed on `status`/`teacherId`/`date`). All new/changed Cloud Functions deployed in one batch (no CPU-quota flake this time, first try). **Ran a real end-to-end backend diagnostic** (temporary guarded `onRequest`, same "deploy, invoke, delete" pattern as every other one-off diagnostic in this project) that created 2 throwaway students + a real group, then exercised create → generate draft → reschedule → cancel → regenerate → complete-with-different-per-attendee-ratings → verified both throwaway students' `paidLessonsBalance` actually dropped by exactly 1 each → verified a further draft regenerated — all against the real deployed code paths, not a mock. Cleaned up (deleted the 2 throwaway students, the test group, and the diagnostic function itself) immediately after. **What could not be verified this way: any real UI click-through** (no browser automation in this environment) and **Google Calendar sync** (needs a teacher with Calendar actually connected, and the diagnostic's test group had no real schedule slot far enough in the future to trigger it meaningfully within the run).
-
-**Firestore Rules — action required, not yet done.** Same shape as the `stickerSets` gap from session 17: this session's new subcollections need explicit rules, or every client read against them will `permission-denied` even though the data and code are both correct. Confirmed via the same unauthenticated-client-SDK diagnostic technique used for `stickerSets` — a `collectionGroup("lessons")` query with `memberIds array-contains` genuinely fails right now. Needed (the `teachers/{uid}/groups` read rule requested last session was too narrow — teacher-auth-only — and needs broadening since `subscribeToNearestGroupLesson` also has to read a group's own `name` field unauthenticated):
-```
-match /teachers/{teacherId}/groups/{groupId} {
-  allow read: if true;
-}
-match /teachers/{teacherId}/groups/{groupId}/lessons/{lessonId} {
-  allow read: if true;
-  allow write: if request.auth != null && request.auth.uid == teacherId;
-}
-```
-The `write` rule is needed because `updateGroupLessonTopic`/`updateGroupLessonAssignment`/`addGroupLessonMaterial`/`removeGroupLessonMaterial` (`firebase/groups.js`) are plain authenticated-teacher client writes (same "admin content the teacher alone edits" pattern as `updateLessonTopic` for individual lessons), not Cloud Functions — everything else in this feature (create/update/delete group, reschedule/cancel/complete a lesson) goes through callables and is unaffected by Rules either way.
-
----
-
-### Session 18 — Sticker Workshop visual polish: full-width case cards, photo-lettering titles, header resize, image preload/loading screen, three-phase reel timing
-
-Follow-up pass on the same `sticker-workshop-modal.jsx`, checked against
-the original design canvas (`roulette-design/Sticker Modal v2.dc.html`)
-element-by-element rather than the earlier hand-port's approximation.
-
-**1. Case cards now stretch to the container's full width.** Grid was
-`repeat(auto-fill,minmax(200px,1fr))`, which at the modal's 1040px width
-produced 4-5 narrow columns instead of the design's fixed `repeat(3,
-minmax(0,1fr))` — changed to match exactly. Internal card proportions
-(fan preview `width:"30%"`, fixed cover `minHeight:118`) were already
-percentage/fixed the same way the design uses them at the same container
-width, so nothing else needed to scale.
-
-**2. Photo-lettering case titles — 2 of 3 wired, 1 flagged missing.** The
-design renders case names as graphic lettering images (`isSlay`/`isClean`
-branches in the `.dc.html`), never as plain text. Checked
-`roulette-design/` for matching assets: `slay-lettering-tight.png` and
-`legacy-lettering.png` exist and their content genuinely reads "Slay" /
-"Legacy" (visually confirmed) — copied into `src/assets/gamification/` as
-`slay-lettering.png`/`legacy-lettering.png` and wired via a new
-`CaseTitle` component (used at both the cases-grid card and the
-detail-view card) with the design's exact wrapper/position/size
-(`height:136`/`133`, `margin:-64px -30px 6px` negative-margin overlap
-trick, `width:210`, `left:6,bottom:0`). **`reels-lettering.png` is not
-usable and not relevant** — it's a stray anime-photo placeholder, not text
-lettering, and belongs to the design's old `REELS` demo case name anyway
-(our real 3rd case is `MYTHIC`, a name that doesn't exist in the design at
-all). **Missing asset, flagged rather than invented: a "MYTHIC" lettering
-image does not exist anywhere in `roulette-design/`** — `CaseTitle` falls
-back to the plain Bungee-font name label for any case name without a
-matching entry in its `CASE_LETTERING` map, so MYTHIC renders as text
-until that artwork is supplied.
-
-**3. Header hero-cat + arcade title enlarged/repositioned to match the
-design's absolute coordinates**, which were smaller/more offset than the
-canvas in the original hand-port: arcade lettering `width:240→340`,
-`left:-20→-64` (top unchanged at `-132`); hero-cat block `width/
-height:96→150`, wrapper `top:-140→-172` (right unchanged at `-10`),
-`CAT.EXE` tag inset `6,6→8,8`. Brings both closer to/overlapping the main
-cabinet frame as in the design.
-
-**4. Image preload gate + pixel-art loading screen (new).** Since every
-image in the modal (`dashboard-screen`, `arcade-lettering-clean`,
-`hero-cat`, `slay-lettering`, `legacy-lettering`) is identical for every
-student, added `preloadImages()` (`Image()` + `Promise.all`, `4000ms`
-timeout fallback so one bad load can't hang the modal forever) gating a
-new `assetsReady` state — the modal returns a dedicated `<LoadingScreen>`
-(also portal-rendered) until all critical images resolve, instead of
-painting partially-loaded content. Loading screen is in the same pixel/
-glitch language as the rest of the modal (JetBrains Mono/Bungee, yellow/
-pink/cyan-on-black): a hand-drawn 10×8 pixel-grid running cat
-(`PixelCat`, two leg-frame variants swapped via `setInterval`) under a
-continuous `hue-rotate` CSS animation for the "rainbow" effect, plus a
-striped animated loading bar underneath.
-
-**5. Reel spin: doubled duration, split into 3 explicit phases (was one
-flat ease-out curve).** `SPIN_DURATION_MS` `4500→9000`. Previously a
-single `cubic-bezier` transition for the whole spin; now three sequential
-CSS transitions chained via `setTimeout` (tracked in a `spinTimersRef`
-array, all cleared together on close/unmount — replaced the old single
-`spinTimerRef`): phase 1 (`~8%` time / `~6%` distance, accelerating
-`cubic-bezier(.55,0,.85,.35)`), phase 2 (`~60%` time / `~62%` distance,
-`linear` — genuinely constant speed, no slowdown), phase 3 (remaining
-`~32%` time/distance, decelerating `cubic-bezier(.12,.85,.18,1)`) landing
-exactly on `target`, the position already pinned to the real
-server-returned sticker (unchanged from session 17 — still no
-client-side random draw).
-
-**Verified via `npx vite build` + `npx eslint` only** — same standing gap
-as session 17, no live browser available in this environment. Build
-clean; eslint shows zero new violations (only the same pre-existing
-`react-hooks/set-state-in-effect` pattern in the modal's reset-on-close
-effect, untouched by this session's changes).
-
-## Loose ends / things to check next session
-
-- **MYTHIC case has no lettering artwork** — needs a "MYTHIC" graphic
-  lettering PNG prepared (same visual style as `slay-lettering.png`/
-  `legacy-lettering.png`) and dropped into `src/assets/gamification/`,
-  then added to `CASE_LETTERING` in `sticker-workshop-modal.jsx`. Until
-  then it intentionally falls back to plain text, not a placeholder image.
-- **No live browser testing was possible this session** — the loading
-  screen's timing/visual feel, the full-width card grid at real viewport
-  sizes, and the 9-second three-phase spin's actual perceived smoothness
-  are all unverified against a real render.
+**No live browser verification possible in this environment** for the new
+mobile-modal-layout piece specifically (the position fixes above *were*
+verified by the user on a real device this session, per their own
+message) — flagged for a check next session, particularly the `resize`
+listener's actual behavior on an orientation change.
 
 ---
 
-Session 16's full narrative moved to `changelog/2026-08-august.md` this
-update — this file now keeps only session 17 inline. Session 17: migrated
-the gamification (sticker cases) UI from stub components to a fully
-designed arcade-cabinet fullscreen modal, wired end-to-end to the
-already-existing backend (`openCase`/`saveDecoration`).
+## Current work focus
 
-### Session 17 addendum — mock data seeded, `description` mapper gap fixed
+### Session 25 — Sticker positioning corrected against a real reference screenshot: new anchor scheme, an explicit forbidden-zone list, mobile fixes, and a real mini-mockup placement picker
 
-Same session, follow-up request: filled the 3 empty `stickerSets` docs with
-real mock content (`case-1` "SLAY"/60, `case-2` "LEGACY"/180, `case-3`
-"MYTHIC"/420 — each with 10 stickers, 5 common/3 rare/1 epic/1 legendary,
-weights tuned so higher rarity = lower weight, `imageUrl: ""` on all of
-them) via the established "temporary guarded `onRequest` function, deploy,
-curl, delete" pattern (`fillMockStickerSetsOnce`, gone from both prod and
-`index.js` now). **Found the exact "mapper's explicit field list is the
-real gate" bug class again** (see `systemPatterns.md`) — the task asked for
-a `description` field on `stickerSets`, which required adding it to
-`mapStickerSetDoc` (`src/firebase/gamification.js`); it wasn't there before
-and would have silently never reached the UI even with the Firestore field
-present and populated. Wired `description` into both the cases-grid card
-and the case-detail view in `sticker-workshop-modal.jsx`. The 3-sticker fan
-preview strip the task asked for was actually already implemented in the
-original session-17 port (`set.pool.slice(0, 3)` in both those same two
-spots) — confirmed present, not added new. Deployed: hosting only (no
-functions changes survive past the temporary seed function).
+Follow-up to session 21's first pass, which the user reported was visibly
+wrong on both desktop and mobile (screenshots showed a sticker sitting
+directly on top of the settings gear, another covering the student's name,
+and truncated text). Backend intentionally untouched this session (user's
+own instruction) — this was purely a positioning/UI correction using the
+same 5-zone data model session 21 already shipped.
 
-### Session 17 — Sticker Workshop: design import + full real-data wiring
+**Задача 1 — new anchor scheme, 5 zones repositioned against the reference screenshot.**
+The zone→anchor mapping changed from session 21's guess:
+- `zone1` ("kitten") stays on `NextLessonPlate` but now sits beside the
+  greeting on desktop (`sm:top-[-72px] sm:right-[140px]` — the right
+  offset is sized to clear the header's gear(44px)+gap(16px)+avatar(56px)
+  cluster with margin, not guessed) and drops to a shallow top-right corner
+  overlap on mobile (`top-[-16px] right-2`, capped at -16px specifically
+  because the header/card gap is only 20px — anything more negative starts
+  sitting on top of the avatar).
+- `zone2` ("pretty soul") stays on `NextLessonPlate`'s right edge at
+  "Задание"'s height on desktop (`sm:top-[42%] sm:right-[-70px]` — ~60% of
+  its own width outside the border, per the user's explicit spec, not
+  fully in the margin like session 21's version), moves to a **bottom**-right
+  corner on mobile (`bottom-[-14px] right-[-21px]`, not top, specifically
+  so it can't collide with zone1's new mobile corner).
+- `zone3` ("МГУ") is a **new anchor** — moved off `NextLessonPlate` onto
+  `GoalCard` ("Моя цель")'s own top border, ~28% from the left on desktop /
+  ~48% on mobile (not the spec's literal "~30%" on both — the narrower
+  mobile card would put 30% directly on top of the "Моя цель" title text
+  at that width, so it was nudged right specifically to clear that title,
+  per Задача 2's "sticker moves, not the element" rule).
+- `zone4`/`zone5` stay on the exam-radar card (`ExamRadar`/
+  `CurriculumProgressCard`, whichever renders for the student's first
+  program) but zone4 switched from a `right`-based offset to a `left`-based
+  one (`sm:left-[75%]`, matching the spec's explicit horizontal percentage
+  directly) and zone5's mobile overlap was shrunk to `-16px` (was `-40px`)
+  to land inside that card's own bottom padding rather than reaching up
+  into visible content.
+- Fixed per-zone rotation angles updated to the new spec's values
+  (`decoration-zone.jsx`'s `ZONE_ROTATION_DEG`): zone1 +3°, zone2 -5°,
+  zone3 +2°, zone4 -4°, zone5 +5° (was an arbitrary -7/6/-9/8/-5 set in
+  session 21 with no reference to match against).
+- Border-radius (10px) and the "cap the longest edge, keep real aspect
+  ratio" sizing rule were already correct from session 21 — untouched.
 
-**Replaced the 3 inline sticker-gamification components with one fullscreen
-modal.** A Claude Design canvas export (`roulette-design/Sticker Modal
-v2.dc.html`, attached to the task) specified an arcade-cabinet visual
-language (JetBrains Mono/Bungee fonts, thick black borders, hard drop
-shadows, a CS:GO-style case-opening reel) with a `DCLogic`-class state
-machine (tabs: cases/detail/collection; phases: idle/confirm/spinning/
-result; a peek popup; a tap-then-tap placement flow). Hand-ported this into
-a real React component, `src/components/student/sticker-workshop-modal.jsx`
-— state machine became `useState`, `renderVals()`'s computed style strings
-became inline `style` objects, rendered via `createPortal(..., document.body)`
-at `z-index: 1000` (a genuinely separate visual layer, not routed through
-the app's own `GlassDialog`/`ui/dialog.jsx`, since the arcade look is
-deliberately unrelated to the rest of the glassy student UI). Opened by a
-new small portal-button component, `sticker-workshop-button.jsx` (styled
-like the rest of the glassy dashboard, unlike the modal it opens), which
-replaced the old always-inline `GamificationSection`.
+**Задача 2 — explicit forbidden-zone list, addressed by moving stickers, not elements.**
+No literal "forbidden zone registry" data structure was built (there's no
+runtime collision detection in this codebase, and the user's own bug
+reports were all specific, named elements) — instead every offset above
+was hand-checked against the exact named list (settings gear, avatar,
+greeting name, the 7 named buttons, the numeric readouts, card titles) via
+the *page's own real layout math*, not guessed:
+- The header→card gap is exactly 20px (`gap-5` on the page's flex column),
+  which is why -20px is the hard ceiling for any zone1-style top-overlap
+  on mobile — go past it and you're on the gear/avatar, confirmed by
+  computing the header's own height (56px, the avatar) against that gap.
+- zone3's horizontal position was widened specifically because the "Моя
+  цель" title sits immediately after a 40px icon badge — at the mobile
+  card's narrower width, the spec's literal 30% mark lands inside that
+  title's own text span.
+- zone2's mobile move to the *bottom*-right corner (not top) was chosen
+  because a bottom-edge overlap lands in that card's own bottom padding
+  (`p-6`/`p-8`, real empty space before the border) — verified against the
+  actual JSX, where the "Перенести/Отменить урок" buttons are the last
+  content row before that padding starts, not flush against the border.
+- `DecorationZone`'s wrapper already carries `pointer-events-none`
+  (session 21) — stickers were never able to *block clicks* through to a
+  button underneath; this session's fixes are about visual occlusion
+  specifically, which pointer-events can't help with.
+- z-index: no change needed — `DecorationZone` uses `z-10`, and every
+  modal/dropdown/select in this app (`ui/dialog.jsx`, `glass-select.jsx`,
+  `theme-ui.jsx`'s `TeacherPopover`) renders at `z-50` or higher through a
+  portal, confirmed via a repo-wide grep before deciding this was already
+  correct rather than assuming.
 
-**Every screen wired to real Firestore data, no stub/demo content left.**
-`stickerSets` (subscribed via the pre-existing `subscribeToStickerSets`),
-a student's own `inventory`, and `decoration` all flow in from
-`GamificationProvider`/`useGamification()` (trimmed this session — the old
-armedItemId/armItem/placeInZone tap-arm state existed only to serve the
-now-deleted dashed-circle zones, so it was dead weight once those went
-away; the modal calls `openCase`/`saveDecoration` from `src/firebase/
-gamification.js` directly instead). **Case opening's animation genuinely
-waits on the server result before it ever renders a reel** — `confirmOpen()`
-calls `openCase(studentId, setId)` first (shown as an "ОТКРЫВАЕМ... / связь
-с сервером..." loading state, no transform yet), and only once the
-Cloud Function responds does it build the 74-tile reel with the *real*
-returned sticker pinned at the fixed landing index and start the CSS
-transition — there is no client-side random draw feeding the visual result
-at any point, matching the task's explicit requirement. Balance display
-reads live off `student.coinsBalance` (already a subscribed field on the
-dashboard) rather than a locally patched delta, since the transaction's
-Firestore write is what actually changes it.
+**Задача 3 — mobile fixes.**
+- `--sticker-max`'s mobile tier (`src/index.css`) dropped from 76px to the
+  spec's 70px.
+- **Real word-wrap bug fixed, matching the exact screenshot ("Станет
+  доступна за 3 мину…")**: the video-call status line
+  (`NextLessonPlate`, both the individual- and group-lesson variants,
+  `StudentDashboard.jsx`) had a stray `truncate` class forcing single-line
+  ellipsis inside a `grid-cols-[minmax(0,1fr)_auto]` row — swapped for
+  `break-words`, unrelated to the sticker-positioning work but the exact
+  bug the user's screenshot 4 showed. Not a sticker overlap at all, a
+  pre-existing className bug this task's screenshots happened to surface.
+- zone1's forced move off the greeting entirely on mobile, and zone2's
+  move to a bottom (not top) corner, are also part of this task (see
+  Задача 1 above — the mobile-specific offsets are what satisfy this).
 
-**Data-driven simplifications from the design's 3 hardcoded demo cases
-(SLAY/CLEAN/REELS).** The original canvas had per-case-name artwork
-(`slay-lettering.png`, `legacy-lettering.png`, `reels-lettering.png`) and
-an `isSlay`/`isClean`/`isReels` branch — none of that generalizes to
-teacher-authored `stickerSets` with arbitrary names, so it was dropped in
-favor of `set.coverUrl` (falls back to a deterministic hashed color) and
-the set's own name rendered in the Bungee arcade font. Two genuinely
-general branding images (`arcade-lettering-clean.png`, `hero-cat.png`,
-copied into `src/assets/gamification/`) were kept since they aren't tied to
-specific case data. Per-sticker color (the design hand-picked a bespoke hex
-per demo sticker) became a deterministic name-hash over a fixed palette —
-same shape as `getSubjectColorClass`/`getSubjectColorIndex`
-(`src/lib/subjects.js`) — layered under a rarity-driven border glow (new
-`stickerRarityHex`/`stickerRarityGlow` exports added to
-`src/lib/stickerColors.js`, single source of truth alongside the
-pre-existing `stickerRarityLabel`; the now-unused Tailwind-class
-`stickerColorClass` was deleted since nothing calls it anymore post-migration).
-Per-sticker drop odds became `chancePct = weight / totalWeight of the set`
-rather than trusting `weight` to already sum to 100 (real teacher-entered
-weights have no such guarantee).
+**Задача 4 — replaced the abstract zone-picker with a real mini-mockup.**
+`sticker-workshop-modal.jsx`'s "ГДЕ РАЗМЕСТИТЬ" panel no longer loads
+`dashboard-screen.png` (deleted from the import list and `CRITICAL_IMAGES`
+preload array — no longer referenced anywhere, confirmed via grep before
+removing, and the built bundle no longer includes it, confirmed via a
+clean `vite build` diff). New `MiniDashboard` component hand-draws a
+simplified, recognizable redraw of the real page at a fixed 260×470px
+scale (header row, lesson card with its two buttons, notification banner,
+goal card, exam-radar card, materials card — flat rects/lines, not a
+screenshot) so the picker can show all 5 zones at their real relative
+positions instead of the old abstract "КАРТОЧКА УРОКА"/"НИЗ СТРАНИЦЫ"
+labels. `ZONE_DEFS` switched from percentage-based to fixed-pixel
+coordinates over this new mockup (the `zones` builder in the modal
+dropped its `${z.x}%` string interpolation for plain numeric `left`/`top`/
+`width`/`minHeight`). An occupied zone now renders the student's actual
+placed sticker via the existing `StickerFrame` component (same one the
+inventory grid already uses) at a small size, instead of the old flat
+9×9 color-dot swatch; an empty zone still shows a dashed border with a
+short label. Clicking/hover behavior (`onClick={() => setSelectedZone(...)`,
+the `selected`/`occupied` style branches) is unchanged — only what's
+rendered underneath and what an occupied slot looks like changed.
 
-**The 3 dashed "+" placeholder circles are gone from the live dashboard,
-per the task's explicit instruction** — `sticker-zone.jsx` (and its 3 call
-sites in `StudentDashboard.jsx`: header avatar corner, first program card
-corner, bottom "showcase" banner section) were deleted outright, not just
-hidden. Placement (`saveDecoration`) still writes real `zone1`/`zone2`/
-`zone3` values to `students/{id}/decoration/main` from *inside* the modal's
-"ГДЕ РАЗМЕСТИТЬ" panel (a static screenshot of the real dashboard,
-`dashboard-screen.png`, with 3 clickable overlay boxes at approximate
-percentage positions) — but nothing on the actual live dashboard currently
-*renders* a placed sticker back onto the page; that's a known gap, not an
-oversight, see below.
+**No live browser measurement was possible this session either** (same
+standing environment gap noted in every prior gamification session) —
+every offset above was derived from the reference screenshot's visual
+proportions plus the *real* JSX/layout math (header height, gap sizes,
+padding, which elements are left- vs. right-aligned in each row), not
+measured against a running page. Verified via `npx vite build` (clean,
+`dashboard-screen.png` confirmed dropped from the bundle) and `npx eslint`
+scoped to every touched file (zero new violations — only the same
+pre-existing `react-hooks/set-state-in-effect`/`react-hooks/purity`
+findings already present throughout this codebase). Deployed hosting only
+(no functions changes, per the user's own "не меняем бэкенд" instruction —
+the 5-zone `saveDecoration` validation from session 21 already covers
+zone1-5, nothing new needed there).
 
-**Deliberate scope exception: the modal is Russian-only, unlike the rest of
-the bilingual (session 16) student dashboard.** The source design has zero
-i18n hooks — every string is hardcoded Russian in the `.dc.html` — and the
-task instructions said to import "as-is," so this was ported verbatim
-rather than retrofitted with `react-i18next`. The portal *button* that
-opens it stays fully bilingual (`t("gamification.portalTitle"/"portalHint")`),
-since it's a normal part of the existing dashboard. If an English-speaking
-student ever needs this feature localized, that's new work, not something
-this session silently skipped.
+**Loose end for next session**: a real DevTools pass against the actual
+rendered page, at both breakpoints, particularly to confirm zone3's
+horizontal offset genuinely clears the "Моя цель" title at real font
+metrics (computed from an estimated title width, not a measured one) and
+that zone1's mobile `-16px` ceiling doesn't still graze the avatar circle's
+own rounded edge at real pixel sizes.
 
-**Verified via `npx vite build`, not a live browser render** — no
-browser/DevTools automation exists in this environment (see
-`techContext.md`), so the end-to-end click-through (open case → get sticker
-→ place it) described in the task's completion criteria is unconfirmed
-against a real render; only confirmed: a clean production build with no
-import/reference errors after every deletion, and the eslint output
-containing no new violations beyond the same `react-hooks/set-state-in-effect`
-pattern already present throughout the rest of this file pre-session.
+---
 
-## Loose ends / things to check next session
+### Session 24 — Group lessons: 11 follow-up corrections in one pass (visual polish, custom dropdowns everywhere, cascade-delete, merged lesson-card layout, program progress in the group lesson dialog, moved "ближайшие занятия" to its own dialog, extra lessons for groups, group visibility in the top upcoming-lessons panel)
 
-- **No live browser testing was possible this session** (same standing gap
-  as session 16) — the full click-through (open a case, watch the reel land
-  on the real server sticker, place it via the modal's zone picker) needs a
-  real run via `npm run dev`, not just a clean build.
-- **Placed decoration doesn't render back onto the live dashboard anymore.**
-  `saveDecoration` still writes real zone data and the modal's own picker
-  reads it back correctly, but since the 3 dashed-circle zones were deleted
-  outright (per this task's explicit instruction) there is currently no
-  code path that shows a placed sticker anywhere outside the modal itself.
-  If a future task wants placed stickers visible on the live page again,
-  that's new UI, not a regression to "fix."
-- **Resolved same session (addendum): Firestore Rules for the 3
-  gamification collections were the actual reason cases didn't show up in
-  the modal right after shipping** — not a code/deploy bug. The user
-  published `allow read: if true` on `stickerSets`,
-  `students/{id}/inventory`, `students/{id}/decoration`; verified fixed via
-  an unauthenticated client-SDK read (same diagnostic shape as
-  `techContext.md`'s established pattern), not just by reading the rules
-  text. See `progress.md`. No coin-earning mechanic exists yet either
-  (still spend-only) — unrelated, still open.
+All 11 items deployed (functions, one new query already covered by an existing index, hosting) and the 2 new backend mechanisms (cascade-delete, extra group lesson) verified against real Admin-SDK-created throwaway data via a temporary diagnostic, same "deploy, invoke, delete" discipline as every other one-off diagnostic in this project.
 
-### Session 16 — student-page i18n (react-i18next), language switcher, bilingual notifications (site + bots), and a real `isSlotEqual`/timezone bug found via live diagnosis
+1. **Member pills now have a visible border** (`border border-glass-border` added to `GroupMembersList`'s pills, groups-section.jsx) — were white-on-white glass with no separation.
+2. **"+ Добавить программу" text was centered, not left-aligned** — root cause: a plain `<button>` as a flex child of a `flex-col` container stretches to full width by default (align-items: stretch), and a bare `<button>`'s own UA-stylesheet text-align is `center` — so it read as centered even though no CSS said so explicitly. Fixed with `self-start text-left`.
+3. **Every remaining native `<select>` for picking a curriculum template (or program) is now the custom `TeacherSelect`** — `ReassignGroupProgramDialog`/`AddGroupProgramControl` (groups-section.jsx), `ReassignProgramDialog`/`AddProgramControl` (student-row.jsx, per the explicit "также в разделе учеников" instruction), and the program-switcher inside `HomeworkLessonDialog`'s completing-mode progress section (found while already in that file for item 5, same pattern, fixed for consistency).
+4. **`deleteGroupProgram` now cascades to every member's individual copy** — corrected from session 22's original design (which deliberately left member copies untouched, mirroring `reassignProgram`'s own "don't reach into a student's independent data" reasoning). Real behavior change: `assignGroupProgram`'s per-member fan-out now stamps `sourceGroupProgramId` onto each created student program doc (a follow-up field write after `assignCurriculumTemplate` returns, that function itself stays completely unmodified); `deleteGroupProgram` queries `students/{id}/programs where sourceGroupProgramId == programId` for every member and deletes those too, before deleting the group's own doc. `reassignGroupProgram` was NOT changed the same way (not mentioned, left touching only the group's own shared copy) — worth revisiting if the user wants full symmetry later.
+5. **`HomeworkLessonDialog`'s "Тема урока" and "Задание" are now one `Section` with one save button** — turned out the save action was *already* unified (`handleSaveAssignment` already called both `updateHomeworkAssignment` and `updateLessonTopic` together, there was only ever one button) — the actual complaint was purely visual (two separate `glass-tile` cards reading as unrelated). Pure JSX restructure, no behavior change.
+6. **`GroupLessonDialog` got the same topic+assignment merge, PLUS 3 new pieces it didn't have before**: (a) `ProgramTopicPicker` (exported from homework-lesson-dialog.jsx, previously private) now sources from the group's own shared program via a new one-time-read `getProgramsForGroup(teacherId, groupId)` (firebase/groups.js, mirrors `getProgramsForStudent`); (b) a new "Прогресс по программе группы" section in completing mode — `CoveredMaterialChecklist` (also newly exported) lets the teacher pick which topics/prototypes this session covered, applied via a loop of `setGroupCurriculumItemCovered` calls right after `completeGroupLesson` succeeds (not part of that callable itself — a plain client-side follow-up, matching the "manual toggle" shape that function already had); (c) a real `ProgressBar` (theme-ui.jsx) showing the group program's overall percent, also added to `GroupProgramRow` in groups-section.jsx (was flat `{percent}%` text before).
+7. **"Ближайшие занятия" no longer sits inertly inside the expanded group row** — moved behind its own "Следующие уроки"/"След. уроки" button (new `GroupUpcomingLessonsDialog`, exact same "button opens a dialog with the list" shape the individual student row already uses), reusing the existing `GroupLessonsList`/`GroupLessonRow` pair unchanged inside it. The expanded row (chevron toggle) now shows only Участники + Программа. "Редактировать" shortened to "Ред." per explicit instruction.
+8. **Schedule slot's day-of-week `<select>` (`schedule-slots-editor.jsx`, shared by both the student edit form and the group form) is now `TeacherSelect`** — one shared component, one fix covers both callers.
+9. **`ExtraLessonDialog`'s student `<select>` is now `TeacherSelect`.**
+10. **`ExtraLessonDialog` can now target a group, not just a student** — a segmented "Ученик/Группа" toggle (only rendered when `groups.length > 0`, so nothing changes visually for a teacher with no groups yet) switches which `TeacherSelect` + submit path is used. New backend `createExtraGroupLesson` (functions/core/groups.js) mirrors `createExtraLesson` (core/lessons.js): `slotIndex: null, isExtraLesson: true`, one Calendar event via a new `createExtraGroupLessonEvent` (googleCalendar.js, mirrors `createExtraLessonEvent` but `colorIdForSubject(group.subject)` instead of `colorIdForStudent`), and a new notification type `group_extra_lesson_assigned` (both notificationMessages.js mirrors) sent to every member independently.
+11. **Group lessons weren't showing up in the top "Ближайшие уроки" panel at all** — that panel only ever queried individual lessons (`subscribeToUpcomingLessons`). Added a parallel `subscribeToUpcomingGroupLessonsForTeacher` (firebase/groups.js, same `teacherId==`/`status==` query shape `subscribeToIncomeGroupLessons` already uses, a strict prefix of the existing `{teacherId,status,date}` composite index — confirmed no new index needed, unlike session 22's `subscribeToIncomeGroupLessons` itself which genuinely did) and rendered the results via the newly-exported `GroupLessonRow` (groups-section.jsx) inline in the same `<ul>`, right after the individual `UpcomingLessonCard`s — not interleaved by date, appended after, a acceptable simplification given how few groups a solo tutor is likely to run at once.
 
-**1. Student dashboard i18n infrastructure.** Installed `react-i18next` +
-`i18next` — **frontend dependency only, explicitly never touches the
-teacher panel** (which has zero i18n, by direct instruction). A dedicated
-`studentI18n` instance (`src/lib/i18n.js`, `i18next.createInstance()`,
-not the global singleton) loads `src/locales/{ru,en}/student.json`.
-Language comes from `students/{id}.language` ("ru" default) — resolved
-via a new `StudentI18nGate` wrapper (`StudentDashboard.jsx`) that does a
-one-time `getStudentLanguage(studentId)` read (mirrors the existing
-`getStudentTelegramChatId` pattern) *before* rendering anything, so even
-the pre-auth PIN login screen renders in the right language; a second,
-authoritative sync happens once the live `student` doc loads inside
-`StudentDashboardContent`. `mapStudentDoc` gained `language` proactively.
+**Verified for real, not just built**: a temporary diagnostic (`diagnoseGroupFixesOnce`, deployed/invoked/deleted) created 2 throwaway students + a group, assigned a program, confirmed both members got a `sourceGroupProgramId`-stamped individual copy, called `deleteGroupProgram`, confirmed both individual copies were actually gone afterward — then separately called `createExtraGroupLesson` and confirmed the resulting doc has `isExtraLesson: true` and the right `memberIds`. Both real, both correct.
 
-**2. Every student-page component translated via `t()`.** All of
-`StudentDashboard.jsx`, `exam-radar.jsx`, `curriculum-item-groups.jsx`,
-`materials-library.jsx`, `lesson-history.jsx`, `auth/login-screen.jsx`,
-`auth/pin-input.jsx`, and the gamification components
-(`gamification-section.jsx`, `sticker-zone.jsx`,
-`case-opening-animation.jsx`). **Shared components used by the teacher
-panel too were deliberately left untouched** rather than translated
-in-place: `notifications-list.jsx` (teacher bell also uses it — student
-callers now pre-resolve display text before passing notifications in,
-see point 5) and `settings-dialog.jsx` (forked into a new
-student-only `student-settings-dialog.jsx` instead of adding a
-`variant`-conditional `useTranslation()` call into a file the teacher
-panel also renders through). `TruncatedList` (shared with
-`student-row.jsx`) got optional `collapseLabel`/`showAllLabel` props
-defaulting to the original hardcoded Russian, so the teacher caller is
-byte-for-byte unaffected.
+**Still not independently re-verified by a live UI click-through** (same standing environment gap as every prior session — no browser automation here) — the `TeacherSelect` swaps, the merged dialog layouts, the "Следующие уроки" dialog, and the extra-group-lesson toggle are all confirmed by build+lint only, not a real render. Told the user to check via their own session as usual.
 
-**3. Locale-aware date/plural helpers, teacher-side default preserved.**
-`formatLessonDateTime` (`lib/schedule.js`) and `formatRelativeTime`
-(`lib/notifications.js`) gained an optional trailing `locale` param
-(default `"ru-RU"`, unchanged behavior for every pre-existing — i.e.
-teacher-side — caller); the student page passes `"en-US"` via a new
-`useDateLocale()` hook (`lib/i18n.js`) when `i18n.language === "en"`.
-Same "extra optional param, safe default" shape applied to
-`stickerRarityLabel` (`lib/stickerColors.js`, `lang` param) and
-`formatSubjects` (`lib/student-profile.js`, `noneLabel` param).
 
-**4. Typical-value translation dictionaries (subjects, exam units) —
-data-content-aware, not blanket string translation.** `src/locales/
-subjectTranslations.js` (`translateSubject(name, language)`) maps the 10
-entries actually in `STATIC_SUBJECTS` (`src/lib/subjects.js` — task spec
-said 20, code has 10; went with what's actually in the codebase) to
-English; a teacher's free-form custom subject has no dictionary entry and
-renders unchanged, by design (no reliable way to auto-translate arbitrary
-teacher-authored text). Same shape for `src/locales/
-examUnitTranslations.js` (`translateUnitLabel`, "баллов"→"points",
-"оценка"→"grade" — the two seeded exam types' units only). Applied in
-`ExamRadar`, `GoalCard`, `MyGoalsSection`, `CurriculumProgressCard`.
-**Found mid-task: `StudentTags`/`SubjectTag` (`student-tags.jsx`), which
-the task spec named as a place to translate, is actually teacher-only**
-(`finance-section.jsx`, `student-row.jsx`, `homework-lesson-dialog.jsx`,
-`upcoming-lesson-card.jsx`, `TeacherDashboard.jsx` — never rendered on
-the student page at all) — left untouched, flagged to the user rather
-than silently translating a component the "don't touch teacher" rule
-covers.
 
-**5. Bilingual student notifications — site AND bots, backend + frontend.**
-New `functions/core/notificationMessages.js` (CommonJS) mirrored by hand
-at `src/lib/notificationMessages.js` (ESM) — same CommonJS/ESM-pair
-duplication shape this project already uses for `schedule.js`/
-`subjects.js`. `buildNotificationText(type, params, language)` covers all
-~16 student-notification types, including the three reminder types'
-composite/relative text ("today"/"tomorrow" day labels frozen from a
-`now` snapshot in params, not recomputed at display time; "in Xh Ym"
-relative countdowns). `core/notifier.js`: for `target === "student"`,
-`createNotification` no longer accepts pre-built `text` — it resolves
-`studentData.language` (already read for the timezone lookup) and
-persists `type`+`params` (with `timeZone` auto-merged in) instead of a
-frozen string, then builds the bot-dispatch text via
-`buildNotificationText` too, so Telegram/VK get the same language as the
-site. **`target === "teacher"` is completely unchanged** (still a
-pre-built `text`/builder-fn, since the teacher panel has no i18n at all).
-Every student-target `createNotification` call site across
-`lessons.js` (13 sites), `finance.js` (`low_balance`), and all three
-`reminders.js` schedulers converted from building a string to passing
-`params` — content/logic unchanged, only the transport shape. One real
-pre-existing wrinkle found along the way: `updateHomeworkAssignment` and
-`addLessonMaterial` both write `type: "material_added"` but with two
-different original phrasings (list-of-files vs. single-material) —
-preserved both as two branches keyed on which params shape is present
-(`fileTitles` array vs. `materialTitle` string), not unified. **Found
-(again) the recurring "mapper's explicit field list is the real gate"
-bug**: `mapNotificationDoc` (`src/firebase/notifications.js`) didn't
-expose the new `params` field — fixed. `StudentNotifications`/
-`AllNotificationsDialog` (`StudentDashboard.jsx`) resolve display text via
-`buildNotificationText` when `notification.params` exists, falling back
-to the raw stored `notification.text` for pre-existing notifications (no
-migration, per spec). All deployed (full `firebase deploy --only
-functions`, then hosting).
+## Older sessions archived
 
-**6. Language switcher added to Settings (follow-up request, reversing
-the original "no switcher yet" phase-1 scope).** `updateStudentSettings`
-(both `functions/core/students.js` and `functions/index.js`) gained an
-optional `language` param (validated against `{"ru","en"}`, `null`
-tolerated for backward compat). `StudentSettingsDialog` gained a real
-editable `<select>` (language names shown in their own script — "Русский"
-/"English" — never translated against the current UI language, same
-convention every language picker uses); saving calls
-`studentI18n.changeLanguage()` immediately for instant feedback, on top
-of the authoritative resync `StudentDashboardContent` already does from
-the live `student.language` subscription. Color theme stays
-visible-but-disabled, unchanged from phase 1. Deployed
-(`updateStudentSettings`).
-
-**7. Real production bug found and fixed: legacy schedule slots silently
-never got their timezone corrected, even by a full re-save.** User report:
-a lesson scheduled for 16:00 Omsk, both teacher and student accounts set
-to `Asia/Omsk`, but the Telegram reminder showed a time 3 hours off.
-**Diagnosed with live data, not arithmetic guessing** — wrote a small
-client-SDK script (`.env`'s quoted-CRLF values needed `/\r?\n/` splitting,
-not the `\n`-only split `techContext.md` already warned about) to read
-the actual student doc: `scheduleSlots[]` had **no `timeZone` field at
-all** on either slot. Confirmed via a **temporary guarded `onRequest`
-Cloud Function** (same established "deploy, invoke, delete" pattern as
-`migrateToPrograms`/gamification verification — no local Admin SDK creds
-in this environment) that the stored `lesson.date` for the affected slot
-was `13:00Z`, exactly what `getNextLessonDateForSlot`'s
-`Europe/Moscow` fallback produces for "16:00" — not the `10:00Z` a
-correct Omsk anchor would produce. **Root cause was NOT just "legacy data,
-needs a re-save"**: `isSlotEqual` (`functions/index.js`, used by the
-`syncUpcomingLessonOnScheduleChange` Firestore trigger to decide whether
-to recompute an already-created upcoming lesson's `date`) only compared
-`dayOfWeek`/`time`/`durationMinutes` — **never `timeZone`**. So even a
-teacher re-saving the exact same schedule (same day/time, but now with a
-`timeZone` stamp where there was none) would be judged "unchanged" and
-the trigger would silently skip the recompute — this was genuinely
-unfixable from the UI alone, not a training/workflow issue. Fixed by
-adding the `timeZone` comparison to `isSlotEqual`. **Verified end-to-end
-on the real affected student**: stamped `timeZone: "Asia/Omsk"` onto the
-slots via a second temporary function (same effect as a normal teacher
-re-save), confirmed the trigger fired and `lesson.date` recomputed from
-`13:00Z` to the correct `10:00Z`. Both temporary diagnostic functions
-deleted from prod and their code removed from `index.js` immediately
-after (mirrors the `migrateToPrograms`/gamification-verification
-cleanup discipline). Deployed
-(`syncUpcomingLessonOnScheduleChange`).
-
-## Loose ends / things to check next session
-
-- **Any student whose schedule was set up before this session's fix still
-  has stale `lesson.date` values until the teacher re-opens and re-saves
-  that student's schedule once** (harmless no-op edit is enough — day/
-  time/duration don't need to actually change, the timeZone stamp alone
-  now correctly triggers the recompute). Not proactively backfilled for
-  every student — told to the user as a one-time manual action per
-  affected student, not a migration script.
-- A second, smaller bug noticed but **not fixed** during the timezone
-  investigation: once a reschedule is confirmed, `lesson.rescheduleStatus`
-  stays `"confirmed"` forever (never cleared to `null`) —
-  `syncUpcomingLessonToSchedule`'s `if (existingLesson.rescheduleStatus)`
-  check treats any truthy value (including a long-resolved `"confirmed"`)
-  as "has an active reschedule, skip resync," permanently freezing that
-  lesson's `date` against any future schedule-driven recompute. Flagged to
-  the user, not addressed — needs an explicit decision on whether
-  `rescheduleStatus` should be cleared on confirm, or the skip-check
-  should only match the two `pending_*` values.
-- Carried from session 15, still not confirmed: Firestore Rules for the 3
-  gamification collections (`stickerSets`, `students/{id}/inventory`,
-  `students/{id}/decoration`) — drafted, handed to the user, publish
-  status unknown. No coin-earning mechanic exists yet either.
-- **No live browser testing was possible this session** — every UI piece
-  (language switching mid-session, the new Settings language `<select>`,
-  bilingual notification rendering on the actual page) is unverified
-  against a real render; user said they'd check via `npm run dev`
-  themselves.
-- Carried from session 14, still unconfirmed: `notifications/
-  {notificationId}`'s `allow update` rule — ask directly next session
-  rather than assuming either way.
+Sessions 16-23's full write-ups (i18n rollout, gamification MVP + Sticker
+Workshop phases 1-2, group lessons v1, and the six-item follow-up round)
+moved to `changelog/2026-08-august.md` on 2026-08-23 to keep this file
+focused on current work — durable patterns from them already live in
+`systemPatterns.md`/`progress.md`/`techContext.md`. See `progress.md`'s own
+session-by-session summary for what shipped in each.

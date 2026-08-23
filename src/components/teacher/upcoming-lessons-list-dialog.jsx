@@ -28,7 +28,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 // none falls back to its own built-in Europe/Moscow default rather than the
 // viewer's current pref (see the identical reasoning in student-row.jsx's
 // "Расписание" block and core/lessons.js's ensureUpcomingLesson).
-function getVirtualOccurrences(scheduleSlots, realLessons, windowEnd) {
+export function getVirtualOccurrences(scheduleSlots, realLessons, windowEnd) {
   const slots = Array.isArray(scheduleSlots) ? scheduleSlots : []
   const virtual = []
 
@@ -53,7 +53,7 @@ function getVirtualOccurrences(scheduleSlots, realLessons, windowEnd) {
   return virtual.sort((a, b) => a.date - b.date)
 }
 
-function VirtualLessonRow({ date }) {
+export function VirtualLessonRow({ date }) {
   const timeZone = useTimeZone()
   return (
     <li className="glass-tile rounded-[1.5rem] p-3 opacity-70">

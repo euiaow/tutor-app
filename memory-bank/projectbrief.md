@@ -10,6 +10,19 @@ integrations and Google Calendar sync.
 - **Teacher dashboard**: manage students, set weekly recurring lesson
   schedules, assign/review homework, complete lessons, propose/confirm
   reschedules and cancellations, connect Google Calendar.
+- **Group lessons (as of session 17, rearchitected sessions 28-30)**: a
+  teacher can create a group (name, single subject, member students, its
+  own weekly schedule) and run lessons for it — a group lesson is a real
+  lesson doc mirrored onto every member's own schedule (not a separate
+  entity the individual-lesson features don't know about), so it appears
+  in the same "Ближайшие уроки" feed, reminders, income, and lesson
+  history as any individual lesson, just tagged as group-owned.
+  Reschedule/cancel/complete are teacher-only, immediate, whole-group
+  actions. A group can also be assigned a shared curriculum program —
+  reusing a member's existing individual program for that subject where
+  one exists rather than creating a duplicate, so progress marked at the
+  group level reaches each student's own real progress. See
+  `systemPatterns.md` for the mirror-doc/tag-and-reuse patterns.
 - **Student dashboard**: view upcoming lesson, submit homework, propose
   reschedule/cancellation of their own lesson — no Firebase Auth session,
   students are not authenticated users.

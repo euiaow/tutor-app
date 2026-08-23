@@ -33,6 +33,7 @@ import {
   TeacherDialogTitle,
   TeacherModalFooter,
   TeacherSaveBtn,
+  TeacherSelect,
   TeacherStatusBadge,
   teacherInputCls,
 } from "@/components/teacher/theme-ui"
@@ -190,19 +191,13 @@ function ReassignProgramDialog({ studentId, programId, templates, open, onOpenCh
         </TeacherDialogDescription>
 
         <div className="mt-4">
-          <select
+          <TeacherSelect
             value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
+            onChange={setTemplateId}
             disabled={saving}
-            className={teacherInputCls}
-          >
-            <option value="">Выбрать шаблон...</option>
-            {templates.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}
-              </option>
-            ))}
-          </select>
+            placeholder="Выбрать шаблон..."
+            options={templates.map((template) => ({ value: template.id, label: template.name }))}
+          />
         </div>
 
         {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
@@ -367,19 +362,14 @@ function AddProgramControl({ studentId, templates, disabled }) {
 
   return (
     <div className="flex items-center gap-2">
-      <select
+      <TeacherSelect
         value={templateId}
-        onChange={(e) => setTemplateId(e.target.value)}
+        onChange={setTemplateId}
         disabled={assigning || disabled}
-        className={`${teacherInputCls} min-w-0 flex-1`}
-      >
-        <option value="">Выбрать шаблон...</option>
-        {templates.map((template) => (
-          <option key={template.id} value={template.id}>
-            {template.name}
-          </option>
-        ))}
-      </select>
+        placeholder="Выбрать шаблон..."
+        options={templates.map((template) => ({ value: template.id, label: template.name }))}
+        className="min-w-0 flex-1"
+      />
       <GhostBtn onClick={handleAssign} disabled={assigning || disabled || !templateId} className="shrink-0 px-4 py-2.5">
         {assigning ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Назначить"}
       </GhostBtn>
@@ -674,7 +664,11 @@ function StudentLessonHistoryModal({ student, open, onOpenChange }) {
 // firebase/curriculum.js), no separate edit modal. `updatingId` is scoped
 // to this one tile so a click only shows a spinner on the row that was
 // actually clicked, not the whole list.
-function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, limit = 5 }) {
+// onToggle overrides the default per-student write — groups-section.jsx
+// reuses this exact component for the group's aggregated program view,
+// passing a fan-out toggle (writes to every linked member's own program at
+// once) instead of studentId/programId targeting a single student.
+export function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, limit = 5, onToggle, className = "" }) {
   const timeZone = useTimeZone()
   const [updatingId, setUpdatingId] = useState(null)
   const covered = items.filter((item) => item.covered).length
@@ -683,7 +677,11 @@ function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, 
     if (updatingId) return
     setUpdatingId(item.id)
     try {
-      await setCurriculumItemCovered(studentId, programId, kind, item.id, !item.covered)
+      if (onToggle) {
+        await onToggle(item)
+      } else {
+        await setCurriculumItemCovered(studentId, programId, kind, item.id, !item.covered)
+      }
     } catch (error) {
       console.error("Failed to update curriculum item:", error)
     } finally {
@@ -692,7 +690,7 @@ function CurriculumTile({ label, icon: Icon, items, studentId, programId, kind, 
   }
 
   return (
-    <div className="glass-tile rounded-[1.25rem] p-4">
+    <div className={`glass-tile rounded-[1.25rem] p-4 ${className}`}>
       <p className="flex items-center justify-between text-sm font-semibold text-ink">
         <span className="flex items-center gap-2">
           <Icon className="size-4 text-rose-deep" aria-hidden="true" />
@@ -877,7 +875,7 @@ export function StudentRow({ student, progressSummary }) {
       {expanded ? (
         <div className="glass-tile mt-2 rounded-[1.75rem] p-4">
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="glass-tile rounded-[1.25rem] p-4">
+            <div className={`glass-tile rounded-[1.25rem] p-4 ${(livePrograms ?? []).length === 1 ? "md:row-span-2" : ""}`}>
               <p className="flex items-center gap-2 text-sm font-semibold text-ink">
                 <CalendarIcon className="size-4 text-rose-deep" aria-hidden="true" />
                 Расписание
@@ -904,13 +902,21 @@ export function StudentRow({ student, progressSummary }) {
                   <li className="text-muted-foreground">Расписание не задано</li>
                 )}
               </ul>
-              <div className="mt-3 space-y-1.5 border-t border-glass-border pt-3 text-sm">
-                <SummaryListRow
-                  singularLabel="Предмет"
-                  pluralLabel="Предметы"
-                  items={student.subject ?? []}
-                  emptyLabel="Предмет не указан"
-                />
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-glass-border pt-3 text-sm">
+                <span className="shrink-0 text-muted-foreground">
+                  {(student.subject ?? []).length > 1 ? "Предметы" : "Предмет"}
+                </span>
+                {(student.subject ?? []).length === 0 ? (
+                  <span className="text-right text-ink">Предмет не указан</span>
+                ) : (
+                  <span className="flex flex-wrap justify-end gap-1.5">
+                    {student.subject.map((name) => (
+                      <span key={name} className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${getSubjectColorClass(name)}`}>
+                        {name}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </div>
               <div className="mt-1 text-sm">
                 <SummaryListRow
@@ -925,6 +931,12 @@ export function StudentRow({ student, progressSummary }) {
               <div className="mt-1 flex justify-between text-sm">
                 <span className="text-muted-foreground">Пароль</span>
                 <span className="text-ink">{student.accessCode}</span>
+              </div>
+              <div className="mt-1 flex justify-between text-sm">
+                <span className="text-muted-foreground">Ставка</span>
+                <span className="text-ink">
+                  {typeof student.hourlyRate === "number" && student.hourlyRate > 0 ? `${student.hourlyRate} ₽/ч` : "Не указана"}
+                </span>
               </div>
               <button
                 type="button"
@@ -941,8 +953,14 @@ export function StudentRow({ student, progressSummary }) {
               // support — Темы and Прототипы as their own top-level grid
               // cells (2/3 of the row width combined, 1/3 each), not
               // stacked inside one cell, with room for 5 rows before
-              // truncating.
+              // truncating. Header shows the program's own template name
+              // (e.g. "Русский ЕГЭ"), not the subject ("Русский язык") —
+              // groups-section.jsx's own program header mirrors this exact
+              // position/style.
               <>
+                <p className="text-xs font-semibold text-muted-foreground md:col-span-2">
+                  {templates.find((template) => template.id === livePrograms[0].templateId)?.name ?? "Без шаблона"}
+                </p>
                 <CurriculumTile
                   label="Темы программы"
                   icon={FileText}
@@ -966,7 +984,7 @@ export function StudentRow({ student, progressSummary }) {
               (livePrograms ?? []).map((program) => (
                 <div key={program.id} className="space-y-3">
                   <p className="text-xs font-semibold text-muted-foreground">
-                    {program.subject || "Без предмета"}
+                    {templates.find((template) => template.id === program.templateId)?.name ?? "Без шаблона"}
                   </p>
                   <CurriculumTile
                     label="Темы программы"

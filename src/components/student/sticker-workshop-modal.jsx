@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { openCase as openCaseApi, saveDecoration as saveDecorationApi } from "@/firebase/gamification"
+import { openCase as openCaseApi, saveDecoration as saveDecorationApi, DECORATION_ZONES } from "@/firebase/gamification"
 import { stickerRarityHex, stickerRarityGlow, stickerRarityLabel } from "@/lib/stickerColors"
-import dashboardScreen from "@/assets/gamification/dashboard-screen.png"
 import arcadeLettering from "@/assets/gamification/arcade-lettering-clean.png"
 import heroCat from "@/assets/gamification/hero-cat.png"
 import slayLettering from "@/assets/gamification/slay-lettering.png"
@@ -34,7 +33,7 @@ const CASE_LETTERING = {
 // Every image the modal can show is identical across students, so it's
 // worth preloading them all before the modal ever paints real content
 // instead of popping in cover art mid-render (task 4).
-const CRITICAL_IMAGES = [dashboardScreen, arcadeLettering, heroCat, slayLettering, legacyLettering, mythicLettering]
+const CRITICAL_IMAGES = [arcadeLettering, heroCat, slayLettering, legacyLettering, mythicLettering]
 
 function preloadImages(sources, timeoutMs = 4000) {
   const loaders = sources.map(
@@ -153,17 +152,87 @@ function ink(fill) {
   return dark.includes(String(fill).toLowerCase()) ? "#ffffff" : "#111111"
 }
 
-// Zone positions are approximate percentages over the dashboard screenshot
-// below — cosmetic placement aid inside the modal's picker panel only; the
-// dashed "+" placeholders that used to live directly on the real dashboard
-// were removed per this task, so pixel-perfect alignment isn't load-bearing.
+// Fixed pixel coordinates (not percentages) over the hand-drawn <MiniDashboard/>
+// mockup below (width 260, see MINI_DASHBOARD_LAYOUT) — replaces the old
+// static dashboardScreen.png screenshot + abstract-label boxes with a
+// simplified but recognizable redraw of the real page, at the real 5 anchor
+// spots session 25's positioning pass established (see activeContext.md):
+// zone1 beside the greeting/lesson-card top, zone2 at the lesson card's
+// right edge ("Задание" height), zone3 on the goal card's top border,
+// zone4/zone5 on the exam-radar card's top-right / bottom-right corners.
+// Still a cosmetic placement aid, not pixel-identical to the live page.
 const ZONE_DEFS = [
-  { id: "zone1", label: "У АВАТАРА", x: 78, y: 3, w: 20, h: 6 },
-  { id: "zone2", label: "КАРТОЧКА УРОКА", x: 60, y: 19, w: 38, h: 6 },
-  { id: "zone3", label: "ВНИЗУ СТРАНИЦЫ", x: 30, y: 96, w: 40, h: 3.5 },
-  { id: "zone4", label: "КАРТОЧКА ЦЕЛИ", x: 65, y: 55, w: 30, h: 5 },
-  { id: "zone5", label: "НИЗ СТРАНИЦЫ", x: 55, y: 78, w: 35, h: 4 },
+  { id: "zone1", label: "У ПРИВЕТСТВИЯ", x: 146, y: 14, w: 40, h: 26 },
+  { id: "zone2", label: "СПРАВА ОТ УРОКА", x: 250, y: 96, w: 34, h: 24 },
+  { id: "zone3", label: "КАРТОЧКА ЦЕЛИ", x: 66, y: 216, w: 40, h: 22 },
+  { id: "zone4", label: "УГОЛ EXAM RADAR", x: 196, y: 286, w: 40, h: 22 },
+  { id: "zone5", label: "НИЗ EXAM RADAR", x: 206, y: 398, w: 40, h: 22 },
 ]
+
+const MINI_DASHBOARD_WIDTH = 260
+const MINI_DASHBOARD_HEIGHT = 470
+// The mockup's own markup/ZONE_DEFS coordinates stay authored at the base
+// 260×470 size (easier to reason about in px) — this scales the whole
+// thing up via CSS transform for display, since a student can place up to
+// ~5 stickers and the placement picker is meant to be the dominant visual
+// element of the "коллекция" tab now, not a small side panel.
+const MINI_DASHBOARD_SCALE = 1.6
+
+// Simplified, hand-drawn redraw of the real student dashboard — not a
+// screenshot — so the picker panel can show every zone at its actual real
+// position (task explicitly asked to stop showing abstract labeled boxes).
+// Kept deliberately low-fidelity (flat rects/lines) since it only needs to
+// be recognizable, not pixel-accurate.
+function MiniDashboard() {
+  const card = { position: "absolute", background: "#fff7e6", border: "2px solid #d8c9a3", borderRadius: 6 }
+  const line = (w, h = 6) => ({ background: "#d8c9a3", borderRadius: 3, width: w, height: h })
+  return (
+    <div style={{ position: "relative", width: MINI_DASHBOARD_WIDTH, height: MINI_DASHBOARD_HEIGHT }}>
+      {/* header: greeting label + gear/avatar cluster */}
+      <div style={{ position: "absolute", left: 10, top: 4, ...line(110, 8) }} />
+      <div style={{ position: "absolute", left: 200, top: 2, width: 14, height: 14, borderRadius: 4, background: "#d8c9a3" }} />
+      <div style={{ position: "absolute", left: 222, top: 0, width: 18, height: 18, borderRadius: 9, background: "#c9b688" }} />
+
+      {/* "Следующий урок" card */}
+      <div style={{ ...card, left: 8, top: 34, width: 244, height: 156 }}>
+        <div style={{ position: "absolute", left: 10, top: 8, ...line(70, 7) }} />
+        <div style={{ position: "absolute", left: 10, top: 30, ...line(150, 5) }} />
+        <div style={{ position: "absolute", left: 180, top: 30, width: 54, height: 16, borderRadius: 8, background: "#f0b27a" }} />
+        <div style={{ position: "absolute", left: 10, top: 64, ...line(110, 5) }} />
+        <div style={{ position: "absolute", left: 10, top: 96, ...line(90, 5) }} />
+        <div style={{ position: "absolute", left: 180, top: 92, width: 54, height: 16, borderRadius: 8, background: "#1c1c1c" }} />
+        <div style={{ position: "absolute", left: 10, top: 128, width: 108, height: 16, borderRadius: 8, background: "#f4ecd8", border: "1.5px solid #d8c9a3" }} />
+        <div style={{ position: "absolute", left: 126, top: 128, width: 108, height: 16, borderRadius: 8, background: "#f0834a" }} />
+      </div>
+
+      {/* notifications banner */}
+      <div style={{ position: "absolute", left: 8, top: 198, width: 244, height: 22, borderRadius: 6, background: "#1c1c1c" }} />
+
+      {/* "Моя цель" card */}
+      <div style={{ ...card, left: 8, top: 230, width: 244, height: 60 }}>
+        <div style={{ position: "absolute", left: 10, top: 8, ...line(64, 7) }} />
+        <div style={{ position: "absolute", left: 10, top: 32, width: 108, height: 18, borderRadius: 6, background: "#f4ecd8", border: "1.5px solid #d8c9a3" }} />
+        <div style={{ position: "absolute", left: 126, top: 32, width: 108, height: 18, borderRadius: 6, background: "#f4ecd8", border: "1.5px solid #d8c9a3" }} />
+      </div>
+
+      {/* exam radar card */}
+      <div style={{ ...card, left: 8, top: 300, width: 244, height: 110 }}>
+        <div style={{ position: "absolute", left: 10, top: 8, ...line(140, 7) }} />
+        <div style={{ position: "absolute", left: 10, top: 28, width: 40, height: 20, borderRadius: 5, background: "#f0834a" }} />
+        <div style={{ position: "absolute", left: 170, top: 32, ...line(64, 8) }} />
+        <div style={{ position: "absolute", left: 10, top: 60, width: 224, height: 6, borderRadius: 3, background: "#f4ecd8", border: "1px solid #d8c9a3" }} />
+        <div style={{ position: "absolute", left: 10, top: 60, width: 60, height: 6, borderRadius: 3, background: "#f0834a" }} />
+        <div style={{ position: "absolute", left: 10, top: 82, ...line(120, 5) }} />
+      </div>
+
+      {/* materials card */}
+      <div style={{ ...card, left: 8, top: 418, width: 244, height: 46 }}>
+        <div style={{ position: "absolute", left: 10, top: 8, ...line(90, 7) }} />
+        <div style={{ position: "absolute", left: 10, top: 26, ...line(200, 10) }} />
+      </div>
+    </div>
+  )
+}
 
 const REEL_ITEM = 104
 const REEL_WIN = 62
@@ -204,6 +273,23 @@ function useBodyScrollLock(active) {
       document.body.style.overflow = prev
     }
   }, [active])
+}
+
+// Reactive (unlike the two `window.innerWidth < 760` one-time checks further
+// down in this file, which only apply at initial paint) — the cases grid and
+// case-detail layout below genuinely need to re-flow on rotation/resize, not
+// just look right on whichever width the modal happened to open at. 640px
+// matches this app's own Tailwind `sm:` breakpoint everywhere else.
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= breakpoint)
+  useEffect(() => {
+    function handleResize() {
+      setIsMobile(window.innerWidth <= breakpoint)
+    }
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [breakpoint])
+  return isMobile
 }
 
 function buildStick(sticker) {
@@ -339,6 +425,7 @@ export function StickerWorkshopModal({
 }) {
   useModalFonts(open)
   useBodyScrollLock(open)
+  const isMobile = useIsMobile()
 
   const [tab, setTab] = useState("cases") // cases | detail | collection
   const [openSetId, setOpenSetId] = useState(null)
@@ -488,6 +575,14 @@ export function StickerWorkshopModal({
   async function placeArmed(zoneId) {
     if (!placingItemId) return
     try {
+      // A sticker can only occupy one zone at a time — clear it out of any
+      // other zone that already holds it before writing the new placement,
+      // so placing it somewhere new always moves it rather than cloning it
+      // onto a second spot.
+      const otherZonesHoldingItem = DECORATION_ZONES.filter(
+        (zone) => zone !== zoneId && decoration[zone] === placingItemId,
+      )
+      await Promise.all(otherZonesHoldingItem.map((zone) => saveDecorationApi(studentId, zone, null)))
       await saveDecorationApi(studentId, zoneId, placingItemId)
       const item = collection.find((entry) => entry.id === placingItemId)
       setPlaceNote((item?.name || "стикер") + " размещён")
@@ -515,14 +610,16 @@ export function StickerWorkshopModal({
     const selected = selectedZone === z.id
     const base = {
       position: "absolute",
-      left: `${z.x}%`,
-      top: `${z.y}%`,
-      width: `${z.w}%`,
-      minHeight: `${z.h}%`,
+      left: z.x,
+      top: z.y,
+      width: z.w,
+      minHeight: z.h,
       boxSizing: "border-box",
       padding: "2px 3px",
       display: "flex",
       alignItems: "center",
+      justifyContent: "center",
+      overflow: "visible",
       cursor: "pointer",
       ...(selected
         ? { border: "3px solid #4fbf12", background: "rgba(124,240,61,.34)", boxShadow: "0 0 0 2px #111,0 0 12px rgba(79,191,18,.5)" }
@@ -782,7 +879,7 @@ export function StickerWorkshopModal({
                 {sets.length === 0 ? (
                   <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#8b8676" }}>Кейсы пока не добавлены.</p>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 14 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,minmax(0,1fr))", gap: 14 }}>
                     {sets.map((set, i) => (
                       <div
                         key={set.id}
@@ -940,8 +1037,26 @@ export function StickerWorkshopModal({
                   <span style={{ flex: 1, height: 3, background: `repeating-linear-gradient(to right,${ACCENT} 0 5px,transparent 5px 10px)` }} />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,268px) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
-                  <div style={{ minWidth: 0, position: "relative", border: "5px solid #111", background: "#fff", boxShadow: `7px 7px 0 0 ${YELLOW}`, display: "flex", flexDirection: "column", width: 259 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "minmax(0,268px) minmax(0,1fr)",
+                    gap: 16,
+                    alignItems: "start",
+                  }}
+                >
+                  <div
+                    style={{
+                      minWidth: 0,
+                      position: "relative",
+                      border: "5px solid #111",
+                      background: "#fff",
+                      boxShadow: `7px 7px 0 0 ${YELLOW}`,
+                      display: "flex",
+                      flexDirection: "column",
+                      width: isMobile ? "100%" : 259,
+                    }}
+                  >
                     <div
                       style={{
                         position: "relative",
@@ -1091,7 +1206,11 @@ export function StickerWorkshopModal({
                 </div>
 
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-                  <div style={{ flex: "1 1 320px", minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(78px,1fr))", gap: 12 }}>
+                  {/* Kept as a fixed, non-growing basis (was flex:"1 1 320px") —
+                      the placement panel to its right is the tab's main
+                      visual focus now, this list shouldn't compete for
+                      leftover row space with it. */}
+                  <div style={{ flex: "0 1 240px", minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(78px,1fr))", gap: 12 }}>
                     {collection.length === 0 ? (
                       <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#8b8676", gridColumn: "1 / -1" }}>
                         Пока пусто — открой кейс, чтобы получить первый стикер.
@@ -1134,7 +1253,18 @@ export function StickerWorkshopModal({
                     )}
                   </div>
 
-                  <div style={{ flex: "none", width: 318, maxWidth: "100%", border: "5px solid #111", background: "#f4ecd8", boxShadow: `7px 7px 0 0 ${YELLOW}`, display: "flex", flexDirection: "column" }}>
+                  <div
+                    style={{
+                      flex: "none",
+                      width: MINI_DASHBOARD_WIDTH * MINI_DASHBOARD_SCALE + 38,
+                      maxWidth: "100%",
+                      border: "5px solid #111",
+                      background: "#f4ecd8",
+                      boxShadow: `7px 7px 0 0 ${YELLOW}`,
+                      display: "flex",
+                      flexDirection: "column",
+                    }}
+                  >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 10px", background: "#111" }}>
                       <span style={{ fontFamily: "'Bungee',sans-serif", fontSize: 10, color: YELLOW }}>ГДЕ РАЗМЕСТИТЬ</span>
                       <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 8, letterSpacing: ".1em", textTransform: "uppercase", color: GREEN }}>
@@ -1157,36 +1287,46 @@ export function StickerWorkshopModal({
                       </span>
                     </div>
 
-                    <div style={{ margin: 10, border: "4px solid #111", background: "#fffaf0", maxHeight: 300, overflowY: "auto" }}>
-                      <div style={{ position: "relative", width: "100%" }}>
-                        <img src={dashboardScreen} alt="Дашборд ученика" style={{ display: "block", width: "100%", height: "auto" }} />
+                    <div style={{ margin: 10, border: "4px solid #111", background: "#fffaf0", maxHeight: "72vh", overflowY: "auto" }}>
+                      <div
+                        style={{
+                          width: MINI_DASHBOARD_WIDTH * MINI_DASHBOARD_SCALE,
+                          height: MINI_DASHBOARD_HEIGHT * MINI_DASHBOARD_SCALE,
+                          margin: "0 auto",
+                          position: "relative",
+                        }}
+                      >
+                        {/* Everything below stays authored at the base 260×470
+                            size (MiniDashboard's own markup, ZONE_DEFS' px
+                            coordinates, StickerFrame sizes) — scaling this one
+                            wrapper via transform blows the whole thing up
+                            uniformly instead of hand-multiplying every
+                            internal dimension. */}
+                        <div
+                          style={{
+                            position: "relative",
+                            width: MINI_DASHBOARD_WIDTH,
+                            height: MINI_DASHBOARD_HEIGHT,
+                            transform: `scale(${MINI_DASHBOARD_SCALE})`,
+                            transformOrigin: "top left",
+                          }}
+                        >
+                        <MiniDashboard />
                         {zones.map((z) => (
                           <div key={z.id} onClick={() => setSelectedZone(z.id)} style={z.style}>
-                            <div style={{ width: "100%", minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 3, overflow: "hidden" }}>
-                              <span
-                                style={{
-                                  minWidth: 0,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  fontFamily: "'JetBrains Mono',monospace",
-                                  fontWeight: 700,
-                                  fontSize: 6,
-                                  lineHeight: 1.1,
-                                  whiteSpace: "nowrap",
-                                  color: z.selected ? "#1f4d0a" : z.occupied ? "#6b5c37" : "#a34500",
-                                }}
-                              >
-                                {z.label}
-                              </span>
-                              {z.occupied && !z.selected ? (
-                                <div style={{ display: "flex", alignItems: "center", gap: 2, flex: "none" }}>
-                                  <div style={{ flex: "none", width: 9, height: 9, background: z.occupied.color || "#fff", border: "1.5px solid #8a7b58", opacity: 0.55 }} />
+                            {z.occupied ? (
+                              <>
+                                <StickerFrame item={z.occupied} size={z.w - 6} />
+                                {!z.selected ? (
                                   <div
                                     onClick={(e) => clearZone(z.id, e)}
                                     style={{
+                                      position: "absolute",
+                                      top: -6,
+                                      right: -6,
                                       flex: "none",
-                                      width: 11,
-                                      height: 11,
+                                      width: 12,
+                                      height: 12,
                                       display: "flex",
                                       alignItems: "center",
                                       justifyContent: "center",
@@ -1199,9 +1339,26 @@ export function StickerWorkshopModal({
                                   >
                                     X
                                   </div>
-                                </div>
-                              ) : null}
-                            </div>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span
+                                style={{
+                                  width: "100%",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  fontFamily: "'JetBrains Mono',monospace",
+                                  fontWeight: 700,
+                                  fontSize: 5.5,
+                                  lineHeight: 1.1,
+                                  whiteSpace: "nowrap",
+                                  textAlign: "center",
+                                  color: z.selected ? "#1f4d0a" : "#a34500",
+                                }}
+                              >
+                                {z.label}
+                              </span>
+                            )}
                             {z.selected ? (
                               <div
                                 style={{
@@ -1225,6 +1382,7 @@ export function StickerWorkshopModal({
                             ) : null}
                           </div>
                         ))}
+                        </div>
                       </div>
                     </div>
 

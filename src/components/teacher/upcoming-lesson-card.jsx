@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { ArrowRight, CalendarClock, Check, CircleSlash, Clock, FileText, X } from "lucide-react"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
+import { GroupLessonDialog, GroupRescheduleDialog, GroupCancelDialog } from "@/components/teacher/group-lesson-dialog"
 import { ContactIconButton } from "@/components/teacher/contact-button"
 import { SubjectTag } from "@/components/student-tags"
 import { resolveLessonSubject } from "@/lib/subjects"
@@ -207,7 +208,7 @@ export function CancelLessonDialog({ studentId, lessonId, lessonDate, open, onOp
   )
 }
 
-export function UpcomingLessonCard({ lesson, studentName, student }) {
+export function UpcomingLessonCard({ lesson, studentName, student, students = [] }) {
   const timeZone = useTimeZone()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
@@ -217,6 +218,12 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
 
   const isCancelled = lesson.status === "cancelled"
   const lessonSubject = resolveLessonSubject(lesson, student)
+  const isGroupLesson = Boolean(lesson.isGroupLesson)
+  // Minimal stand-in group object — GroupLessonDialog only ever reads
+  // id/name/subject off it (member roster comes from its own mirror
+  // lookup, not this object), so no need to look the real group doc up
+  // just to open this card's dialog.
+  const groupStub = { id: lesson.groupId, name: lesson.groupName || "Группа", subject: lesson.subject }
 
   const hasAssignment =
     lesson.homework.assignment.text.trim() !== "" || lesson.homework.assignment.files.length > 0
@@ -311,7 +318,12 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
               <StudentDot />
-              <span className="font-semibold text-ink">{studentName}</span>
+              <span className="font-semibold text-ink">{isGroupLesson ? lesson.groupName || "Группа" : studentName}</span>
+              {isGroupLesson ? (
+                <TeacherStatusBadge tone="rose">
+                  Группа{Array.isArray(lesson.memberIds) ? ` · ${lesson.memberIds.length} уч.` : ""}
+                </TeacherStatusBadge>
+              ) : null}
               {lesson.isExtraLesson ? <TeacherStatusBadge tone="rose">доп.</TeacherStatusBadge> : null}
               {lessonSubject ? <SubjectTag name={lessonSubject} /> : null}
               {isCancelled ? <TeacherStatusBadge tone="red">Урок отменён</TeacherStatusBadge> : null}
@@ -396,35 +408,66 @@ export function UpcomingLessonCard({ lesson, studentName, student }) {
             </>
           ) : null}
 
-          {student ? <ContactIconButton student={student} /> : null}
+          {student && !isGroupLesson ? <ContactIconButton student={student} /> : null}
         </div>
       </div>
     </li>
 
-      <HomeworkLessonDialog
-        studentId={lesson.studentId}
-        studentName={studentName}
-        student={student}
-        lessonId={lesson.id}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
+      {isGroupLesson ? (
+        <GroupLessonDialog
+          teacherId={lesson.teacherId}
+          group={groupStub}
+          students={students}
+          groupLessonKey={dialogOpen ? lesson.groupLessonKey : null}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
+      ) : (
+        <HomeworkLessonDialog
+          studentId={lesson.studentId}
+          studentName={studentName}
+          student={student}
+          lessonId={lesson.id}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
+      )}
 
-      <RescheduleDialog
-        studentId={lesson.studentId}
-        lessonId={lesson.id}
-        initialDate={lesson.rescheduledDate ?? lesson.date}
-        open={rescheduleDialogOpen}
-        onOpenChange={setRescheduleDialogOpen}
-      />
+      {isGroupLesson ? (
+        <GroupRescheduleDialog
+          groupId={lesson.groupId}
+          groupLessonKey={lesson.groupLessonKey}
+          initialDate={lesson.rescheduledDate ?? lesson.date}
+          open={rescheduleDialogOpen}
+          onOpenChange={setRescheduleDialogOpen}
+        />
+      ) : (
+        <RescheduleDialog
+          studentId={lesson.studentId}
+          lessonId={lesson.id}
+          initialDate={lesson.rescheduledDate ?? lesson.date}
+          open={rescheduleDialogOpen}
+          onOpenChange={setRescheduleDialogOpen}
+        />
+      )}
 
-      <CancelLessonDialog
-        studentId={lesson.studentId}
-        lessonId={lesson.id}
-        lessonDate={lesson.rescheduledDate ?? lesson.date}
-        open={cancelDialogOpen}
-        onOpenChange={setCancelDialogOpen}
-      />
+      {isGroupLesson ? (
+        <GroupCancelDialog
+          groupId={lesson.groupId}
+          groupLessonKey={lesson.groupLessonKey}
+          lessonDate={lesson.rescheduledDate ?? lesson.date}
+          open={cancelDialogOpen}
+          onOpenChange={setCancelDialogOpen}
+        />
+      ) : (
+        <CancelLessonDialog
+          studentId={lesson.studentId}
+          lessonId={lesson.id}
+          lessonDate={lesson.rescheduledDate ?? lesson.date}
+          open={cancelDialogOpen}
+          onOpenChange={setCancelDialogOpen}
+        />
+      )}
     </>
   )
 }

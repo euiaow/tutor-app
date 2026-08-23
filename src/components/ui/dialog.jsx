@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { X } from 'lucide-react'
 
@@ -19,11 +20,20 @@ function DialogContent({ className, children, ...props }) {
   // document.body, outside whatever ancestor div carries the class (same
   // reasoning as TeacherDialogContent in theme-ui.jsx).
   const themeClass = useThemeClass()
+  // Without this, base-ui focuses the first tabbable element (e.g. a
+  // Settings dialog's first <select>) via a bare `.focus()` on open — which
+  // triggers that field's `focus:ring` styling even though nothing was
+  // actually clicked/tabbed into, reading as an unwanted glow the instant
+  // the dialog opens. Same root cause and same fix TeacherDialogContent
+  // already uses (theme-ui.jsx) — focus the popup container itself instead.
+  const popupRef = useRef(null)
 
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop className={cn(themeClass, "fixed inset-0 z-50 bg-foreground/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0")} />
       <DialogPrimitive.Popup
+        ref={popupRef}
+        initialFocus={popupRef}
         className={cn(
           themeClass,
           "fixed top-1/2 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-border bg-card p-6 shadow-xl shadow-primary/5 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:p-8",

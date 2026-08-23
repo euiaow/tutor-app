@@ -1,119 +1,84 @@
+const { randomUUID } = require("crypto")
 const { FieldValue, Timestamp } = require("firebase-admin/firestore")
 const { HttpsError } = require("firebase-functions/v2/https")
 const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 const { assertOwnsStudent, assertOwnsGroup } = require("./tenancy")
 const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
-const { deleteLessonEvent, rescheduleLessonEvent } = require("./googleCalendar")
+const { deleteLessonEvent, rescheduleLessonEvent, createExtraGroupLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
-const { deductLessonFromBalance } = require("./finance")
 const { markTopicsCovered, assignCurriculumTemplate } = require("./curriculum")
+const { createUpcomingDraft, completeLesson } = require("./lessons")
 
 const CURRICULUM_TEMPLATES_COLLECTION = "curriculumTemplates"
-const GROUP_PROGRAMS_SUBCOLLECTION = "programs"
+const LESSONS_COLLECTION_GROUP = "lessons"
 
-// Group lessons — teachers/{uid}/groups/{groupId}, mirroring the student
-// edit form's shape (name/subject/scheduleSlots) plus memberStudentIds
-// instead of a single student. teacherId is denormalized onto the doc even
-// though the path already scopes it (see tenancy.js's assertOwnsGroup
-// comment) — purely so the collectionGroup("lessons") queries elsewhere in
-// this app (reminders, income) can filter by teacherId the same way every
-// other collectionGroup query already does.
+// Group lessons (rearchitected — see activeContext.md) — a group lesson is
+// NOT its own doc type any more. The moment it's created, it's fanned out
+// as one real students/{studentId}/lessons/{id} "mirror" doc per member —
+// the exact same shape ensureUpcomingLesson's createUpcomingDraft already
+// produces for an individual lesson — tagged isGroupLesson/groupId/
+// groupLessonKey/groupSlotIndex/subject/groupName. Every existing
+// per-student mechanism (the teacher's "Ближайшие уроки" feed, all 3
+// reminder tiers, MaterialsLibrary, lesson history, income) sees these for
+// free through the same collectionGroup("lessons") queries they already
+// run — nothing group-specific to duplicate there any more.
 //
-// Phase 2 (lesson generation + Calendar sync) and Phase 3 (completing a
-// group lesson) live in this same file — ensureUpcomingGroupLessons mirrors
-// core/lessons.js's ensureUpcomingLesson exactly (idempotent find-or-create
-// per schedule slot), and completeGroupLesson reuses the same per-student
-// building blocks completeLesson uses (deductLessonFromBalance,
-// markTopicsCovered, createNotification), just looped over every attendee.
+// groupLessonKey is what ties one occurrence's N mirrors back together —
+// generated fresh (randomUUID) at creation time, not any real doc's id,
+// since there's no longer a single canonical "the" lesson doc. Every
+// group-level action below (reschedule/cancel/complete/edit topic) is a
+// fan-out over `db.collectionGroup("lessons").where("groupLessonKey", "==",
+// key)` — a single-field equality filter, so it needs no composite index.
+// slotIndex on a mirror is always left null (see core/lessons.js's
+// bucketUpcomingBySlot comment for why) — the group's own recurring slot
+// lives in a separate groupSlotIndex field instead, so it can never collide
+// with that same student's own personal schedule-slot bucketing.
+//
+// Reschedule/cancel are one-sided, immediate teacher actions (no propose/
+// confirm dance — a shared class time isn't something one member can
+// unilaterally renegotiate) — per explicit product decision. Individual-
+// lesson entry points (proposeReschedule/proposeCancellation/
+// cancelLessonDirectly in core/lessons.js) refuse to touch a mirror
+// (assertNotGroupMirror) specifically so a student's own "перенести"/
+// "отменить" flow can never desync it from the rest of the group.
 
 function groupsCollection(teacherId) {
   return db.collection("teachers").doc(teacherId).collection("groups")
 }
 
-// Read-only "what's this student's nearest upcoming group lesson, across
-// every group they're in" — mirrors core/lessons.js's own
-// getNearestUpcomingLesson shape, just reached via a collectionGroup query
-// on `memberIds` instead of a single student's own subcollection. Used by
-// recordHomeworkSubmission (core/lessons.js, session 17 Phase 4) to decide
-// whether a bot-sent homework photo should attach to a group lesson instead
-// of an individual one, whichever is actually sooner, and by the student
-// dashboard's "next lesson" merge (StudentDashboard.jsx). The `memberIds`
-// array-contains filter alone is enough to exclude every individual
-// students/{id}/lessons/{id} doc from this collectionGroup("lessons")
-// query — those never have a `memberIds` field at all, and array-contains
-// on a missing field never matches (confirmed in practice, not just
-// assumed, per this feature's own spec).
-async function findNearestUpcomingGroupLessonForStudent(studentId) {
+function groupLessonMirrors(groupLessonKey) {
+  return db.collectionGroup(LESSONS_COLLECTION_GROUP).where("groupLessonKey", "==", groupLessonKey).get()
+}
+
+// A group's program is NOT a separate stored copy any more (it used to be,
+// under teachers/{uid}/groups/{groupId}/programs — deleted per explicit
+// correction: a student in this group AND individually assigned the same
+// subject ended up with two independent, silently-diverging program docs,
+// and marking a topic covered "for the group" never reached the student's
+// own progress at all). Now a group just remembers which template is
+// currently assigned (`group.programTemplateId`), and assigning it means:
+// for each current member, reuse their existing program if they already
+// have one for this subject (tagging it sourceGroupId so it's known to be
+// linked, createdByGroup: false so deleting/leaving the group never deletes
+// data the student already owned independently), or create a fresh one via
+// assignCurriculumTemplate (createByGroup: true — this copy exists *because*
+// of the group, so it's fair game to delete once unlinked). The group's own
+// "progress" is computed at read time by intersecting every linked member's
+// own program (client-side, see firebase/groups.js's getGroupProgramView) —
+// there's nothing server-side left to keep in sync.
+async function findMemberProgramForSubject(studentId, subject) {
+  if (!subject) return null
   const snapshot = await db
-    .collectionGroup("lessons")
-    .where("memberIds", "array-contains", studentId)
-    .where("status", "==", "upcoming")
+    .collection("students")
+    .doc(studentId)
+    .collection("programs")
+    .where("subject", "==", subject)
+    .limit(1)
     .get()
-
-  let nearestDoc = null
-  let nearestDate = null
-  for (const doc of snapshot.docs) {
-    const data = doc.data()
-    const effectiveDate = data.rescheduledDate?.toDate?.() ?? data.date?.toDate?.() ?? null
-    if (!effectiveDate) continue
-    if (!nearestDate || effectiveDate < nearestDate) {
-      nearestDate = effectiveDate
-      nearestDoc = doc
-    }
-  }
-
-  if (!nearestDoc) {
-    return null
-  }
-
-  const groupRef = nearestDoc.ref.parent.parent
-  return {
-    teacherId: nearestDoc.data().teacherId,
-    groupId: groupRef.id,
-    groupName: null, // caller reads it separately only if actually needed — not worth an extra doc read here every time
-    lessonId: nearestDoc.id,
-    effectiveDate: nearestDate,
-  }
+  return snapshot.empty ? null : snapshot.docs[0]
 }
 
-function groupLessonsRef(teacherId, groupId) {
-  return groupsCollection(teacherId).doc(groupId).collection("lessons")
-}
-
-function groupProgramsRef(teacherId, groupId) {
-  return groupsCollection(teacherId).doc(groupId).collection(GROUP_PROGRAMS_SUBCOLLECTION)
-}
-
-// Same shape as curriculum.js's own (unexported) withProgressDefaults —
-// duplicated rather than imported since that function isn't exported and
-// this is the only other call site that needs it.
-function withGroupProgressDefaults(items) {
-  return (Array.isArray(items) ? items : []).map((item) => ({
-    id: item.id,
-    title: item.title,
-    covered: false,
-    coveredAt: null,
-    minScoreRequired: typeof item.minScoreRequired === "number" ? item.minScoreRequired : 0,
-  }))
-}
-
-// A group's own program is a SEPARATE, shared/common progress copy
-// (teachers/{uid}/groups/{groupId}/programs/{programId}) — not a proxy for
-// each member's individual one. Assigning a template to a group does two
-// independent things: (1) creates this shared copy, whose topics/
-// prototypes get marked covered manually via
-// setGroupCurriculumItemCovered, entirely separate from any one student's
-// own progress; (2) fans out a real assignCurriculumTemplate call to every
-// current member, reusing that function completely unmodified — each
-// student ends up with their own normal, independently-tracked program
-// doc, exactly as if the teacher had assigned it to that student by hand.
-// Per the task's own spec: "программа автоматически закрепляется за всеми
-// учениками и дальше работает вся та логика ... что уже реализована для
-// учеников" — this fan-out is what makes that literally true, not just
-// metaphorically. One member's assignment failing doesn't roll back the
-// others (Promise.allSettled), matching completeGroupLesson's own
-// per-attendee fault isolation elsewhere in this file.
 async function assignGroupProgram(teacherId, groupId, templateId) {
   const group = await assertOwnsGroup(groupId, teacherId)
   if (!templateId || typeof templateId !== "string") {
@@ -124,22 +89,24 @@ async function assignGroupProgram(teacherId, groupId, templateId) {
   if (!templateSnapshot.exists) {
     throw new HttpsError("not-found", "Шаблон программы не найден")
   }
-  const template = templateSnapshot.data()
-
-  const programRefNew = groupProgramsRef(teacherId, groupId).doc()
-  await programRefNew.set({
-    subject: template.subject ?? null,
-    templateId,
-    examTypeId: template.examTypeId ?? null,
-    teacherId,
-    topics: withGroupProgressDefaults(template.topics),
-    prototypes: withGroupProgressDefaults(template.prototypes),
-    assignedAt: FieldValue.serverTimestamp(),
-  })
+  const subject = templateSnapshot.data().subject ?? null
 
   const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
   const results = await Promise.allSettled(
-    members.map((studentId) => assignCurriculumTemplate(studentId, templateId)),
+    members.map(async (studentId) => {
+      const existing = await findMemberProgramForSubject(studentId, subject)
+      if (existing) {
+        await existing.ref.update({ sourceGroupId: groupId, createdByGroup: false })
+        return
+      }
+      const { programId } = await assignCurriculumTemplate(studentId, templateId)
+      await db
+        .collection("students")
+        .doc(studentId)
+        .collection("programs")
+        .doc(programId)
+        .update({ sourceGroupId: groupId, createdByGroup: true })
+    }),
   )
   results.forEach((result, index) => {
     if (result.status === "rejected") {
@@ -152,66 +119,67 @@ async function assignGroupProgram(teacherId, groupId, templateId) {
     }
   })
 
-  logger.info("assignGroupProgram: assigned", {
-    teacherId,
-    groupId,
-    templateId,
-    programId: programRefNew.id,
-    memberCount: members.length,
-  })
+  await groupsCollection(teacherId).doc(groupId).update({ programTemplateId: templateId })
 
-  return { success: true, programId: programRefNew.id }
+  logger.info("assignGroupProgram: assigned", { teacherId, groupId, templateId, memberCount: members.length })
+  return { success: true, templateId }
 }
 
-// Replaces only the group's OWN shared program content — deliberately does
-// NOT touch any member's already-independent individual copy (same
-// "replacing a template shouldn't reach into what's now each student's own
-// data" reasoning reassignProgram already uses for a single student).
-async function reassignGroupProgram(teacherId, groupId, programId, newTemplateId) {
-  await assertOwnsGroup(groupId, teacherId)
-  if (!programId || typeof programId !== "string") {
-    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
-  }
-  if (!newTemplateId || typeof newTemplateId !== "string") {
-    throw new HttpsError("invalid-argument", "Не указан идентификатор шаблона")
-  }
-
-  const ref = groupProgramsRef(teacherId, groupId).doc(programId)
-  const [programSnapshot, templateSnapshot] = await Promise.all([
-    ref.get(),
-    db.collection(CURRICULUM_TEMPLATES_COLLECTION).doc(newTemplateId).get(),
-  ])
-  if (!programSnapshot.exists) {
-    throw new HttpsError("not-found", "Программа не найдена")
-  }
-  if (!templateSnapshot.exists) {
-    throw new HttpsError("not-found", "Шаблон программы не найден")
-  }
-  const template = templateSnapshot.data()
-
-  await ref.update({
-    subject: template.subject ?? null,
-    templateId: newTemplateId,
-    examTypeId: template.examTypeId ?? null,
-    topics: withGroupProgressDefaults(template.topics),
-    prototypes: withGroupProgressDefaults(template.prototypes),
+// Unlinks (createdByGroup: false — a program the student already owned
+// independently) or deletes (createdByGroup: true — a program that only
+// exists because of this group) every member's program tied to this group.
+// Shared by deleteGroupProgram and deleteGroup itself (session 28, point 5
+// — deleting the whole group used to leave its program stuck on every
+// member forever, since only the narrower "delete just the program" path
+// ever ran this cleanup).
+async function unlinkGroupPrograms(teacherId, groupId, members) {
+  const results = await Promise.allSettled(
+    members.map(async (studentId) => {
+      const snapshot = await db
+        .collection("students")
+        .doc(studentId)
+        .collection("programs")
+        .where("sourceGroupId", "==", groupId)
+        .get()
+      await Promise.all(
+        snapshot.docs.map((doc) =>
+          doc.data().createdByGroup
+            ? doc.ref.delete()
+            : doc.ref.update({ sourceGroupId: FieldValue.delete(), createdByGroup: FieldValue.delete() }),
+        ),
+      )
+    }),
+  )
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.error("unlinkGroupPrograms: failed for member, continuing", {
+        teacherId,
+        groupId,
+        studentId: members[index],
+        error: result.reason,
+      })
+    }
   })
+}
 
-  logger.info("reassignGroupProgram: replaced", { teacherId, groupId, programId, newTemplateId })
+async function deleteGroupProgram(teacherId, groupId) {
+  const group = await assertOwnsGroup(groupId, teacherId)
+  const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
+
+  await unlinkGroupPrograms(teacherId, groupId, members)
+  await groupsCollection(teacherId).doc(groupId).update({ programTemplateId: FieldValue.delete() })
+
+  logger.info("deleteGroupProgram: deleted", { teacherId, groupId, memberCount: members.length })
   return { success: true }
 }
 
-// Deletes only the group's own shared program doc — again, never touches
-// any member's individual copy, same reasoning as reassignGroupProgram.
-async function deleteGroupProgram(teacherId, groupId, programId) {
-  await assertOwnsGroup(groupId, teacherId)
-  if (!programId || typeof programId !== "string") {
-    throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
-  }
-
-  await groupProgramsRef(teacherId, groupId).doc(programId).delete()
-  logger.info("deleteGroupProgram: deleted", { teacherId, groupId, programId })
-  return { success: true }
+// Unlink/delete the old template's links, then assign the new one fresh —
+// simpler and more correct than trying to patch program docs in place now
+// that "the group's program" is just a pointer, not stored content of its
+// own to overwrite.
+async function reassignGroupProgram(teacherId, groupId, newTemplateId) {
+  await deleteGroupProgram(teacherId, groupId)
+  return assignGroupProgram(teacherId, groupId, newTemplateId)
 }
 
 function validateGroupInput({ name, subject, memberStudentIds, scheduleSlots }) {
@@ -278,14 +246,28 @@ async function updateGroup(teacherId, groupId, { name, subject, memberStudentIds
   return { id: groupId }
 }
 
-// Deletes the group document, every generated lesson under it, and every
-// Calendar event the group's schedule slots created — member students
-// themselves are untouched (they simply stop being in any group's
-// memberStudentIds). Best-effort on the Calendar deletes (same "log and
-// continue" reasoning as syncScheduleSlots's own stale-event cleanup) so a
-// stale/already-gone event never blocks deleting the group itself.
+// Deletes the group document, every lesson mirror it ever fanned out to its
+// members (any status — matches the old subcollection's own delete-
+// everything behavior, just relocated), and every Calendar event the
+// group's schedule slots created — member students themselves are untouched
+// (they simply stop being in any group's memberStudentIds), and their own,
+// unrelated individual lessons are obviously untouched too (the query below
+// is scoped to this groupId). Best-effort on the Calendar deletes (same
+// "log and continue" reasoning as syncScheduleSlots's own stale-event
+// cleanup) so a stale/already-gone event never blocks deleting the group
+// itself.
 async function deleteGroup(teacherId, groupId) {
   const group = await assertOwnsGroup(groupId, teacherId)
+
+  // Session 28, point 5 — deleting the group used to leave its program
+  // stuck on every member forever (only deleteGroupProgram itself ran this
+  // cleanup before). Same unlink-or-delete rule as deleteGroupProgram: a
+  // member's own pre-existing program is unlinked, not deleted; one that
+  // only exists because of this group is deleted with it.
+  if (group.programTemplateId) {
+    const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
+    await unlinkGroupPrograms(teacherId, groupId, members)
+  }
 
   const eventIds = Object.values(group.googleEventIds ?? {})
   for (const eventId of eventIds) {
@@ -296,74 +278,23 @@ async function deleteGroup(teacherId, groupId) {
     }
   }
 
-  const lessonsSnapshot = await groupLessonsRef(teacherId, groupId).get()
-  const batchDeletes = lessonsSnapshot.docs.map((doc) => doc.ref.delete())
-  await Promise.all(batchDeletes)
+  const mirrorsSnapshot = await db.collectionGroup(LESSONS_COLLECTION_GROUP).where("groupId", "==", groupId).get()
+  await Promise.all(mirrorsSnapshot.docs.map((doc) => doc.ref.delete()))
 
   await groupsCollection(teacherId).doc(groupId).delete()
 
-  logger.info("deleteGroup: deleted", { teacherId, groupId, lessonsDeleted: lessonsSnapshot.size })
+  logger.info("deleteGroup: deleted", { teacherId, groupId, mirrorsDeleted: mirrorsSnapshot.size })
   return { id: groupId }
 }
 
-// Buckets every existing "upcoming" group-lesson doc by which schedule slot
-// it belongs to — identical shape to core/lessons.js's own
-// bucketUpcomingBySlot for individual students, just over a different
-// subcollection.
-function bucketUpcomingBySlot(snapshot) {
-  const bySlot = new Map()
-  for (const doc of snapshot.docs) {
-    const slotIndex = typeof doc.data().slotIndex === "number" ? doc.data().slotIndex : 0
-    if (!bySlot.has(slotIndex)) {
-      bySlot.set(slotIndex, doc)
-    }
-  }
-  return bySlot
-}
-
-function emptyAttendee() {
-  return { attendance: null, homeworkDone: false, rating: null, submissionFiles: [] }
-}
-
-function createUpcomingGroupDraft(teacherId, groupId, group, slotIndex, date, durationMinutes) {
-  const attendees = {}
-  for (const studentId of group.memberStudentIds ?? []) {
-    attendees[studentId] = emptyAttendee()
-  }
-
-  return groupLessonsRef(teacherId, groupId).add({
-    status: "upcoming",
-    date: Timestamp.fromDate(date),
-    rescheduledDate: null,
-    slotIndex,
-    subject: group.subject,
-    topic: null,
-    homework: { assignment: { text: "", files: [] } },
-    materials: [],
-    attendees,
-    // Same keys as `attendees` above, kept as its own array field purely so
-    // an array-contains query (collectionGroup("lessons").where("memberIds",
-    // "array-contains", studentId), see Phase 4's student-side "next
-    // lesson" lookup) doesn't need to enumerate a map's keys, which
-    // Firestore can't query directly.
-    memberIds: Object.keys(attendees),
-    teacherId,
-    durationMinutes: durationMinutes ?? 60,
-    googleEventId: null,
-    createdAt: FieldValue.serverTimestamp(),
-  })
-}
-
-// Idempotent find-or-create, one draft per schedule slot — identical shape
-// to core/lessons.js's ensureUpcomingLesson, just against
-// teachers/{uid}/groups/{groupId}/lessons instead of
-// students/{id}/lessons, and seeding `attendees`/`memberIds` from the
-// group's current membership instead of nothing. Safe to call repeatedly
-// (from the reminders.js scheduler, from the group-schedule-change trigger,
-// and from completeGroupLesson right after marking a lesson completed).
+// Idempotent find-or-create, one occurrence per group schedule slot —
+// mirrors core/lessons.js's own ensureUpcomingLesson, just fanning each new
+// occurrence out to every current member as a real lesson mirror instead of
+// creating a single doc. Safe to call repeatedly (from the reminders.js
+// scheduler, from the group-schedule-change trigger, and from
+// completeGroupLesson right after marking an occurrence completed).
 async function ensureUpcomingGroupLessons(teacherId, groupId) {
-  const groupRef = groupsCollection(teacherId).doc(groupId)
-  const groupSnapshot = await groupRef.get()
+  const groupSnapshot = await groupsCollection(teacherId).doc(groupId).get()
   if (!groupSnapshot.exists) {
     logger.warn("ensureUpcomingGroupLessons: group not found", { teacherId, groupId })
     return null
@@ -375,303 +306,348 @@ async function ensureUpcomingGroupLessons(teacherId, groupId) {
     return null
   }
 
-  const existingUpcoming = await groupLessonsRef(teacherId, groupId).where("status", "==", "upcoming").get()
-  const idsBySlot = new Map(
-    [...bucketUpcomingBySlot(existingUpcoming).entries()].map(([slotIndex, doc]) => [slotIndex, doc.id]),
-  )
+  const existingUpcoming = await db
+    .collectionGroup(LESSONS_COLLECTION_GROUP)
+    .where("groupId", "==", groupId)
+    .where("status", "==", "upcoming")
+    .get()
+  const keyBySlot = new Map()
+  for (const doc of existingUpcoming.docs) {
+    const data = doc.data()
+    if (typeof data.groupSlotIndex !== "number") continue
+    if (!keyBySlot.has(data.groupSlotIndex)) {
+      keyBySlot.set(data.groupSlotIndex, data.groupLessonKey)
+    }
+  }
 
   const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
+  const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
 
   for (const occurrence of occurrences) {
-    if (idsBySlot.has(occurrence.slotIndex)) {
+    if (keyBySlot.has(occurrence.slotIndex)) {
       continue
     }
-    const draft = await createUpcomingGroupDraft(
-      teacherId,
-      groupId,
-      group,
-      occurrence.slotIndex,
-      occurrence.date,
-      scheduleSlots[occurrence.slotIndex]?.durationMinutes,
+
+    const groupLessonKey = randomUUID()
+    const durationMinutes = scheduleSlots[occurrence.slotIndex]?.durationMinutes ?? 60
+
+    await Promise.all(
+      members.map(async (studentId) => {
+        const ref = await createUpcomingDraft(studentId, teacherId, null, occurrence.date, durationMinutes)
+        await ref.update({
+          isGroupLesson: true,
+          groupId,
+          groupLessonKey,
+          groupSlotIndex: occurrence.slotIndex,
+          subject: group.subject ?? null,
+          groupName: group.name ?? "",
+        })
+      }),
     )
-    idsBySlot.set(occurrence.slotIndex, draft.id)
-    logger.info("ensureUpcomingGroupLessons: created draft", {
+
+    keyBySlot.set(occurrence.slotIndex, groupLessonKey)
+    logger.info("ensureUpcomingGroupLessons: created mirrors for occurrence", {
       teacherId,
       groupId,
-      lessonId: draft.id,
+      groupLessonKey,
       slotIndex: occurrence.slotIndex,
+      memberCount: members.length,
     })
   }
 
   const soonestSlotIndex = occurrences[0]?.slotIndex
-  return idsBySlot.get(soonestSlotIndex) ?? null
+  return keyBySlot.get(soonestSlotIndex) ?? null
 }
 
-function resolveGroupEventId(group, lesson) {
-  const slotIndex = typeof lesson?.slotIndex === "number" ? lesson.slotIndex : 0
-  return group?.googleEventIds?.[String(slotIndex)] ?? null
+// Group counterpart of createExtraLesson (core/lessons.js) — an unscheduled
+// one-off group occurrence. groupSlotIndex: null, same as an individual
+// extra lesson's slotIndex: null, so it's invisible to
+// ensureUpcomingGroupLessons' own slot bucketing exactly the same way an
+// individual isExtraLesson doc is invisible to ensureUpcomingLesson.
+async function createExtraGroupLesson(teacherId, groupId, date) {
+  const group = await assertOwnsGroup(groupId, teacherId)
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new HttpsError("invalid-argument", "Некорректная дата занятия")
+  }
+
+  const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
+  const groupLessonKey = randomUUID()
+  const durationMinutes = 60
+
+  const mirrors = await Promise.all(
+    members.map(async (studentId) => {
+      const ref = await createUpcomingDraft(studentId, teacherId, null, date, durationMinutes)
+      await ref.update({
+        isGroupLesson: true,
+        isExtraLesson: true,
+        groupId,
+        groupLessonKey,
+        groupSlotIndex: null,
+        subject: group.subject ?? null,
+        groupName: group.name ?? "",
+      })
+      return { studentId, ref }
+    }),
+  )
+
+  logger.info("createExtraGroupLesson: created", { teacherId, groupId, groupLessonKey, memberCount: mirrors.length })
+
+  const calendarPromise = createExtraGroupLessonEvent(teacherId, group, date, durationMinutes)
+    .then(async (googleEventId) => {
+      if (googleEventId) {
+        await Promise.all(mirrors.map(({ ref }) => ref.update({ googleEventId })))
+      }
+    })
+    .catch((error) => {
+      logger.error("createExtraGroupLesson: failed to create Google Calendar event", {
+        teacherId,
+        groupId,
+        groupLessonKey,
+        error,
+      })
+    })
+
+  const notificationPromises = Promise.allSettled(
+    mirrors.map(({ studentId, ref }) =>
+      createNotification({
+        target: "student",
+        studentId,
+        type: "extra_lesson_assigned",
+        params: { lessonDate: date, groupName: group.name ?? null },
+        lessonId: ref.id,
+        teacherId,
+      }),
+    ),
+  )
+
+  await Promise.all([calendarPromise, notificationPromises])
+
+  return { groupLessonKey }
 }
 
-// Reschedule/cancel are one-sided teacher decisions for a group lesson —
-// unlike individual lessons, there is no propose/confirm dance, since the
-// task this was built for treats a group reschedule/cancellation as an
-// already-made decision the teacher is recording, not a negotiation. Both
-// functions below notify every member independently
-// (Promise.allSettled — one student's notification failing must never
-// block the others, same reasoning as completeGroupLesson's own attendee
-// loop).
-async function proposeGroupReschedule(teacherId, groupId, lessonId, newDate) {
+// Reschedule/cancel are one-sided, immediate teacher decisions — see this
+// file's own module comment for why. Both resolve the shared Calendar event
+// off the FIRST mirror found (every mirror carries an identical copy of the
+// same googleEventId, stamped once at creation/first-reschedule time) and
+// update it exactly once, then fan the actual date/status write out to
+// every mirror, then notify every member independently
+// (Promise.allSettled — one student's notification failing must never block
+// the others).
+async function rescheduleGroupLesson(teacherId, groupId, groupLessonKey, newDate) {
   await assertOwnsGroup(groupId, teacherId)
-  if (!lessonId || typeof lessonId !== "string") {
+  if (!groupLessonKey || typeof groupLessonKey !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор занятия")
   }
   if (!(newDate instanceof Date) || Number.isNaN(newDate.getTime())) {
     throw new HttpsError("invalid-argument", "Некорректная дата переноса")
   }
 
-  const lessonRef = groupLessonsRef(teacherId, groupId).doc(lessonId)
-  const lessonSnapshot = await lessonRef.get()
-  if (!lessonSnapshot.exists) {
+  const mirrorsSnapshot = await groupLessonMirrors(groupLessonKey)
+  if (mirrorsSnapshot.empty) {
     throw new HttpsError("not-found", "Занятие не найдено")
   }
-  const lesson = lessonSnapshot.data()
 
   const groupSnapshot = await groupsCollection(teacherId).doc(groupId).get()
   const group = groupSnapshot.exists ? groupSnapshot.data() : null
-
-  const originalDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
-  const eventId = resolveGroupEventId(group, lesson)
+  const firstLesson = mirrorsSnapshot.docs[0].data()
+  const originalDate = firstLesson.rescheduledDate?.toDate?.() ?? firstLesson.date?.toDate?.() ?? null
+  const eventId = firstLesson.googleEventId ?? null
 
   const calendarPromise =
     eventId && originalDate
-      ? rescheduleLessonEvent(teacherId, eventId, originalDate, newDate, lesson.durationMinutes).catch((error) => {
-          logger.error("proposeGroupReschedule: failed to reschedule Google Calendar event", {
+      ? rescheduleLessonEvent(teacherId, eventId, originalDate, newDate, firstLesson.durationMinutes).catch((error) => {
+          logger.error("rescheduleGroupLesson: failed to reschedule Google Calendar event", {
             teacherId,
             groupId,
-            lessonId,
+            groupLessonKey,
             error,
           })
         })
       : Promise.resolve()
 
-  await Promise.all([calendarPromise, lessonRef.update({ rescheduledDate: Timestamp.fromDate(newDate) })])
-
-  logger.info("proposeGroupReschedule: rescheduled", { teacherId, groupId, lessonId })
-
-  const memberIds = Array.isArray(lesson.memberIds) ? lesson.memberIds : []
-  const notificationResults = await Promise.allSettled(
-    memberIds.map((studentId) =>
-      createNotification({
-        target: "student",
-        studentId,
-        type: "group_lesson_rescheduled",
-        params: { groupName: group?.name ?? "", oldDate: originalDate, newDate },
-        lessonId,
-        teacherId,
+  const writePromise = Promise.all(
+    mirrorsSnapshot.docs.map((doc) =>
+      doc.ref.update({
+        date: Timestamp.fromDate(newDate),
+        rescheduledDate: Timestamp.fromDate(newDate),
+        rescheduled: true,
       }),
     ),
   )
-  notificationResults.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.error("proposeGroupReschedule: notification failed", {
+
+  await Promise.all([calendarPromise, writePromise])
+
+  logger.info("rescheduleGroupLesson: rescheduled", {
+    teacherId,
+    groupId,
+    groupLessonKey,
+    memberCount: mirrorsSnapshot.size,
+  })
+
+  const notificationResults = await Promise.allSettled(
+    mirrorsSnapshot.docs.map((doc) => {
+      const studentId = doc.ref.parent.parent.id
+      return createNotification({
+        target: "student",
+        studentId,
+        type: "reschedule_confirmed",
+        params: { newDate, groupName: group?.name ?? null },
+        lessonId: doc.id,
         teacherId,
-        groupId,
-        lessonId,
-        studentId: memberIds[index],
-        error: result.reason,
       })
+    }),
+  )
+  notificationResults.forEach((result) => {
+    if (result.status === "rejected") {
+      logger.error("rescheduleGroupLesson: notification failed", { teacherId, groupId, groupLessonKey, error: result.reason })
     }
   })
 
-  return { id: lessonId }
+  return { groupLessonKey }
 }
 
-async function cancelGroupLesson(teacherId, groupId, lessonId) {
+async function cancelGroupLesson(teacherId, groupId, groupLessonKey) {
   await assertOwnsGroup(groupId, teacherId)
-  if (!lessonId || typeof lessonId !== "string") {
+  if (!groupLessonKey || typeof groupLessonKey !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор занятия")
   }
 
-  const lessonRef = groupLessonsRef(teacherId, groupId).doc(lessonId)
-  const lessonSnapshot = await lessonRef.get()
-  if (!lessonSnapshot.exists) {
+  const mirrorsSnapshot = await groupLessonMirrors(groupLessonKey)
+  if (mirrorsSnapshot.empty) {
     throw new HttpsError("not-found", "Занятие не найдено")
   }
-  const lesson = lessonSnapshot.data()
 
   const groupSnapshot = await groupsCollection(teacherId).doc(groupId).get()
   const group = groupSnapshot.exists ? groupSnapshot.data() : null
-  const eventId = resolveGroupEventId(group, lesson)
+  const firstLesson = mirrorsSnapshot.docs[0].data()
+  const eventId = firstLesson.googleEventId ?? null
+  const lessonDate = firstLesson.rescheduledDate?.toDate?.() ?? firstLesson.date?.toDate?.() ?? null
 
-  // Same "delete the slot's recurring Calendar event" behavior
-  // cancelLessonDirectly already uses for an individual lesson tied to a
-  // recurring slot — mirrored here deliberately, not redesigned, per this
-  // feature's own spec ("переиспользуй... они уже принимают teacherId").
   const calendarPromise = eventId
     ? deleteLessonEvent(teacherId, eventId).catch((error) => {
-        logger.error("cancelGroupLesson: failed to delete Google Calendar event", { teacherId, groupId, lessonId, error })
+        logger.error("cancelGroupLesson: failed to delete Google Calendar event", { teacherId, groupId, groupLessonKey, error })
       })
     : Promise.resolve()
 
-  await Promise.all([calendarPromise, lessonRef.update({ status: "cancelled" })])
+  const writePromise = Promise.all(mirrorsSnapshot.docs.map((doc) => doc.ref.update({ status: "cancelled" })))
 
-  logger.info("cancelGroupLesson: cancelled", { teacherId, groupId, lessonId })
+  await Promise.all([calendarPromise, writePromise])
 
-  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
-  const memberIds = Array.isArray(lesson.memberIds) ? lesson.memberIds : []
+  logger.info("cancelGroupLesson: cancelled", { teacherId, groupId, groupLessonKey, memberCount: mirrorsSnapshot.size })
+
   const notificationResults = await Promise.allSettled(
-    memberIds.map((studentId) =>
-      createNotification({
+    mirrorsSnapshot.docs.map((doc) => {
+      const studentId = doc.ref.parent.parent.id
+      return createNotification({
         target: "student",
         studentId,
-        type: "group_lesson_cancelled",
-        params: { groupName: group?.name ?? "", lessonDate },
-        lessonId,
+        type: "lesson_cancelled_by_teacher",
+        params: { lessonDate, groupName: group?.name ?? null },
+        lessonId: doc.id,
         teacherId,
-      }),
-    ),
-  )
-  notificationResults.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.error("cancelGroupLesson: notification failed", {
-        teacherId,
-        groupId,
-        lessonId,
-        studentId: memberIds[index],
-        error: result.reason,
       })
+    }),
+  )
+  notificationResults.forEach((result) => {
+    if (result.status === "rejected") {
+      logger.error("cancelGroupLesson: notification failed", { teacherId, groupId, groupLessonKey, error: result.reason })
     }
   })
 
-  return { id: lessonId }
+  return { groupLessonKey }
 }
 
-// Per-attendee side effects of completing a group lesson — everything
-// completeLesson (core/lessons.js) already does for an individual lesson,
-// just called once per member instead of once for the one student. Never
-// throws past completeGroupLesson's own Promise.allSettled wrapper; a
-// failure here for one student must not affect any other student's
-// processing.
-async function completeGroupLessonForAttendee(teacherId, groupId, lessonId, studentId, subject, topic, groupName) {
-  // Text-match the free-text group lesson topic against this student's own
-  // program for the group's subject — the group lesson dialog only has a
-  // single free-text "Тема урока" field (no per-student ProgramTopicPicker
-  // like the individual HomeworkLessonDialog has), so an exact
-  // (case-insensitive) title match is the only signal available for "was
-  // this actually a topic from their program." No match, no program, or no
-  // topic at all is a silent no-op — same "don't fail the whole completion
-  // over this" principle markTopicsCovered's own "program not found"
-  // no-op already established.
-  if (subject && topic) {
-    const normalizedTopic = topic.trim().toLowerCase()
-    const programsSnapshot = await db
-      .collection("students")
-      .doc(studentId)
-      .collection("programs")
-      .where("subject", "==", subject)
-      .limit(1)
-      .get()
+// Text-match the free-text group lesson topic against this student's own
+// program for the group's subject — the group lesson dialog only has a
+// single free-text "Тема урока" field (no per-student ProgramTopicPicker
+// like the individual HomeworkLessonDialog has), so an exact
+// (case-insensitive) title match is the only signal available for "was
+// this actually a topic from their program." No match, no program, or no
+// topic at all is a silent no-op — same "don't fail the whole completion
+// over this" principle markTopicsCovered's own "program not found" no-op
+// already established.
+async function markGroupLessonTopicCovered(studentId, lessonId, subject, topic) {
+  if (!subject || !topic) return
 
-    if (!programsSnapshot.empty) {
-      const programDoc = programsSnapshot.docs[0]
-      const program = programDoc.data()
-      const matchedTopic = (program.topics ?? []).find(
-        (topicItem) => !topicItem.covered && topicItem.title?.trim().toLowerCase() === normalizedTopic,
-      )
-      const matchedPrototype = (program.prototypes ?? []).find(
-        (prototypeItem) => !prototypeItem.covered && prototypeItem.title?.trim().toLowerCase() === normalizedTopic,
-      )
+  const normalizedTopic = topic.trim().toLowerCase()
+  const programsSnapshot = await db
+    .collection("students")
+    .doc(studentId)
+    .collection("programs")
+    .where("subject", "==", subject)
+    .limit(1)
+    .get()
+  if (programsSnapshot.empty) return
 
-      if (matchedTopic || matchedPrototype) {
-        await markTopicsCovered(studentId, lessonId, programDoc.id, {
-          topicIds: matchedTopic ? [matchedTopic.id] : [],
-          prototypeIds: matchedPrototype ? [matchedPrototype.id] : [],
-        })
-      }
-    }
+  const programDoc = programsSnapshot.docs[0]
+  const program = programDoc.data()
+  const matchedTopic = (program.topics ?? []).find(
+    (topicItem) => !topicItem.covered && topicItem.title?.trim().toLowerCase() === normalizedTopic,
+  )
+  const matchedPrototype = (program.prototypes ?? []).find(
+    (prototypeItem) => !prototypeItem.covered && prototypeItem.title?.trim().toLowerCase() === normalizedTopic,
+  )
+
+  if (matchedTopic || matchedPrototype) {
+    await markTopicsCovered(studentId, lessonId, programDoc.id, {
+      topicIds: matchedTopic ? [matchedTopic.id] : [],
+      prototypeIds: matchedPrototype ? [matchedPrototype.id] : [],
+    })
   }
-
-  await deductLessonFromBalance(studentId, lessonId)
-
-  await createNotification({
-    target: "student",
-    studentId,
-    type: "group_lesson_completed",
-    params: { groupName },
-    lessonId,
-    teacherId,
-  })
 }
 
 // attendeeUpdates: { [studentId]: { attendance, homeworkDone, rating } } —
-// every key must already be a member recorded in the lesson's own
-// `attendees` map (seeded at draft-creation time from the group's
-// membership then, not necessarily the group's *current* membership —
-// intentional, a roster shouldn't retroactively change once the lesson
-// happened). Materials aren't duplicated per student (see this file's own
-// module comment / activeContext.md) — MaterialsLibrary on the student
-// dashboard needs to read group lessons as a second source for this to
-// surface there at all, which is Phase 4 work, not this function's job.
-async function completeGroupLesson(teacherId, groupId, lessonId, attendeeUpdates) {
+// reuses completeLesson (core/lessons.js) verbatim, once per attendee — the
+// exact same status/materials-merge/balance-deduction/next-personal-draft
+// handling an individual lesson completion already gets, not a separate
+// reimplementation. markGroupLessonTopicCovered runs alongside it for the
+// program-progress matching completeLesson itself has no notion of. A key
+// present in attendeeUpdates but not among this occurrence's actual mirrors
+// (e.g. a stale client) is silently ignored.
+async function completeGroupLesson(teacherId, groupId, groupLessonKey, attendeeUpdates) {
   await assertOwnsGroup(groupId, teacherId)
-  if (!lessonId || typeof lessonId !== "string") {
+  if (!groupLessonKey || typeof groupLessonKey !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор занятия")
   }
   if (!attendeeUpdates || typeof attendeeUpdates !== "object" || Array.isArray(attendeeUpdates)) {
     throw new HttpsError("invalid-argument", "Не указаны данные по участникам")
   }
 
-  const lessonRef = groupLessonsRef(teacherId, groupId).doc(lessonId)
-  const lessonSnapshot = await lessonRef.get()
-  if (!lessonSnapshot.exists) {
+  const mirrorsSnapshot = await groupLessonMirrors(groupLessonKey)
+  if (mirrorsSnapshot.empty) {
     throw new HttpsError("not-found", "Занятие не найдено")
   }
-  const lesson = lessonSnapshot.data()
-  const subject = lesson.subject ?? null
-  const topic = lesson.topic ?? null
 
-  const groupSnapshot = await groupsCollection(teacherId).doc(groupId).get()
-  const groupName = groupSnapshot.exists ? groupSnapshot.data().name ?? "" : ""
-
-  const knownMemberIds = new Set(Array.isArray(lesson.memberIds) ? lesson.memberIds : [])
-  const attendeeIds = Object.keys(attendeeUpdates).filter((studentId) => knownMemberIds.has(studentId))
-
-  const statusUpdate = { status: "completed" }
-  for (const studentId of attendeeIds) {
-    const { attendance, homeworkDone, rating } = attendeeUpdates[studentId] ?? {}
-    statusUpdate[`attendees.${studentId}.attendance`] = attendance ?? null
-    statusUpdate[`attendees.${studentId}.homeworkDone`] = Boolean(homeworkDone)
-    statusUpdate[`attendees.${studentId}.rating`] = rating ?? null
-  }
-  await lessonRef.update(statusUpdate)
-  logger.info("completeGroupLesson: lesson marked completed", {
-    teacherId,
-    groupId,
-    lessonId,
-    memberCount: attendeeIds.length,
-  })
+  const attendees = mirrorsSnapshot.docs
+    .map((doc) => ({ doc, studentId: doc.ref.parent.parent.id }))
+    .filter(({ studentId }) => Object.prototype.hasOwnProperty.call(attendeeUpdates, studentId))
 
   const results = await Promise.allSettled(
-    attendeeIds.map((studentId) =>
-      completeGroupLessonForAttendee(teacherId, groupId, lessonId, studentId, subject, topic, groupName),
-    ),
+    attendees.map(async ({ doc, studentId }) => {
+      const { attendance, homeworkDone, rating } = attendeeUpdates[studentId] ?? {}
+      const lesson = doc.data()
+      await completeLesson(studentId, doc.id, { attendance, homeworkDone, rating })
+      await markGroupLessonTopicCovered(studentId, doc.id, lesson.subject, lesson.topic)
+    }),
   )
   results.forEach((result, index) => {
     if (result.status === "rejected") {
-      logger.error("completeGroupLesson: attendee post-processing failed", {
+      logger.error("completeGroupLesson: attendee processing failed", {
         teacherId,
         groupId,
-        lessonId,
-        studentId: attendeeIds[index],
+        groupLessonKey,
+        studentId: attendees[index]?.studentId,
         error: result.reason,
       })
     }
   })
 
-  const nextLessonId = await ensureUpcomingGroupLessons(teacherId, groupId)
-  logger.info("completeGroupLesson: ensured next upcoming group lesson", { teacherId, groupId, nextLessonId })
+  logger.info("completeGroupLesson: completed", { teacherId, groupId, groupLessonKey, memberCount: attendees.length })
 
-  return { id: lessonId }
+  const nextKey = await ensureUpcomingGroupLessons(teacherId, groupId)
+  logger.info("completeGroupLesson: ensured next upcoming group lessons", { teacherId, groupId, nextKey })
+
+  return { groupLessonKey }
 }
 
 module.exports = {
@@ -679,14 +655,12 @@ module.exports = {
   updateGroup,
   deleteGroup,
   groupsCollection,
-  groupLessonsRef,
-  groupProgramsRef,
   ensureUpcomingGroupLessons,
-  proposeGroupReschedule,
+  rescheduleGroupLesson,
   cancelGroupLesson,
   completeGroupLesson,
-  findNearestUpcomingGroupLessonForStudent,
   assignGroupProgram,
   reassignGroupProgram,
   deleteGroupProgram,
+  createExtraGroupLesson,
 }

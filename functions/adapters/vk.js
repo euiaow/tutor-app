@@ -149,6 +149,32 @@ async function deleteMessage(peerId, messageId) {
   }
 }
 
+// Pins the bot's own PIN_SAVED message (the one carrying the student's
+// personal-cabinet link) right after sending it — mirrors telegram.js's
+// pinChatMessage. Best-effort: must never affect whether registration
+// itself is considered successful, see handleAwaitingPin's call site.
+async function pinMessage(peerId, messageId) {
+  const token = VK_GROUP_TOKEN.value()
+  const params = new URLSearchParams({
+    access_token: token,
+    v: VK_API_VERSION,
+    peer_id: String(peerId),
+    message_id: String(messageId),
+  })
+
+  const response = await fetch("https://api.vk.com/method/messages.pin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params,
+  })
+
+  const payload = await response.json()
+
+  if (!response.ok || payload.error) {
+    throw new Error(`VK messages.pin failed: ${JSON.stringify(payload.error ?? payload)}`)
+  }
+}
+
 async function handleNoSessionMessage(peerId, text, ref) {
   const hasRef = typeof ref === "string" && ref.trim() !== ""
   const token = hasRef ? ref.trim() : text.trim()
@@ -223,10 +249,19 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
     await sessionRef.delete()
 
     logger.info("VK registration completed", { peerId, studentId })
-    await sendMessage(
+    const sent = await sendMessage(
       peerId,
       botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`),
     )
+
+    const sentMessageId = sent && !sent.error ? sent.response : null
+    if (sentMessageId) {
+      try {
+        await pinMessage(peerId, sentMessageId)
+      } catch (pinError) {
+        logger.warn("VK messages.pin failed after registration", { peerId, studentId, error: pinError })
+      }
+    }
   } catch (error) {
     logger.error("VK registration failed", { peerId, token: session.token, error })
     await sessionRef.delete()

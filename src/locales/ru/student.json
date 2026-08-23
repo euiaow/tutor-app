@@ -197,5 +197,15 @@
   "gamification": {
     "portalTitle": "Стикеры и кейсы",
     "portalHint": "Открой кейс и собери коллекцию"
+  },
+  "finance": {
+    "title": "Финансы",
+    "balance": "{{count}} занят.",
+    "paymentEntry": "+{{count}} оплата",
+    "deductionEntry": "{{count}} списание за урок",
+    "empty": "Операций пока нет",
+    "showAll": "Показать всю историю",
+    "dialogTitle": "История оплат",
+    "dialogDescription": "Все оплаты и списания за занятия"
   }
 }

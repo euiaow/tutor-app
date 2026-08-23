@@ -107,6 +107,29 @@ async function deleteMessage(chatId, messageId) {
   }
 }
 
+// Pins the bot's own PIN_SAVED message (the one carrying the student's
+// personal-cabinet link) right after sending it, so it stays at the top of
+// the chat instead of scrolling away. Best-effort: pinning can't really fail
+// in a private bot chat, but a stale/blocked chat is still possible, and a
+// failure here must never affect whether registration itself is considered
+// successful — see handleAwaitingPin's call site.
+async function pinChatMessage(chatId, messageId) {
+  const token = TELEGRAM_BOT_TOKEN.value()
+  const url = `https://api.telegram.org/bot${token}/pinChatMessage`
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, disable_notification: true }),
+  })
+
+  const payload = await response.json()
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(`Telegram pinChatMessage failed: ${JSON.stringify(payload)}`)
+  }
+}
+
 // Telegram expects every callback_query to be acknowledged, or the button
 // keeps showing a loading spinner on the client — `text` (optional) pops up
 // as a small toast.
@@ -234,10 +257,19 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
     await sessionRef.delete()
 
     logger.info("Telegram registration completed", { chatId, studentId })
-    await sendMessage(
+    const sent = await sendMessage(
       chatId,
       botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`, true),
     )
+
+    const sentMessageId = sent?.ok ? sent.result?.message_id : null
+    if (sentMessageId) {
+      try {
+        await pinChatMessage(chatId, sentMessageId)
+      } catch (pinError) {
+        logger.warn("Telegram pinChatMessage failed after registration", { chatId, studentId, error: pinError })
+      }
+    }
   } catch (error) {
     logger.error("Telegram registration failed", { chatId, token: session.token, error })
     await sessionRef.delete()

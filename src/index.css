@@ -261,16 +261,22 @@
      instead of underneath them. `:has()` scopes this to only the teacher
      panel, matching the mockup exactly, without touching the student page's
      shared bg-background rule above. */
-  body:has(.teacher-theme) {
-    background: linear-gradient(180deg, oklch(0.985 0.01 350), oklch(0.965 0.018 345));
-    background-attachment: fixed;
-  }
-  /* Multi-tenancy Phase 4a: same shape as the pink rule above, hue swapped
-     to match .amber-scope's own palette (a teacher who picked "amber" in
-     Settings) — see .amber-scope's own doc comment below. */
-  body:has(.amber-scope) {
-    background: linear-gradient(180deg, oklch(0.985 0.01 70), oklch(0.96 0.018 65));
-    background-attachment: fixed;
+  /* Generic replacement for the old per-theme `body:has(.teacher-theme)`/
+     `body:has(.amber-scope)` pair — any themed root (`.themed`, see the
+     derivation block below) qualifies, regardless of which theme it is, so
+     a newly-registered theme never needs its own copy of this rule.
+     --theme-bg-image (set per-theme by applyThemeRegistry) is a real
+     background layer stacked over the accent-tinted gradient fallback: a
+     theme with no image sets it to `none`, which paints nothing and lets
+     the gradient underneath show through untouched — a theme with an image
+     covers it. */
+  body:has(.themed) {
+    background-color: var(--background);
+    background-image: var(--theme-bg-image),
+      linear-gradient(180deg, oklch(from var(--accent-color) 0.985 0.01 h), oklch(from var(--accent-color) 0.96 0.018 h));
+    background-size: cover, auto;
+    background-position: center, center;
+    background-attachment: fixed, fixed;
   }
 }
 
@@ -316,7 +322,7 @@
 }
 @media (max-width: 640px) {
   .decoration-sticker {
-    --sticker-max: 76px;
+    --sticker-max: 70px;
   }
 }
 
@@ -353,151 +359,107 @@
 }
 
 /*
- * Teacher panel theme — rose/pink palette from "redesign teacher v1"
- * (rosy-reflections-main), a genuinely different hue family from the
- * amber/orange student palette above. Scoped entirely under
- * `.teacher-theme` (wraps TeacherDashboard's root) via CSS custom-property
- * shadowing: every shared token below (--primary, --background, --card,
- * --border, --radius, --shadow-*, etc.) is only overridden for descendants
- * of `.teacher-theme` — the root `:root` tokens used by the student page
- * are untouched. glass-panel/glass-tile are new utility names (not
- * glass/glass-soft/glass-inset) per explicit instruction that unifying the
- * two themes' utility names isn't needed.
+ * Theme derivation layer (backend: src/lib/themes.js's THEME_REGISTRY).
+ *
+ * A theme only ever authors 5 raw values: radius, backgroundImage, accent,
+ * heading, subheading, text (see themes.js's field doc comment for what
+ * each means). applyThemeRegistry() (src/lib/apply-theme-styles.js) turns
+ * each registry entry into a tiny runtime-injected rule —
+ * `.{cssClassName} { --radius; --accent-color; --heading-color;
+ * --subheading-color; --text-color; --theme-bg-image; }` — nothing more.
+ *
+ * This block is what turns those 5 raw values into every token any
+ * component actually reads (--card, --border, --shadow-*, --gradient-*,
+ * decorative blob gradients, chart colors, ...). It's written ONCE, shared
+ * by every theme via the `.themed` marker class, using CSS relative-color
+ * syntax (`oklch(from var(--accent-color) L C h)`, Chrome/Safari/Firefox
+ * 2023+) to reuse the accent's own hue while choosing a fresh lightness/
+ * chroma per surface — this is what makes a new theme's --card/--rose-deep/
+ * --gradient-orb/etc. fall out automatically from one accent color, instead
+ * of a human hand-tuning ~15 oklch triples per theme the way the old
+ * .teacher-theme/.amber-scope blocks (now just the 2 registry entries
+ * above) used to require.
+ *
+ * Any element carrying a theme's cssClassName MUST also carry `.themed` for
+ * this rule to apply — see UserPrefsProvider/useThemeClass (always returns
+ * both together) and every literal `className="teacher-theme themed ..."`
+ * in the codebase. The two are kept separate so applyThemeRegistry's
+ * generated per-theme rule and this shared derivation rule never fight over
+ * the same custom property.
+ *
+ * --border/--input/--glass (and its variants)/--balance-* are hue-neutral (white-translucency
+ * or semantic green/amber/red) in every existing theme, so they're plain
+ * constants here rather than derived from the accent — a future theme can
+ * still override any of these token names directly in its own
+ * `.{cssClassName}` rule if it genuinely needs a hue-tinted border, but
+ * nothing in the registry format requires that.
  */
 @layer base {
-.teacher-theme {
-  --radius: 1.5rem;
-  --background: oklch(0.975 0.012 350);
-  --foreground: oklch(0.24 0.045 350);
-  --ink: oklch(0.22 0.04 350);
-  --ink-foreground: oklch(0.99 0.005 350);
-  --card: oklch(0.995 0.008 350 / 55%);
-  --card-foreground: oklch(0.24 0.045 350);
-  --popover: oklch(0.99 0.008 350);
-  --popover-foreground: oklch(0.24 0.045 350);
-  --primary: oklch(0.66 0.185 5);
-  --primary-foreground: oklch(0.99 0.005 350);
-  --secondary: oklch(0.94 0.03 350 / 60%);
-  --secondary-foreground: oklch(0.35 0.08 355);
-  --muted: oklch(0.95 0.02 350 / 55%);
-  --muted-foreground: oklch(0.55 0.05 350);
-  --accent: oklch(0.9 0.06 350 / 70%);
-  --accent-foreground: oklch(0.32 0.09 355);
-  --destructive: oklch(0.6 0.2 20);
-  --destructive-foreground: oklch(0.99 0.005 350);
-  --border: oklch(1 0 0 / 55%);
-  --input: oklch(1 0 0 / 60%);
-  --ring: oklch(0.72 0.14 355);
-  --glass: oklch(1 0 0 / 30%);
-  --glass-strong: oklch(1 0 0 / 42%);
-  --glass-border: oklch(1 0 0 / 70%);
-  --rose-deep: oklch(0.58 0.19 5);
-  --rose-soft: oklch(0.86 0.09 350);
-  --balance-ok: oklch(0.58 0.09 155);
-  --balance-warn: oklch(0.66 0.11 75);
-  --balance-danger: oklch(0.58 0.15 20);
-  --gradient-page: radial-gradient(
-      1200px 700px at 10% -5%,
-      oklch(0.92 0.09 350 / 90%),
-      transparent 60%
-    ),
-    radial-gradient(900px 600px at 95% 10%, oklch(0.88 0.12 355 / 85%), transparent 60%),
-    radial-gradient(1000px 800px at 60% 100%, oklch(0.93 0.07 340 / 80%), transparent 65%),
-    linear-gradient(180deg, oklch(0.98 0.012 350), oklch(0.96 0.02 345));
-  --gradient-orb: radial-gradient(circle at 32% 28%, oklch(0.84 0.15 350), oklch(0.62 0.2 8));
-  --shadow-glass: 0 24px 60px -28px oklch(0.5 0.16 355 / 45%);
-  --shadow-soft: 0 10px 30px -18px oklch(0.5 0.16 355 / 55%);
-  --blob-a-gradient: radial-gradient(
-    circle at 35% 30%,
-    oklch(0.86 0.14 350 / 90%),
-    oklch(0.7 0.19 8 / 55%) 55%,
-    transparent 75%
-  );
-  --blob-b-gradient: radial-gradient(
-    circle at 60% 55%,
-    oklch(0.9 0.1 340 / 85%),
-    oklch(0.74 0.16 355 / 45%) 60%,
-    transparent 78%
-  );
+.themed {
   position: relative;
-  color: var(--foreground);
+  color: var(--text-color);
   font-family: var(--font-sans);
-}
-}
 
-/*
- * Multi-tenancy Phase 4a — the "amber" colorTheme choice for either role.
- * Same variable shape as .teacher-theme above (every token any teacher-
- * scoped component reads — glass-panel/glass-tile, TeacherDialog, the blob
- * decoration, --balance-* finance badges, etc.), just populated with the
- * student page's own amber/orange hues instead of pink — background/
- * foreground/card/primary/etc. are lifted directly from :root above (the
- * existing amber palette), not a new design; --glass/--glass-strong/
- * --glass-border are hue-neutral white-translucency in both scopes already,
- * copied as-is; --balance-* status colors are semantic (green/amber/red),
- * also copied as-is rather than re-tinted. Selected on TeacherDashboard.jsx
- * (colorTheme === "amber") — lets a teacher use the student page's palette
- * for their own dashboard, per explicit spec ("просто даём выбор из уже
- * существующих палитр").
- */
-@layer base {
-.amber-scope {
-  --radius: 1.75rem;
-  --background: oklch(0.955 0.014 70);
-  --foreground: oklch(0.26 0.02 60);
-  --ink: oklch(0.19 0.01 60);
-  --ink-foreground: oklch(0.97 0.01 80);
-  --card: oklch(1 0 0 / 42%);
-  --card-foreground: oklch(0.26 0.02 60);
-  --popover: oklch(0.99 0.005 70);
-  --popover-foreground: oklch(0.26 0.02 60);
-  --primary: oklch(0.72 0.19 47);
-  --primary-foreground: oklch(0.99 0.01 80);
-  --secondary: oklch(1 0 0 / 55%);
-  --secondary-foreground: oklch(0.32 0.02 60);
-  --muted: oklch(1 0 0 / 35%);
-  --muted-foreground: oklch(0.52 0.02 60);
-  --accent: oklch(0.88 0.07 65);
-  --accent-foreground: oklch(0.28 0.03 55);
-  --destructive: oklch(0.62 0.19 22);
-  --destructive-foreground: oklch(0.99 0.01 80);
+  --background: oklch(from var(--accent-color) 0.975 0.012 h);
+  --foreground: var(--text-color);
+  --ink: var(--heading-color);
+  --ink-foreground: oklch(0.99 0.005 90);
+  --card: oklch(from var(--accent-color) 0.995 0.008 h / 55%);
+  --card-foreground: var(--text-color);
+  --popover: oklch(from var(--accent-color) 0.99 0.008 h);
+  --popover-foreground: var(--text-color);
+  --primary: var(--accent-color);
+  --primary-foreground: oklch(0.99 0.005 90);
+  --secondary: oklch(from var(--accent-color) 0.94 0.03 h / 60%);
+  --secondary-foreground: var(--subheading-color);
+  --muted: oklch(from var(--accent-color) 0.95 0.02 h / 55%);
+  --muted-foreground: var(--subheading-color);
+  --accent: oklch(from var(--accent-color) 0.9 0.06 h / 70%);
+  --accent-foreground: var(--heading-color);
+  --destructive: oklch(0.6 0.2 20);
+  --destructive-foreground: oklch(0.99 0.005 90);
   --border: oklch(1 0 0 / 55%);
-  --input: oklch(1 0 0 / 55%);
-  --ring: oklch(0.72 0.19 47);
+  --input: oklch(1 0 0 / 58%);
+  --ring: var(--accent-color);
   --glass: oklch(1 0 0 / 30%);
   --glass-strong: oklch(1 0 0 / 42%);
   --glass-border: oklch(1 0 0 / 70%);
-  --rose-deep: oklch(0.55 0.17 45);
-  --rose-soft: oklch(0.85 0.09 60);
+  --rose-deep: oklch(from var(--accent-color) calc(l - 0.08) calc(c + 0.005) h);
+  --rose-soft: oklch(from var(--accent-color) 0.86 0.09 h);
   --balance-ok: oklch(0.58 0.09 155);
   --balance-warn: oklch(0.66 0.11 75);
   --balance-danger: oklch(0.58 0.15 20);
   --gradient-page: radial-gradient(
       1200px 700px at 10% -5%,
-      oklch(0.92 0.09 65 / 90%),
+      oklch(from var(--accent-color) 0.92 0.09 h / 90%),
       transparent 60%
     ),
-    radial-gradient(900px 600px at 95% 10%, oklch(0.88 0.1 55 / 85%), transparent 60%),
-    radial-gradient(1000px 800px at 60% 100%, oklch(0.93 0.07 70 / 80%), transparent 65%),
-    linear-gradient(180deg, oklch(0.98 0.012 70), oklch(0.96 0.02 65));
-  --gradient-orb: radial-gradient(circle at 32% 28%, oklch(0.86 0.13 65), oklch(0.68 0.2 40));
-  --shadow-glass: 0 32px 80px -32px oklch(0.45 0.09 50 / 0.45);
-  --shadow-soft: 0 24px 60px -24px oklch(0.5 0.1 50 / 0.35);
+    radial-gradient(900px 600px at 95% 10%, oklch(from var(--accent-color) 0.88 0.11 h / 85%), transparent 60%),
+    radial-gradient(1000px 800px at 60% 100%, oklch(from var(--accent-color) 0.93 0.07 h / 80%), transparent 65%),
+    linear-gradient(180deg, oklch(from var(--accent-color) 0.98 0.012 h), oklch(from var(--accent-color) 0.96 0.02 h));
+  --gradient-orb: radial-gradient(circle at 32% 28%, oklch(from var(--accent-color) 0.85 0.14 h), var(--accent-color));
+  /* Overrides the `:root`-only --gradient-warm (index.css, top of file) —
+     that one is a plain fixed amber gradient with no per-theme variant of
+     its own, so every student-page button/icon/progress-bar/tag that reads
+     it (exam-radar.jsx, lesson-history.jsx's "warm" tone badge,
+     StudentDashboard.jsx's join-call/save/cancel buttons and section icons)
+     stayed orange under a theme with a different accent until this was
+     added. */
+  --gradient-warm: linear-gradient(135deg, oklch(from var(--accent-color) 0.78 0.17 h), oklch(from var(--accent-color) 0.68 0.2 h));
+  --shadow-glass: 0 28px 70px -30px oklch(from var(--accent-color) 0.5 0.16 h / 45%);
+  --shadow-soft: 0 20px 50px -22px oklch(from var(--accent-color) 0.5 0.13 h / 45%);
   --blob-a-gradient: radial-gradient(
     circle at 35% 30%,
-    oklch(0.9 0.09 65 / 90%),
-    oklch(0.72 0.19 47 / 55%) 55%,
+    oklch(from var(--accent-color) 0.88 0.13 h / 90%),
+    oklch(from var(--accent-color) calc(l - 0.05) calc(c + 0.03) calc(h + 10) / 55%) 55%,
     transparent 75%
   );
   --blob-b-gradient: radial-gradient(
     circle at 60% 55%,
-    oklch(0.92 0.06 65 / 85%),
-    oklch(0.76 0.15 50 / 45%) 60%,
+    oklch(from var(--accent-color) 0.9 0.09 h / 85%),
+    oklch(from var(--accent-color) calc(l - 0.02) calc(c - 0.02) calc(h + 5) / 45%) 60%,
     transparent 78%
   );
-  position: relative;
-  color: var(--foreground);
-  font-family: var(--font-sans);
 }
 }
 
@@ -529,11 +491,11 @@
   width: 62vw;
   height: 62vw;
   border-radius: 58% 42% 61% 39% / 45% 55% 45% 55%;
-  /* Multi-tenancy Phase 4a: --blob-a-gradient is defined per color-theme
-     scope (.teacher-theme = pink, .amber-scope = amber, see index.css
-     above) so this decorative layer re-tints along with the rest of the
-     teacher panel instead of always rendering pink regardless of the
-     chosen theme. Fallback keeps the original pink value for safety. */
+  /* --blob-a-gradient is derived per-theme from the theme's own accent
+     color (see the `.themed` derivation block above) so this decorative
+     layer re-tints along with the rest of the panel instead of always
+     rendering pink regardless of the chosen theme. Fallback keeps the
+     original pink value for safety. */
   background: var(--blob-a-gradient, radial-gradient(
     circle at 35% 30%,
     oklch(0.86 0.14 350 / 90%),

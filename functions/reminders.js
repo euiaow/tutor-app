@@ -3,7 +3,7 @@ const { Timestamp } = require("firebase-admin/firestore")
 const { db } = require("./core/firestore")
 const { getZonedParts, zonedTimeToUtc, normalizeScheduleSlots } = require("./core/schedule")
 const { ensureUpcomingLesson } = require("./core/lessons")
-const { ensureUpcomingGroupLessons, groupsCollection, groupLessonsRef } = require("./core/groups")
+const { ensureUpcomingGroupLessons } = require("./core/groups")
 const { createNotification } = require("./core/notifier")
 
 const STUDENTS_COLLECTION = "students"
@@ -66,7 +66,12 @@ function effectiveLessonDate(lesson) {
   return lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
 }
 
-// Group-lesson counterpart of ensureUpcomingDraftsForAllStudents —
+// Group-lesson counterpart of ensureUpcomingDraftsForAllStudents — a group
+// lesson's own reminder handling needs nothing else beyond this: once its
+// occurrences exist as real mirrors in students/{id}/lessons (see
+// core/groups.js), the 3 reminder tiers below pick them up automatically
+// through the exact same per-student loop an individual lesson already goes
+// through — there is no separate group-specific reminder path any more.
 // "groups" is a unique collection id (teachers/{uid}/groups/{groupId}), so
 // one collectionGroup query reaches every teacher's groups at once, the
 // same shape every other cross-teacher collectionGroup query in this app
@@ -84,78 +89,6 @@ async function ensureUpcomingDraftsForAllGroups() {
       await ensureUpcomingGroupLessons(group.teacherId, doc.id)
     } catch (error) {
       logger.error("reminders: failed to ensure upcoming group lesson draft", { groupId: doc.id, error })
-    }
-  }
-}
-
-// Every "upcoming" lesson for a group, ordered soonest first — mirrors
-// getUpcomingLessons(studentId) above, just over the group's own
-// subcollection.
-async function getUpcomingGroupLessons(teacherId, groupId) {
-  const snapshot = await groupLessonsRef(teacherId, groupId).where("status", "==", "upcoming").orderBy("date", "asc").get()
-  return snapshot.docs
-}
-
-// Sends `type` (one of the 3 reminder types, same params shape the
-// individual-student builders already use, plus groupName so
-// notificationMessages.js renders a visibly different sentence — see that
-// file's own comment) to every member of a group lesson. Promise.allSettled
-// so one member's bot-delivery failure never blocks the rest, same
-// reasoning as completeGroupLesson's attendee loop (core/groups.js).
-// Deliberately its own separate notification per member, never merged with
-// that member's individual-lesson reminder for the same window — the
-// task's own explicit "два отдельных, различимых напоминания" requirement.
-async function sendGroupReminder(type, teacherId, groupId, groupName, lessonId, memberIds, params) {
-  const results = await Promise.allSettled(
-    memberIds.map((studentId) =>
-      createNotification({
-        target: "student",
-        studentId,
-        type,
-        params: { ...params, groupName: groupName ?? "" },
-        lessonId,
-        teacherId,
-      }),
-    ),
-  )
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      logger.error("reminders: group notification failed", {
-        groupId,
-        lessonId,
-        studentId: memberIds[index],
-        type,
-        error: result.reason,
-      })
-    }
-  })
-}
-
-// Iterates every teacher's groups once (a plain array-typed forEach body
-// would need the same guard clauses 3 times over — this factors that out),
-// calling `handleLesson(group, teacherId, groupId, lessonDoc)` for each
-// upcoming lesson doc found. `handleLesson` decides its own window/dedup
-// logic per reminder tier, same "each tier owns its own gating" shape the
-// 3 exported functions below already use for individual students.
-async function forEachUpcomingGroupLesson(handleLesson) {
-  const groupsSnapshot = await db.collectionGroup(GROUPS_COLLECTION_GROUP).get()
-
-  for (const groupDoc of groupsSnapshot.docs) {
-    const group = groupDoc.data()
-    const teacherId = group.teacherId
-    const memberIds = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
-    if (!teacherId || memberIds.length === 0) {
-      continue
-    }
-    const groupId = groupDoc.id
-
-    try {
-      const upcomingDocs = await getUpcomingGroupLessons(teacherId, groupId)
-      for (const lessonDoc of upcomingDocs) {
-        await handleLesson(group, teacherId, groupId, lessonDoc)
-      }
-    } catch (error) {
-      logger.error("reminders: failed processing group's upcoming lessons", { groupId, error })
     }
   }
 }
@@ -200,7 +133,11 @@ async function dailyReminderMidday() {
         if (!date || date < windowStart || date >= windowEnd) {
           continue
         }
-        lessonsInWindow.push({ date, assignmentText: lesson.homework?.assignment?.text ?? "" })
+        lessonsInWindow.push({
+          date,
+          assignmentText: lesson.homework?.assignment?.text ?? "",
+          groupName: lesson.isGroupLesson ? lesson.groupName ?? "" : undefined,
+        })
       }
 
       if (lessonsInWindow.length === 0) {
@@ -223,32 +160,6 @@ async function dailyReminderMidday() {
       logger.error("dailyReminderMidday: failed to send reminder", { studentId, error })
     }
   }
-
-  await forEachUpcomingGroupLesson(async (group, teacherId, groupId, lessonDoc) => {
-    const lesson = lessonDoc.data()
-    const date = effectiveLessonDate(lesson)
-    if (!date || date < windowStart || date >= windowEnd) {
-      return
-    }
-
-    const middaySentDate = lesson.remindersSent?.middaySentDate?.toDate?.() ?? null
-    if (middaySentDate && isSameMoscowDay(middaySentDate, now)) {
-      return
-    }
-
-    const memberIds = Array.isArray(lesson.memberIds) ? lesson.memberIds : group.memberStudentIds ?? []
-    await sendGroupReminder(
-      "lesson_reminder_midday",
-      teacherId,
-      groupId,
-      group.name,
-      lessonDoc.id,
-      memberIds,
-      { lessons: [{ date, assignmentText: lesson.homework?.assignment?.text ?? "" }], now },
-    )
-    await lessonDoc.ref.update({ "remindersSent.middaySentDate": Timestamp.fromDate(now) })
-    logger.info("dailyReminderMidday: group reminder sent", { groupId, lessonId: lessonDoc.id, memberCount: memberIds.length })
-  })
 
   logger.info("dailyReminderMidday: finished")
 }
@@ -300,12 +211,13 @@ async function dailyReminderPreLesson() {
 
         const assignmentText = lesson.homework?.assignment?.text ?? ""
         const diffMinutes = Math.round((date.getTime() - now.getTime()) / 60000)
+        const groupName = lesson.isGroupLesson ? lesson.groupName ?? "" : undefined
 
         const { delivered } = await createNotification({
           target: "student",
           studentId,
           type: "lesson_reminder_preLesson",
-          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes },
+          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes, groupName },
           lessonId: lessonDoc.id,
         })
 
@@ -321,38 +233,6 @@ async function dailyReminderPreLesson() {
       logger.error("dailyReminderPreLesson: failed to send reminder", { studentId, error })
     }
   }
-
-  // Groups have no cross-lesson throttle (PRE_LESSON_THROTTLE_MS above is
-  // specifically for one student's several individual lessons in the same
-  // window) — a group lesson's own `remindersSent.preLessonSent` flag is
-  // gate enough, since it's already scoped to one lesson serving many
-  // students at once, not one student's several lessons.
-  await forEachUpcomingGroupLesson(async (group, teacherId, groupId, lessonDoc) => {
-    const lesson = lessonDoc.data()
-    const date = effectiveLessonDate(lesson)
-    if (!date || date < now || date >= windowEnd) {
-      return
-    }
-    if (lesson.remindersSent?.preLessonSent) {
-      return
-    }
-
-    const memberIds = Array.isArray(lesson.memberIds) ? lesson.memberIds : group.memberStudentIds ?? []
-    const assignmentText = lesson.homework?.assignment?.text ?? ""
-    const diffMinutes = Math.round((date.getTime() - now.getTime()) / 60000)
-
-    await sendGroupReminder(
-      "lesson_reminder_preLesson",
-      teacherId,
-      groupId,
-      group.name,
-      lessonDoc.id,
-      memberIds,
-      { lessonDate: date, homeworkText: assignmentText, diffMinutes },
-    )
-    await lessonDoc.ref.update({ "remindersSent.preLessonSent": true })
-    logger.info("dailyReminderPreLesson: group reminder sent", { groupId, lessonId: lessonDoc.id, memberCount: memberIds.length })
-  })
 
   logger.info("dailyReminderPreLesson: finished")
 }
@@ -395,12 +275,13 @@ async function dailyReminderTenMin() {
 
         const assignmentText = lesson.homework?.assignment?.text ?? ""
         const diffMinutes = Math.max(0, Math.round((date.getTime() - now.getTime()) / 60000))
+        const groupName = lesson.isGroupLesson ? lesson.groupName ?? "" : undefined
 
         const { delivered } = await createNotification({
           target: "student",
           studentId,
           type: "lesson_soon",
-          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes },
+          params: { lessonDate: date, homeworkText: assignmentText, diffMinutes, groupName },
           lessonId: lessonDoc.id,
         })
 
@@ -413,33 +294,6 @@ async function dailyReminderTenMin() {
       logger.error("dailyReminderTenMin: failed to send reminder", { studentId, error })
     }
   }
-
-  await forEachUpcomingGroupLesson(async (group, teacherId, groupId, lessonDoc) => {
-    const lesson = lessonDoc.data()
-    const date = effectiveLessonDate(lesson)
-    if (!date || date < now || date >= windowEnd) {
-      return
-    }
-    if (lesson.remindersSent?.tenMinSent) {
-      return
-    }
-
-    const memberIds = Array.isArray(lesson.memberIds) ? lesson.memberIds : group.memberStudentIds ?? []
-    const assignmentText = lesson.homework?.assignment?.text ?? ""
-    const diffMinutes = Math.max(0, Math.round((date.getTime() - now.getTime()) / 60000))
-
-    await sendGroupReminder(
-      "lesson_soon",
-      teacherId,
-      groupId,
-      group.name,
-      lessonDoc.id,
-      memberIds,
-      { lessonDate: date, homeworkText: assignmentText, diffMinutes },
-    )
-    await lessonDoc.ref.update({ "remindersSent.tenMinSent": true })
-    logger.info("dailyReminderTenMin: group reminder sent", { groupId, lessonId: lessonDoc.id, memberCount: memberIds.length })
-  })
 
   logger.info("dailyReminderTenMin: finished")
 }

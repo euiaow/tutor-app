@@ -197,5 +197,15 @@
   "gamification": {
     "portalTitle": "Cases and stickers",
     "portalHint": "Open a case and build your collection"
+  },
+  "finance": {
+    "title": "Payments",
+    "balance": "{{count}} lessons",
+    "paymentEntry": "+{{count}} payment",
+    "deductionEntry": "{{count}} deducted for a lesson",
+    "empty": "No transactions yet",
+    "showAll": "Show full history",
+    "dialogTitle": "Payment history",
+    "dialogDescription": "All payments and lesson deductions"
   }
 }

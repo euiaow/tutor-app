@@ -51,6 +51,18 @@ teacher a proper web dashboard.
   low-balance threshold, both the teacher (bell) and — if the student has
   opted in — the student (bot) get nudged automatically.
 
+- **Group lessons** work the same way from the student's side as an
+  individual lesson — it shows up as their next lesson, with homework and
+  reminders exactly like any other, just tagged as a group session. The
+  difference is entirely on the teacher's side: a group lesson's reschedule/
+  cancellation is the teacher's call alone, applied to the whole group at
+  once immediately (no propose/confirm negotiation the way an individual
+  lesson has) — a shared class time isn't something one student can
+  renegotiate on everyone else's behalf. A group can also share a
+  curriculum program; a student who's individually working through the
+  same subject keeps one unified program, not a second copy — the group
+  view's progress reflects what's been covered by everyone, while a
+  student can still be individually ahead.
 - Each user (teacher or student) has their own **timezone and color-theme
   preference**, set once via a Settings dialog on their own dashboard. The
   guiding principle (session 12, after an earlier same-session attempt to

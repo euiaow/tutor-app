@@ -6,11 +6,11 @@ import { stickerPlaceholderColor } from "@/lib/stickerColors"
 // stable across re-renders. Each zone gets its own angle in the -10..+10deg
 // range so 5 stickers on the same page don't all lean the same way.
 const ZONE_ROTATION_DEG = {
-  zone1: -7,
-  zone2: 6,
-  zone3: -9,
-  zone4: 8,
-  zone5: -5,
+  zone1: 3,
+  zone2: -5,
+  zone3: 2,
+  zone4: -4,
+  zone5: 5,
 }
 
 // Renders whatever sticker (if any) a student has placed into `zone` back

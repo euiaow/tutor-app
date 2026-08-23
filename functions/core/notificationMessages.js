@@ -98,6 +98,11 @@ const BUILDERS = {
 
   extra_lesson_assigned: (p, lang) => {
     const date = formatDateTime(p.lessonDate, p.timeZone, lang)
+    if (p.groupName) {
+      return lang === "en"
+        ? `📌 The teacher scheduled an extra group lesson «${p.groupName}»: ${date}`
+        : `📌 Репетитор назначил(а) дополнительное групповое занятие «${p.groupName}»: ${date}`
+    }
     return lang === "en"
       ? `📌 The teacher scheduled an extra lesson: ${date}`
       : `📌 Репетитор назначил(а) дополнительный урок: ${date}`
@@ -113,6 +118,11 @@ const BUILDERS = {
 
   reschedule_confirmed: (p, lang) => {
     const newDate = formatDateTime(p.newDate, p.timeZone, lang)
+    if (p.groupName) {
+      return lang === "en"
+        ? `📅 Group lesson «${p.groupName}» rescheduled. New time: ${newDate}`
+        : `📅 Групповое занятие «${p.groupName}» перенесено. Новое время: ${newDate}`
+    }
     return lang === "en"
       ? `✅ Reschedule confirmed. New time: ${newDate}`
       : `✅ Перенос урока подтверждён. Новое время: ${newDate}`
@@ -139,6 +149,11 @@ const BUILDERS = {
 
   lesson_cancelled_by_teacher: (p, lang) => {
     const date = formatDateTime(p.lessonDate, p.timeZone, lang)
+    if (p.groupName) {
+      return lang === "en"
+        ? `❌ Group lesson «${p.groupName}» on ${date} was cancelled by the teacher.`
+        : `❌ Групповое занятие «${p.groupName}» ${date} отменено репетитором.`
+    }
     return lang === "en"
       ? `❌ The lesson on ${date} was cancelled by the teacher.`
       : `❌ Урок ${date} отменён репетитором.`
@@ -146,30 +161,6 @@ const BUILDERS = {
 
   cancellation_rejected: (_p, lang) =>
     lang === "en" ? "↩️ Cancellation declined. The lesson still stands." : "↩️ Отмена урока отклонена. Урок остаётся в силе.",
-
-  // Group lessons (session 17) — reschedule/cancel are one-sided teacher
-  // decisions (no propose/confirm dance, unlike individual lessons), so
-  // each of these three fires once per member the moment the teacher acts,
-  // not after a confirm step.
-  group_lesson_rescheduled: (p, lang) => {
-    const oldDate = formatDateTime(p.oldDate, p.timeZone, lang)
-    const newDate = formatDateTime(p.newDate, p.timeZone, lang)
-    return lang === "en"
-      ? `📅 Group lesson «${p.groupName}» moved from ${oldDate} to ${newDate}`
-      : `📅 Групповое занятие «${p.groupName}» перенесено с ${oldDate} на ${newDate}`
-  },
-
-  group_lesson_cancelled: (p, lang) => {
-    const date = formatDateTime(p.lessonDate, p.timeZone, lang)
-    return lang === "en"
-      ? `❌ Group lesson «${p.groupName}» on ${date} was cancelled by the teacher.`
-      : `❌ Групповое занятие «${p.groupName}» ${date} отменено репетитором.`
-  },
-
-  group_lesson_completed: (p, lang) =>
-    lang === "en"
-      ? `✅ Group lesson «${p.groupName}» is complete. Check your results.`
-      : `✅ Групповое занятие «${p.groupName}» завершено. Посмотри свои результаты.`,
 
   homework_received: (_p, lang) =>
     lang === "en" ? "✅ Homework received! The teacher will see it before the lesson." : "✅ Домашка получена! Репетитор увидит её перед уроком.",

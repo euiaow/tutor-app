@@ -4,7 +4,6 @@ import { AddPaymentForm } from "@/components/teacher/add-payment-form"
 import { StudentTags } from "@/components/student-tags"
 import { subscribeToBalanceLedger } from "@/firebase/finance"
 import { subscribeToIncomeLessons } from "@/firebase/lessons"
-import { subscribeToIncomeGroupLessons } from "@/firebase/groups"
 import {
   GhostBtn,
   Panel,
@@ -64,29 +63,6 @@ function computeWeeklyIncome(incomeLessons, students) {
     if (!effectiveDate || effectiveDate < weekStart || effectiveDate > weekEnd) continue
 
     total += rate * (lesson.durationMinutes / 60)
-  }
-  return total
-}
-
-// Group lessons Phase 5, point 1 — same week-window/rate logic as
-// computeWeeklyIncome above, just summed once per *attendee* of each group
-// lesson instead of once per lesson (a group lesson with 3 members in this
-// week's window contributes 3 separate hourlyRate × duration amounts, one
-// per member, not a single flat amount for the lesson itself).
-function computeWeeklyGroupIncome(groupIncomeLessons, students) {
-  const { weekStart, weekEnd } = getMoscowWeekBounds()
-  const rateByStudentId = new Map(students.map((student) => [student.id, student.hourlyRate]))
-
-  let total = 0
-  for (const lesson of groupIncomeLessons) {
-    const effectiveDate = lesson.rescheduledDate ?? lesson.date
-    if (!effectiveDate || effectiveDate < weekStart || effectiveDate > weekEnd) continue
-
-    for (const studentId of lesson.memberIds) {
-      const rate = rateByStudentId.get(studentId)
-      if (!(rate > 0)) continue
-      total += rate * (lesson.durationMinutes / 60)
-    }
   }
   return total
 }
@@ -188,8 +164,12 @@ export function FinanceSection({ students }) {
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [payingStudentId, setPayingStudentId] = useState(null)
   const [incomeLessons, setIncomeLessons] = useState([])
-  const [groupIncomeLessons, setGroupIncomeLessons] = useState([])
 
+  // Group lessons now live as real per-student mirrors in this exact same
+  // collection (see core/groups.js) — subscribeToIncomeLessons already
+  // returns one doc per member with its own studentId, so
+  // computeWeeklyIncome sums them the same way it sums any individual
+  // lesson, once per member, with no separate group income source needed.
   useEffect(() => {
     const uid = auth.currentUser?.uid
     if (!uid) return
@@ -197,14 +177,8 @@ export function FinanceSection({ students }) {
     const unsub = subscribeToIncomeLessons(uid, setIncomeLessons, (error) => {
       console.error("Failed to load income lessons:", error)
     })
-    const unsubGroups = subscribeToIncomeGroupLessons(uid, setGroupIncomeLessons, (error) => {
-      console.error("Failed to load group income lessons:", error)
-    })
 
-    return () => {
-      unsub()
-      unsubGroups()
-    }
+    return unsub
   }, [])
 
   const sortedStudents = [...students].sort(
@@ -214,7 +188,7 @@ export function FinanceSection({ students }) {
   // attendee of every group lesson this week, per the task's own explicit
   // "не только на одну" requirement (a 3-member group lesson adds 3
   // students' rates, not 1).
-  const weeklyIncome = computeWeeklyIncome(incomeLessons, students) + computeWeeklyGroupIncome(groupIncomeLessons, students)
+  const weeklyIncome = computeWeeklyIncome(incomeLessons, students)
 
   return (
     <Panel>

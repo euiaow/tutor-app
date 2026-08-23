@@ -61,18 +61,19 @@ import {
 } from "@/firebase/lessons"
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
-import { subscribeToNearestGroupLesson, getGroupLessonsForStudent } from "@/firebase/groups"
 import { subscribeToPrograms } from "@/firebase/curriculum"
 import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { openExternalLink } from "@/lib/telegramWebApp"
 import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
+import { getThemeById } from "@/lib/themes"
 import { resolveTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
 import { updateStudentSettings } from "@/firebase/students"
 import { StudentSettingsDialog } from "@/components/student/student-settings-dialog"
-import { GamificationProvider } from "@/lib/gamification-context"
+import { GamificationProvider, useGamification } from "@/lib/gamification-context"
 import { StickerWorkshopButton } from "@/components/student/sticker-workshop-button"
 import { DecorationZone } from "@/components/student/decoration-zone"
+import { StudentFinanceSection } from "@/components/student/finance-section"
 import { translateSubject } from "@/locales/subjectTranslations"
 import { translateUnitLabel } from "@/locales/examUnitTranslations"
 import { buildNotificationText } from "@/lib/notificationMessages"
@@ -418,7 +419,26 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
 // programs, each with its own exam target). `heading` lets the wrapper
 // below decide "Моя цель" (only one qualifying program) vs. the program's
 // own subject name (several) — see MyGoalsSection.
-function GoalCard({ studentId, program, examType, heading }) {
+// zone3 ("МГУ" in the reference) anchors to this card's own top border,
+// clear of the "Моя цель"/heading text on the left (the title is short but
+// starts right after the icon badge, so the zone sits further right — ~28%
+// in on desktop where the card is wide enough for that to already clear the
+// title, ~48% on the narrower mobile card where 28% would still land on it)
+// and clear of the "Заполнить"/pencil-edit controls, which live lower/more
+// to the right than this top-border overlap ever reaches.
+function GoalDecoration({ showDecoration }) {
+  if (!showDecoration) return null
+  // Pushed further up (mostly overlapping the notifications banner above,
+  // which is fine) and further right (past both "Русский язык" and
+  // "Заполнить" — the no-goal state's title and its far-right button share
+  // almost the card's entire height, so there's no safe vertical band to
+  // dip into; going higher shrinks how far down it reaches at all, and the
+  // horizontal shift clears both regardless of title length). One unified
+  // position for every width (session 26).
+  return <DecorationZone zone="zone3" className="top-[-84px] left-[52%]" />
+}
+
+function GoalCard({ studentId, program, examType, heading, showDecoration = false }) {
   const { t, i18n } = useTranslation("student")
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
@@ -481,7 +501,8 @@ function GoalCard({ studentId, program, examType, heading }) {
 
   if (editing) {
     return (
-      <section className="glass-soft rounded-4xl p-6">
+      <section className="glass-soft relative rounded-4xl p-6">
+        <GoalDecoration showDecoration={showDecoration} />
         <h3 className="font-display text-lg text-foreground">{heading}</h3>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex-1">
@@ -552,7 +573,8 @@ function GoalCard({ studentId, program, examType, heading }) {
 
   if (!hasGoal) {
     return (
-      <section className="glass-soft flex flex-wrap items-center gap-4 rounded-4xl p-6">
+      <section className="glass-soft relative flex flex-wrap items-center gap-4 rounded-4xl p-6">
+        <GoalDecoration showDecoration={showDecoration} />
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
           style={{ background: "var(--gradient-warm)" }}
@@ -576,7 +598,8 @@ function GoalCard({ studentId, program, examType, heading }) {
   }
 
   return (
-    <section className="glass-soft rounded-4xl p-6">
+    <section className="glass-soft relative rounded-4xl p-6">
+      <GoalDecoration showDecoration={showDecoration} />
       <div className="flex items-center gap-3">
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
@@ -638,6 +661,7 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
         program={program}
         examType={examTypesById[program.examTypeId]}
         heading={t("goals.myGoal")}
+        showDecoration
       />
     )
   }
@@ -646,17 +670,75 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
     <section>
       <h2 className="font-display text-lg text-foreground">{t("goals.myGoals")}</h2>
       <div className="mt-3 space-y-3">
-        {qualifying.map((program) => (
+        {qualifying.map((program, index) => (
           <GoalCard
             key={program.id}
             studentId={studentId}
             program={program}
             examType={examTypesById[program.examTypeId]}
             heading={translateSubject(program.subject, i18n.language) || t("goals.noSubject")}
+            showDecoration={index === 0}
           />
         ))}
       </div>
     </section>
+  )
+}
+
+// A separate component (not inline in the parent that renders
+// <GamificationProvider>) specifically so useGamification() actually sees
+// the provided value — a component can't read its own child provider's
+// context from within the same render call, only a real descendant can.
+// zone1's *desktop* placement stays exactly as session 25/26 left it,
+// anchored inside NextLessonPlate (untouched, hidden here via `sm:block`
+// on that render site) — this mobile-only variant exists because a sticker
+// placed there was landing on top of the greeting name on a narrow phone
+// (session 28): when zone1 is occupied, "Добро пожаловать" hides (frees a
+// line), the heading drops its forced single-line `truncate` so a long
+// name wraps naturally instead of being covered, and a small `pr-*` keeps
+// the text from running under where the sticker now sits, close to the
+// settings button — all `sm:`-reverted back to the untouched desktop look.
+function DashboardHeader({ t, firstName, initial, onSettingsClick }) {
+  const gamification = useGamification()
+  const zone1Occupied = Boolean(gamification?.decoration?.zone1)
+
+  return (
+    <header className="relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4">
+      <div className="min-w-0">
+        <p className={zone1Occupied ? "hidden text-sm text-muted-foreground sm:block" : "text-sm text-muted-foreground"}>
+          {t("header.welcome")}
+        </p>
+        <h1
+          className={
+            zone1Occupied
+              ? "font-display pr-28 text-2xl leading-tight text-foreground sm:truncate sm:pr-0 sm:text-3xl sm:leading-normal"
+              : "font-display truncate text-2xl text-foreground sm:text-3xl"
+          }
+        >
+          {t("header.greeting", { name: firstName })}
+        </h1>
+      </div>
+      <button
+        type="button"
+        onClick={onSettingsClick}
+        aria-label={t("header.settingsAria")}
+        className="glass-soft grid size-11 shrink-0 place-items-center rounded-full text-foreground/70 transition hover:text-foreground"
+      >
+        <Settings className="h-5 w-5" aria-hidden="true" />
+      </button>
+      <div className="relative shrink-0">
+        <div className="glass-soft grid h-14 w-14 place-items-center rounded-full font-display text-lg text-foreground">
+          {initial}
+        </div>
+      </div>
+      {/* Mobile-only counterpart to NextLessonPlate's own zone1 (desktop-only
+          there via `hidden sm:block`) — clears the gear+avatar cluster
+          (44+16+56+16=132px) the same way session 25's very first desktop
+          clearance calc did, which works here because the header has no
+          equivalent of the lesson card's own wider "Посмотреть все уроки"
+          link to also clear. */}
+      <DecorationZone zone="zone1" className="top-1 right-[136px] sm:hidden" />
+    </header>
   )
 }
 
@@ -676,25 +758,15 @@ function NextLessonPlate({ studentId, hasSchedule }) {
   const lastLessonIdRef = useRef(null)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
 
-  // Group lessons Phase 4 — the student's nearest upcoming group lesson
-  // (across every group they're in), compared below against `lesson`
-  // (their nearest individual one) to decide which is actually shown as
-  // "the next lesson." See firebase/groups.js's subscribeToNearestGroupLesson
-  // for why a plain `memberIds array-contains studentId` query is enough
-  // to never pick up an individual lesson doc by mistake.
-  const [groupLesson, setGroupLesson] = useState(null)
-  useEffect(() => {
-    const unsubscribe = subscribeToNearestGroupLesson(studentId, setGroupLesson, (error) =>
-      console.error("Failed to load nearest group lesson:", error),
-    )
-    return unsubscribe
-  }, [studentId])
-
+  // A group lesson is a real entry in `lesson` itself now (see
+  // core/groups.js — it's a normal students/{id}/lessons mirror doc,
+  // tagged isGroupLesson/groupName), so subscribeToUpcomingLesson above
+  // already picks the soonest one whether it's individual or group — no
+  // separate "compare two sources" step needed any more.
+  const showGroupLesson = Boolean(lesson?.isGroupLesson)
   const individualEffectiveDate = lesson ? (lesson.rescheduledDate ?? lesson.date) : null
-  const groupEffectiveDate = groupLesson ? (groupLesson.rescheduledDate ?? groupLesson.date) : null
-  const showGroupLesson = Boolean(groupLesson) && (!individualEffectiveDate || groupEffectiveDate < individualEffectiveDate)
-  const activeTeacherId = showGroupLesson ? groupLesson?.teacherId : lesson?.teacherId
-  const activeEffectiveDate = showGroupLesson ? groupEffectiveDate : individualEffectiveDate
+  const activeTeacherId = lesson?.teacherId
+  const activeEffectiveDate = individualEffectiveDate
 
   // Reads off the currently-displayed lesson's teacherId (individual or
   // group, whichever is winning above) rather than a separate student-doc
@@ -847,7 +919,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
     }
   }
 
-  const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson && !showGroupLesson)
+  const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson)
   const assignment = lesson?.homework.assignment
   const hasAssignment = Boolean(assignment) && (assignment.text.trim() !== "" || assignment.files.length > 0)
   const submissionFiles = lesson?.homework.submission.files ?? []
@@ -855,14 +927,23 @@ function NextLessonPlate({ studentId, hasSchedule }) {
 
   return (
     <section aria-labelledby="next-lesson-title" className="glass relative rounded-4xl p-6 sm:p-8">
-      <DecorationZone zone="zone1" className="top-[-64px] right-2 sm:top-[-116px] sm:right-4" />
-      <DecorationZone zone="zone2" className="top-[-64px] left-2 sm:top-[64%] sm:left-[-104px]" />
-      <DecorationZone zone="zone3" className="bottom-[-64px] right-2 sm:top-[46%] sm:right-[-104px] sm:bottom-auto" />
+      {/* zone1 ("kitten") sits beside the greeting, above the card, clear of
+          both the "Посмотреть все уроки" link (wider than the header's own
+          gear+avatar cluster, so the offset has to clear the wider of the
+          two) and the greeting name. Desktop-only now (session 28) — a
+          fixed-px offset this large doesn't scale down safely on a narrow
+          phone (it was landing on the greeting name there), so mobile gets
+          its own header-anchored variant in DashboardHeader instead. */}
+      <DecorationZone zone="zone1" className="hidden top-[-104px] right-[230px] sm:block" />
+      {/* zone2 ("pretty soul") sits almost entirely inside the card's own
+          right edge at "Задание"'s height (session 26 correction — was
+          mostly hanging outside the card before). */}
+      <DecorationZone zone="zone2" className="top-[42%] right-[8px]" />
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
             {!cancelledLesson && showGroupLesson
-              ? t("nextLesson.groupLabel", { name: groupLesson.groupName || groupLesson.subject })
+              ? t("nextLesson.groupLabel", { name: lesson.groupName || lesson.subject })
               : t("nextLesson.label")}
           </p>
           <h2
@@ -875,9 +956,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               ? t("nextLesson.cancelled")
               : showPlaceholder
                 ? t("nextLesson.noSchedule")
-                : showGroupLesson
-                  ? formatLessonDateTime(groupEffectiveDate, timeZone, dateLocale)
-                  : formatLessonDateTime(individualEffectiveDate, timeZone, dateLocale)}
+                : formatLessonDateTime(individualEffectiveDate, timeZone, dateLocale)}
           </h2>
         </div>
         {hasSchedule ? (
@@ -962,7 +1041,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           <StatusPlate tone="bad" title={t("nextLesson.cancellationRequestSent")} />
         ) : null}
 
-        {showGroupLesson ? (
+        {lesson ? (
           <>
             {videoCallUrl ? (
               <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
@@ -970,41 +1049,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                   <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
                     {t("nextLesson.videoCall")}
                   </p>
-                  <p className="mt-1 truncate text-sm text-secondary-foreground">
-                    {videoCallActive ? t("nextLesson.videoCallActive") : t("nextLesson.videoCallAvailableSoon")}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => openExternalLink(videoCallUrl)}
-                  disabled={!videoCallActive}
-                  className="inline-flex shrink-0 items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
-                  style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
-                >
-                  <Video className="h-4 w-4" aria-hidden="true" />
-                  {t("nextLesson.videoCallJoin")}
-                </button>
-              </div>
-            ) : null}
-
-            {/* No reschedule/cancel buttons, no other participants' names —
-                both deliberately omitted per this feature's own spec
-                (reschedule/cancel is the teacher's decision only for a
-                group lesson; privacy — a student doesn't need to see who
-                else is in the group). */}
-            <p className="text-xs text-muted-foreground">{t("nextLesson.groupNoActions")}</p>
-          </>
-        ) : null}
-
-        {!showGroupLesson && lesson ? (
-          <>
-            {videoCallUrl ? (
-              <div className="glass-inset grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-3xl p-5">
-                <div className="min-w-0">
-                  <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-                    {t("nextLesson.videoCall")}
-                  </p>
-                  <p className="mt-1 truncate text-sm text-secondary-foreground">
+                  <p className="mt-1 text-sm break-words text-secondary-foreground">
                     {videoCallActive ? t("nextLesson.videoCallActive") : t("nextLesson.videoCallAvailableSoon")}
                   </p>
                 </div>
@@ -1122,7 +1167,13 @@ function NextLessonPlate({ studentId, hasSchedule }) {
               <p className="mt-3 text-xs text-muted-foreground">{t("nextLesson.orSendViaBot")}</p>
             </div>
 
-            {lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
+            {/* A group lesson's reschedule/cancel is the teacher's decision
+                alone, applied to the whole group at once (see
+                core/groups.js) — not something one student can propose for
+                just their own copy, so these buttons don't apply to it. */}
+            {lesson.isGroupLesson ? (
+              <p className="text-xs text-muted-foreground">{t("nextLesson.groupNoActions")}</p>
+            ) : lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 {lesson.rescheduleStatus !== "pending_teacher" ? (
                   <button
@@ -1151,7 +1202,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
         ) : null}
       </div>
 
-      {lesson ? (
+      {lesson && !lesson.isGroupLesson ? (
         <>
           <ProposeRescheduleDialog
             studentId={studentId}
@@ -1240,7 +1291,7 @@ function CurriculumProgressBar({ icon: Icon, label, done, total }) {
 // the two cards to render at all, so a second independent listener here
 // would be redundant. `null` while the parent's own subscription hasn't
 // resolved yet, same as before.
-function CurriculumProgressCard({ progress, subjectLabel, showDecoration = false }) {
+function CurriculumProgressCard({ progress, subjectLabel }) {
   const { t, i18n } = useTranslation("student")
   const [expanded, setExpanded] = useState(false)
 
@@ -1267,13 +1318,7 @@ function CurriculumProgressCard({ progress, subjectLabel, showDecoration = false
   }).length
 
   return (
-    <section className="glass-soft relative rounded-4xl p-6 sm:p-7">
-      {showDecoration ? (
-        <>
-          <DecorationZone zone="zone4" className="top-[-40px] right-3 sm:top-[-56px] sm:right-5" />
-          <DecorationZone zone="zone5" className="bottom-[-40px] right-3 sm:bottom-[-56px] sm:right-6" />
-        </>
-      ) : null}
+    <section className="glass-soft rounded-4xl p-6 sm:p-7">
       <div className="flex items-center gap-3">
         <span
           className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl text-primary-foreground"
@@ -1524,27 +1569,6 @@ function StudentDashboardContent({ studentId }) {
     return () => unsub()
   }, [studentId])
 
-  // Group lessons Phase 4 (points 4-5) — every group lesson this student is
-  // a member of, any status, one-time read (not a live subscription, same
-  // as getAllCompletedLessons's own shape) since neither MaterialsLibrary
-  // nor LessonHistory need real-time updates. Filtered to status ===
-  // "completed" at each actual usage site below, matching the individual-
-  // lesson library's own existing rule that only a completed lesson's
-  // materials/history entry ever surfaces to the student — an upcoming
-  // group lesson's materials aren't shown here either, for consistency.
-  const [groupLessons, setGroupLessons] = useState([])
-  useEffect(() => {
-    let cancelled = false
-    getGroupLessonsForStudent(studentId)
-      .then((data) => {
-        if (!cancelled) setGroupLessons(data)
-      })
-      .catch((fetchError) => console.error("Failed to load group lessons:", fetchError))
-    return () => {
-      cancelled = true
-    }
-  }, [studentId])
-
   // Block 4 — a student can have several programs at once (one per
   // subject); each renders its own goal/radar/progress block independently
   // below (MyGoalsSection + the per-program map further down), replacing
@@ -1597,62 +1621,27 @@ function StudentDashboardContent({ studentId }) {
 
   const firstName = getFirstName(student.name)
 
-  const completedGroupLessons = groupLessons.filter((lesson) => lesson.status === "completed")
+  // A completed group lesson is a real entry in `lessons` now (see
+  // core/groups.js) — this student's own attendance/homeworkDone/rating
+  // already live directly on their own mirror doc, not nested under a
+  // group-wide attendees map, so it needs no separate unwrap/merge step;
+  // it sorts into history and MaterialsLibrary the same way any individual
+  // lesson does.
+  const mergedLessonHistory = lessons
+    .filter((lesson) => lesson.status !== "upcoming")
+    .sort((a, b) => (b.date?.getTime?.() ?? 0) - (a.date?.getTime?.() ?? 0))
 
-  // Group lessons Phase 4, point 5 — a completed group lesson's history
-  // entry uses THIS student's own attendees.{studentId} values (attendance/
-  // homeworkDone/rating), never the group-wide data, per the task's own
-  // explicit "теперь это ЕГО личные значения" requirement. `materials`
-  // mirrors completeLesson's own merge-on-complete behavior for individual
-  // lessons (materials + assignment files combined) at read time here,
-  // since completeGroupLesson doesn't persist that merge server-side (see
-  // functions/core/groups.js's own module comment on why materials
-  // deliberately live only on the group lesson doc, not duplicated).
-  const groupHistoryEntries = completedGroupLessons.map((lesson) => {
-    const own = lesson.attendees[studentId] ?? {}
-    return {
-      id: lesson.id,
-      date: lesson.rescheduledDate ?? lesson.date,
-      status: lesson.status,
-      topic: lesson.topic,
-      attendance: own.attendance ?? null,
-      homeworkDone: Boolean(own.homeworkDone),
-      rating: own.rating ?? null,
-      materials: [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])],
-    }
-  })
-
-  const mergedLessonHistory = [...lessons.filter((lesson) => lesson.status !== "upcoming"), ...groupHistoryEntries].sort(
-    (a, b) => (b.date?.getTime?.() ?? 0) - (a.date?.getTime?.() ?? 0),
-  )
-
-  const completedMaterials = [
-    ...lessons
-      .filter((lesson) => lesson.status === "completed" || !lesson.status)
-      .flatMap((lesson) =>
-        [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])].map((material) => ({
-          ...material,
-          lessonDate: lesson.date,
-        })),
-      ),
-    // Group lessons Phase 4, point 4 — same shape as the individual branch
-    // above (materials + assignment files merged, tagged with the lesson's
-    // date), just sourced from every group the student is a member of.
-    ...completedGroupLessons.flatMap((lesson) =>
+  const completedMaterials = lessons
+    .filter((lesson) => lesson.status === "completed" || !lesson.status)
+    .flatMap((lesson) =>
       [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])].map((material) => ({
         ...material,
-        lessonDate: lesson.rescheduledDate ?? lesson.date,
+        lessonDate: lesson.date,
       })),
-    ),
-  ]
+    )
 
   const seenMaterialUrls = new Set()
   const dedupedMaterials = completedMaterials
-    // Group lessons Phase 4, point 4 — individual and group materials are
-    // two separately-built arrays above, concatenated in source order, not
-    // interleaved by date — sorted here (newest lesson first) so the
-    // merged result reads as one chronological list, not "all individual
-    // materials, then all group materials."
     .slice()
     .sort((a, b) => (b.lessonDate?.getTime?.() ?? 0) - (a.lessonDate?.getTime?.() ?? 0))
     .filter((material) => {
@@ -1693,39 +1682,36 @@ function StudentDashboardContent({ studentId }) {
     }
   })
 
-  // Multi-tenancy Phase 4a: "teacher-theme" (pink) if this student picked
-  // it, "" (plain root/amber tokens, the pre-existing default) otherwise —
-  // mirrors TeacherDashboard.jsx's own themeClass resolution but the other
-  // direction (see index.css's .teacher-theme doc comment for why this
-  // scope class works fine either way round).
-  const themeClass = student.colorTheme === "pink" ? "teacher-theme" : ""
+  // zone4/zone5 only ever belong on an ExamRadar card (session 26 —
+  // previously they could land on a plain CurriculumProgressCard whenever
+  // that happened to be the first program in the list, which the user
+  // explicitly didn't want) — so this has to be "the first program that
+  // actually renders ExamRadar," not just index 0 of programBlocks.
+  const firstExamRadarIndex = programBlocks.findIndex((block) => block.hasGoal && block.metrics)
+
+  // Theme registry (src/lib/themes.js) — same registry/mechanism
+  // TeacherDashboard.jsx uses, per the "one theme system for both roles"
+  // decision. Defaults to "amber" (this page's pre-existing native look) if
+  // the student hasn't picked one yet.
+  const themeClass = `${getThemeById(student.colorTheme ?? "amber").cssClassName} themed`
   const resolvedTimeZone = resolveTimeZone(student.timezone)
 
   return (
     <UserPrefsProvider timeZone={resolvedTimeZone} themeClass={themeClass}>
     <GamificationProvider studentId={studentId}>
     <div className={`relative mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 py-10 sm:py-14 ${themeClass}`}>
-      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4">
-        <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{t("header.welcome")}</p>
-          <h1 className="font-display truncate text-2xl text-foreground sm:text-3xl">
-            {t("header.greeting", { name: firstName })}
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          aria-label={t("header.settingsAria")}
-          className="glass-soft grid size-11 shrink-0 place-items-center rounded-full text-foreground/70 transition hover:text-foreground"
-        >
-          <Settings className="h-5 w-5" aria-hidden="true" />
-        </button>
-        <div className="relative shrink-0">
-          <div className="glass-soft grid h-14 w-14 place-items-center rounded-full font-display text-lg text-foreground">
-            {getInitial(firstName)}
-          </div>
-        </div>
-      </header>
+      {/* Re-mounted here (inside the themed root), on top of the outer
+          StudentDashboard()'s own pre-theme-knowledge instance — this one
+          is a real descendant of `.themed`/the theme's own cssClassName, so
+          its --theme-bg-image var resolves to the student's actually-chosen
+          theme's photo instead of the fallback. */}
+      <StudentGrainBackground />
+      <DashboardHeader
+        t={t}
+        firstName={firstName}
+        initial={getInitial(firstName)}
+        onSettingsClick={() => setSettingsOpen(true)}
+      />
 
       <StudentSettingsDialog
         open={settingsOpen}
@@ -1756,19 +1742,20 @@ function StudentDashboardContent({ studentId }) {
               requiredTopics={requiredTopics}
               requiredPrototypes={requiredPrototypes}
               staleDays={staleDays}
-              showDecoration={index === 0}
+              showDecoration={index === firstExamRadarIndex}
             />
           ) : (
             <CurriculumProgressCard
               progress={program}
               subjectLabel={translateSubject(program.subject, i18n.language)}
-              showDecoration={index === 0}
             />
           )}
         </div>
       ))}
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
+
+      <StudentFinanceSection studentId={studentId} paidLessonsBalance={student.paidLessonsBalance} />
 
       <StickerWorkshopButton studentId={studentId} coinsBalance={student.coinsBalance} />
 
@@ -1851,6 +1838,12 @@ function StudentGate({ studentId }) {
 
   return (
     <main className="relative min-h-screen overflow-hidden">
+      {/* Pre-theme-knowledge fallback: this component's student.colorTheme
+          isn't loaded yet at this level (StudentDashboardContent fetches it
+          below) — renders the CSS var's own url('/bg/gr21.jpg') fallback.
+          StudentDashboardContent re-mounts a second instance once it knows
+          the real theme, which paints over this one entirely (both are
+          fixed inset-0). */}
       <StudentGrainBackground />
       <StudentDashboardContent studentId={studentId} />
     </main>

@@ -105,11 +105,22 @@ export function ExamRadar({
   const remainingPrototypes = requiredPrototypes.filter((item) => !item.covered)
 
   return (
-    <section className="glass-soft relative mt-5 rounded-4xl p-6 sm:p-7">
+    <section className="glass-soft relative z-10 mt-5 rounded-4xl p-6 sm:p-7">
+      {/* zone4/zone5 only ever render on this card now (session 26 — moved
+          off CurriculumProgressCard, which shouldn't have a sticker at
+          all). One unified position for every width, per the user's own
+          real-device testing showing these already looked right on mobile.
+          `z-10` on the section itself (not just the zone) is required for
+          zone5 to actually paint over MaterialsLibrary/whatever card comes
+          next: a plain `position:relative` ancestor with no z-index of its
+          own doesn't win a stacking comparison against a later sibling no
+          matter what z-index its own overflowing child carries — the
+          child's z-index only out-ranks other children/contexts *inside*
+          this same section, not the next section over. */}
       {showDecoration ? (
         <>
-          <DecorationZone zone="zone4" className="top-[-40px] right-3 sm:top-[-56px] sm:right-5" />
-          <DecorationZone zone="zone5" className="bottom-[-40px] right-3 sm:bottom-[-56px] sm:right-6" />
+          <DecorationZone zone="zone4" className="top-[-56px] left-[75%]" />
+          <DecorationZone zone="zone5" className="bottom-[-56px] right-12" />
         </>
       ) : null}
       <div className="flex items-center gap-3">

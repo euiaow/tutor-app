@@ -2,11 +2,10 @@ import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { GlassDialog, GlassDialogContent, GlassDialogTitle, GlassDialogDescription } from "@/components/glass-dialog"
+import { GlassSelect } from "@/components/glass-select"
 import { TIME_ZONE_OPTIONS, getDeviceTimeZone } from "@/lib/timezone"
 import { studentI18n } from "@/lib/i18n"
-
-const glassSelectCls =
-  "glass-inset h-11 w-full rounded-2xl px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
+import { THEME_REGISTRY } from "@/lib/themes"
 
 // Language names are shown in their own language, not translated against
 // the current UI language — the whole point of a language picker is to
@@ -31,39 +30,43 @@ function timeZoneOptionsWith(value) {
 // specifically so this page's i18n dependency (react-i18next/studentI18n)
 // never has to be imported into a file the teacher panel also renders
 // through — SettingsDialog's own "teacher" branch stays completely
-// untouched. The color-theme field is intentionally rendered
-// visible-but-disabled here (task spec, phase 1) — that field still shows
-// the student's current theme but can't be changed yet. Language, unlike
-// color theme, IS a real editable select (added in a follow-up to the
-// original "no switcher yet" phase) — saving applies studentI18n.changeLanguage
-// immediately (optimistic), on top of the authoritative sync StudentDashboard.jsx
-// already does from the live student.language subscription.
+// untouched. Color theme is now a real editable select, sourced from
+// THEME_REGISTRY (src/lib/themes.js) — same registry TeacherDashboard's own
+// SettingsDialog picks from. Saving applies studentI18n.changeLanguage
+// immediately (optimistic) for the language field, on top of the
+// authoritative sync StudentDashboard.jsx already does from the live
+// student.language subscription.
 export function StudentSettingsDialog({ open, onOpenChange, timezone, colorTheme, language, onSave }) {
   const { t } = useTranslation("student")
   const [timezoneValue, setTimezoneValue] = useState(timezone || getDeviceTimeZone())
+  const [colorThemeValue, setColorThemeValue] = useState(colorTheme || THEME_REGISTRY[0].id)
   const [languageValue, setLanguageValue] = useState(language || "ru")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
-  const colorThemeOptions = [
-    { value: "pink", label: t("settings.colorThemeOptions.pink") },
-    { value: "amber", label: t("settings.colorThemeOptions.amber") },
-  ]
+  // A theme without its own translation key still shows up (falls back to
+  // the registry's own Russian label) — see src/lib/themes.js's doc comment
+  // on adding a theme: a locale entry is optional, not required.
+  const colorThemeOptions = THEME_REGISTRY.map((theme) => ({
+    value: theme.id,
+    label: t(`settings.colorThemeOptions.${theme.id}`, { defaultValue: theme.label }),
+  }))
 
   useEffect(() => {
     if (open) {
       setTimezoneValue(timezone || getDeviceTimeZone())
+      setColorThemeValue(colorTheme || THEME_REGISTRY[0].id)
       setLanguageValue(language || "ru")
       setError("")
     }
-  }, [open, timezone, language])
+  }, [open, timezone, colorTheme, language])
 
   async function handleSave() {
     if (saving) return
     setSaving(true)
     setError("")
     try {
-      await onSave({ timezone: timezoneValue, colorTheme, language: languageValue })
+      await onSave({ timezone: timezoneValue, colorTheme: colorThemeValue, language: languageValue })
       await studentI18n.changeLanguage(languageValue)
       onOpenChange(false)
     } catch (err) {
@@ -83,49 +86,35 @@ export function StudentSettingsDialog({ open, onOpenChange, timezone, colorTheme
         <div className="mt-5 flex flex-col gap-4">
           <label className="block">
             <span className="text-xs text-muted-foreground">{t("settings.timezone")}</span>
-            <select
+            <GlassSelect
               value={timezoneValue}
-              onChange={(e) => setTimezoneValue(e.target.value)}
+              onChange={setTimezoneValue}
+              options={timeZoneOptionsWith(timezoneValue)}
               disabled={saving}
-              className={`${glassSelectCls} mt-1.5`}
-            >
-              {timeZoneOptionsWith(timezoneValue).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              className="mt-1.5"
+            />
           </label>
 
           <label className="block">
             <span className="text-xs text-muted-foreground">{t("settings.language")}</span>
-            <select
+            <GlassSelect
               value={languageValue}
-              onChange={(e) => setLanguageValue(e.target.value)}
+              onChange={setLanguageValue}
+              options={LANGUAGE_OPTIONS}
               disabled={saving}
-              className={`${glassSelectCls} mt-1.5`}
-            >
-              {LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              className="mt-1.5"
+            />
           </label>
 
           <label className="block">
             <span className="text-xs text-muted-foreground">{t("settings.colorTheme")}</span>
-            <select
-              value={colorTheme}
-              disabled
-              className={`${glassSelectCls} mt-1.5`}
-            >
-              {colorThemeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <GlassSelect
+              value={colorThemeValue}
+              onChange={setColorThemeValue}
+              options={colorThemeOptions}
+              disabled={saving}
+              className="mt-1.5"
+            />
           </label>
 
           {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}

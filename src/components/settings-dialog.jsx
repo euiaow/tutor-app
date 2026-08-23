@@ -8,16 +8,14 @@ import {
   TeacherModalFooter,
   TeacherCancelBtn,
   TeacherSaveBtn,
+  TeacherSelect,
   Field,
-  teacherInputCls,
 } from "@/components/teacher/theme-ui"
 import { GlassDialog, GlassDialogContent, GlassDialogTitle, GlassDialogDescription } from "@/components/glass-dialog"
 import { TIME_ZONE_OPTIONS, getDeviceTimeZone } from "@/lib/timezone"
+import { THEME_REGISTRY } from "@/lib/themes"
 
-const COLOR_THEME_OPTIONS = [
-  { value: "pink", label: "Розовая (учительская)" },
-  { value: "amber", label: "Янтарная (ученическая)" },
-]
+const COLOR_THEME_OPTIONS = THEME_REGISTRY.map((theme) => ({ value: theme.id, label: theme.label }))
 
 const glassSelectCls =
   "glass-inset h-11 w-full rounded-2xl px-3.5 text-sm font-medium text-foreground outline-none transition-all focus:ring-4 focus:ring-primary/15 disabled:opacity-50"
@@ -83,18 +81,12 @@ export function SettingsDialog({ variant, open, onOpenChange, timezone, colorThe
 
           <div className="mt-5 flex flex-col gap-4">
             <Field label="Часовой пояс">
-              <select
+              <TeacherSelect
                 value={timezoneValue}
-                onChange={(e) => setTimezoneValue(e.target.value)}
+                onChange={setTimezoneValue}
+                options={timeZoneOptionsWith(timezoneValue)}
                 disabled={saving}
-                className={teacherInputCls}
-              >
-                {timeZoneOptionsWith(timezoneValue).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              />
               <p className="mt-2 text-xs text-muted-foreground">
                 Обрати внимание: сам Google Calendar показывает время по часовому поясу, заданному в настройках
                 твоего Google-аккаунта, а не по часовому поясу, выбранному здесь. Чтобы поменять его: откройте{" "}
@@ -111,18 +103,12 @@ export function SettingsDialog({ variant, open, onOpenChange, timezone, colorThe
             </Field>
 
             <Field label="Цветовая тема">
-              <select
+              <TeacherSelect
                 value={colorThemeValue}
-                onChange={(e) => setColorThemeValue(e.target.value)}
+                onChange={setColorThemeValue}
+                options={COLOR_THEME_OPTIONS}
                 disabled={saving}
-                className={teacherInputCls}
-              >
-                {COLOR_THEME_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              />
             </Field>
 
             {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}

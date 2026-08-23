@@ -51,13 +51,23 @@ function createUpcomingDraft(studentId, teacherId, slotIndex, date, durationMinu
 }
 
 // Buckets every existing "upcoming" lesson doc by which schedule slot it
-// belongs to (legacy docs predating multi-slot support have no slotIndex
-// field and are treated as slot 0). Only the first doc found per slot is
-// kept — there should never be more than one, but this stays defensive.
+// belongs to. Only the first doc found per slot is kept — there should
+// never be more than one, but this stays defensive. A doc with no real
+// numeric slotIndex (an extra lesson, or a group-lesson mirror — see
+// core/groups.js) is skipped entirely rather than defaulting into slot 0:
+// it used to default there, which meant a single extra lesson could
+// silently occupy slot 0's bucket and block ensureUpcomingLesson from ever
+// creating that slot's actual recurring draft. Harmless while extra lessons
+// were rare; became a guaranteed collision once every group lesson mirror
+// (one per week, per member) started landing in this same collection with
+// slotIndex: null.
 function bucketUpcomingBySlot(snapshot) {
   const bySlot = new Map()
   for (const doc of snapshot.docs) {
-    const slotIndex = typeof doc.data().slotIndex === "number" ? doc.data().slotIndex : 0
+    const slotIndex = doc.data().slotIndex
+    if (typeof slotIndex !== "number") {
+      continue
+    }
     if (!bySlot.has(slotIndex)) {
       bySlot.set(slotIndex, doc)
     }
@@ -546,6 +556,26 @@ function assertRescheduleActor(value) {
   }
 }
 
+// A group-lesson mirror (see core/groups.js) is a real students/{id}/lessons
+// doc, so it's structurally reachable through every individual single-lesson
+// entry point (bot "перенести"/"отменить" flows included) — but rescheduling
+// or cancelling just ONE member's copy would desync it from the rest of the
+// group and from the one shared Calendar event, and a propose/confirm
+// handshake makes no sense for a class taught to several people at once.
+// Per explicit product decision, reschedule/cancel for a group lesson is a
+// teacher-only, immediate, whole-group action — core/groups.js's
+// rescheduleGroupLesson/cancelGroupLesson, never these single-mirror
+// functions. Guarding here (not just in the UI) protects every caller at
+// once, bot included.
+function assertNotGroupMirror(lesson) {
+  if (lesson?.isGroupLesson) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Перенос и отмена группового занятия выполняются только преподавателем, для всей группы сразу",
+    )
+  }
+}
+
 // A one-off exception for a single lesson — the recurring `schedule` on the
 // student doc is left untouched. `initiator` records who proposed, so the
 // *other* side is the one who has to confirm (see confirmReschedule).
@@ -567,6 +597,7 @@ async function proposeReschedule(studentId, lessonId, proposedDate, initiator) {
     throw new HttpsError("not-found", "Урок не найден")
   }
   const lesson = snapshot.data()
+  assertNotGroupMirror(lesson)
 
   const rescheduleStatus = initiator === "teacher" ? "pending_student" : "pending_teacher"
 
@@ -801,6 +832,7 @@ async function proposeCancellation(studentId, lessonId, initiator) {
     throw new HttpsError("not-found", "Урок не найден")
   }
   const lesson = snapshot.data()
+  assertNotGroupMirror(lesson)
 
   const cancellationStatus = initiator === "teacher" ? "pending_student" : "pending_teacher"
 
@@ -965,6 +997,7 @@ async function cancelLessonDirectly(studentId, lessonId) {
     throw new HttpsError("not-found", "Урок не найден")
   }
   const lesson = snapshot.data()
+  assertNotGroupMirror(lesson)
 
   const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
   const student = studentSnapshot.exists ? studentSnapshot.data() : null
@@ -1077,84 +1110,12 @@ async function uploadHomeworkFile(studentId, buffer, contentType) {
 // arrayUnion() element, so each file entry gets a concrete Timestamp
 // instead — only the top-level submission.submittedAt uses the sentinel.
 async function recordHomeworkSubmission(studentId, fileUrl) {
-  // Group lessons (session 17 Phase 4) — a bot-sent photo (or the
-  // website's own submit button, same call site) must attach to whichever
-  // is actually sooner: this student's next individual lesson, or the
-  // next group lesson they're a member of. Required lazily (not at module
-  // top) purely to match this file's own existing lazy-require convention
-  // for cross-module calls, not because of an actual circular dependency.
-  const { findNearestUpcomingGroupLessonForStudent, groupLessonsRef, groupsCollection } = require("./groups")
-
-  // getNearestUpcomingLesson first so a submission attaches to an extra
-  // (isExtraLesson) lesson when one is nearer than the next scheduled slot
-  // — ensureUpcomingLesson is blind to those (see its own comment). Falls
-  // back to ensureUpcomingLesson (find-or-create) only when there's no
-  // upcoming lesson doc of any kind yet, same as before this fix.
-  const [nearest, nearestGroup] = await Promise.all([
-    getNearestUpcomingLesson(studentId),
-    findNearestUpcomingGroupLessonForStudent(studentId),
-  ])
-
-  const nearestIndividualDate = nearest ? (nearest.rescheduledDate?.toDate?.() ?? nearest.date?.toDate?.() ?? null) : null
-  const useGroup = Boolean(
-    nearestGroup && (!nearestIndividualDate || nearestGroup.effectiveDate < nearestIndividualDate),
-  )
-
-  if (useGroup) {
-    await groupLessonsRef(nearestGroup.teacherId, nearestGroup.groupId)
-      .doc(nearestGroup.lessonId)
-      .update({
-        [`attendees.${studentId}.submissionFiles`]: FieldValue.arrayUnion({ url: fileUrl, submittedAt: Timestamp.now() }),
-      })
-
-    logger.info("recordHomeworkSubmission: submission recorded to group lesson", {
-      studentId,
-      groupId: nearestGroup.groupId,
-      lessonId: nearestGroup.lessonId,
-    })
-
-    const [studentSnapshot, groupSnapshot] = await Promise.all([
-      db.collection(STUDENTS_COLLECTION).doc(studentId).get(),
-      groupsCollection(nearestGroup.teacherId).doc(nearestGroup.groupId).get(),
-    ])
-    const studentName = studentSnapshot.exists ? studentSnapshot.data().name ?? "Ученик" : "Ученик"
-    const groupName = groupSnapshot.exists ? groupSnapshot.data().name ?? "" : ""
-
-    const [teacherNotifResult, studentNotifResult] = await Promise.allSettled([
-      createNotification({
-        target: "teacher",
-        studentId,
-        type: "homework_submitted",
-        text: () => `📎 ${studentName} прислал(а) домашку к групповому занятию «${groupName}»`,
-        lessonId: nearestGroup.lessonId,
-        teacherId: nearestGroup.teacherId,
-      }),
-      createNotification({
-        target: "student",
-        studentId,
-        type: "homework_received",
-        params: {},
-        lessonId: nearestGroup.lessonId,
-        teacherId: nearestGroup.teacherId,
-      }),
-    ])
-    if (teacherNotifResult.status === "rejected") {
-      logger.error("recordHomeworkSubmission: teacher notification failed (group)", {
-        studentId,
-        groupId: nearestGroup.groupId,
-        error: teacherNotifResult.reason,
-      })
-    }
-    if (studentNotifResult.status === "rejected") {
-      logger.error("recordHomeworkSubmission: student notification failed (group)", {
-        studentId,
-        groupId: nearestGroup.groupId,
-        error: studentNotifResult.reason,
-      })
-    }
-
-    return nearestGroup.lessonId
-  }
+  // getNearestUpcomingLesson already sees every upcoming doc regardless of
+  // shape — including a group lesson's mirror (core/groups.js), which lives
+  // in this exact same students/{id}/lessons collection and is otherwise
+  // indistinguishable from this student's own lesson for this purpose. No
+  // separate "check the group side too" branch needed any more.
+  const nearest = await getNearestUpcomingLesson(studentId)
 
   const lessonId = nearest ? nearest.id : await ensureUpcomingLesson(studentId)
 
@@ -1219,6 +1180,8 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
 }
 
 module.exports = {
+  lessonsRef,
+  createUpcomingDraft,
   ensureUpcomingLesson,
   getNearestUpcomingLesson,
   syncUpcomingLessonToSchedule,

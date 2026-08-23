@@ -46,6 +46,7 @@ export function AddPaymentForm({ studentId, onDone }) {
           placeholder="оплата за август"
           className={teacherInputCls}
         />
+        <p className="mt-1.5 text-xs text-muted-foreground">Заметка видна ученику в его личном кабинете</p>
       </Field>
 
       {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}

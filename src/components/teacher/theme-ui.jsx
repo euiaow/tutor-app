@@ -131,13 +131,12 @@ export function TeacherDialogContent({ className, children, wide = false, elevat
   // path for every teacher dialog at once, instead of the previous
   // approach of trying to detect-and-undo the jump after the fact.
   const popupRef = useRef(null)
-  // Multi-tenancy Phase 4a: "teacher-theme" (pink) or "amber-scope" (the
-  // teacher-scoped token set with the student page's own hues) — whichever
-  // the teacher picked in Settings. Portaled elements need this applied
-  // directly to themselves (see index.css's .teacher-theme doc comment),
-  // not just inherited from an ancestor, since a Portal moves them out of
+  // Whichever theme (src/lib/themes.js) the teacher picked in Settings, as
+  // its "{cssClassName} themed" pair (see index.css's `.themed` derivation
+  // block). Portaled elements need this applied directly to themselves, not
+  // just inherited from an ancestor, since a Portal moves them out of
   // TeacherDashboard's DOM subtree entirely.
-  const themeClass = useThemeClass() || "teacher-theme"
+  const themeClass = useThemeClass() || "teacher-theme themed"
 
   return (
     <DialogPrimitive.Portal>
@@ -243,7 +242,7 @@ export function TeacherPopoverTrigger(props) {
 
 export function TeacherPopoverContent({ className, children, align = "center", sideOffset = 8, ...props }) {
   const popupRef = useRef(null)
-  const themeClass = useThemeClass() || "teacher-theme"
+  const themeClass = useThemeClass() || "teacher-theme themed"
 
   return (
     <PopoverPrimitive.Portal>

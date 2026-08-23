@@ -2,6 +2,178 @@
 
 ## What works (per commit history + code present)
 
+- **Session 30 — quick polish on session 29's group work** — group hourly
+  rate now sums member rates (was a min–max range); student's own subject
+  row is now a tag pill matching the group's; group program's name/percent/
+  actions row moved above the topic tiles with a real progress bar, bold;
+  group's "Следующие занятия" rebuilt to match the student page exactly
+  (real occurrence as a full `UpcomingLessonCard`, further ones as
+  `VirtualLessonRow` placeholders) — a real circular-import risk between
+  `upcoming-lesson-card.jsx` and `groups-section.jsx` was caught and fixed
+  by relocating `GroupRescheduleDialog`/`GroupCancelDialog` into
+  `group-lesson-dialog.jsx`. Frontend-only, hosting redeployed. Full
+  detail: `activeContext.md`.
+- **Session 29 — group lessons collapsed to one card in "Ближайшие уроки"
+  (was N per-member duplicates), group programs deduplicated against
+  individual assignments, group detail page redesigned to match the
+  student page, group deletion now cascades program cleanup** — direct
+  follow-up closing gaps in session 28's rearchitecture. `TeacherDashboard.jsx`
+  now collapses group lesson mirrors by `groupLessonKey` into one synthetic
+  card before rendering (was showing one row per attendee). A student
+  individually assigned a subject AND in a group teaching it no longer gets
+  two diverging program docs — the group's program is no longer a separate
+  stored copy, just a `programTemplateId` pointer; assigning it reuses a
+  member's existing program (tagged, not duplicated) or creates one fresh,
+  and the group's displayed progress is computed by intersecting every
+  linked member's own real program at read time — marking a topic covered
+  from the group view now genuinely reaches each student's own progress
+  (it never did before). Deleting a group now unlinks/deletes the programs
+  it assigned (only the narrower "delete program" path did this before).
+  Group detail page: `grid md:grid-cols-3` info-panel-plus-program layout
+  matching the student row's own, every sub-block now bordered (was
+  blending into a plain white background). Both the lesson-mirror pipeline
+  and the program dedup/propagation pipeline verified via deployed-and-
+  deleted diagnostics against live throwaway data. Deployed (functions,
+  hosting). Full detail: `activeContext.md`.
+- **Session 28 — group-program delete root-caused (stale pre-fix data, not
+  a bug) + group lessons rearchitected onto real per-student lesson mirrors**
+  — the group-program cascade-delete fix from session 24 was confirmed
+  correct via production logs; the 4 programs the user saw not detaching
+  simply predated that fix's deploy time by ~20 minutes in the same
+  session, nothing to fix. The bigger change: a group lesson is no longer
+  its own doc under `teachers/{uid}/groups/{groupId}/lessons` — it's now
+  one real `students/{id}/lessons` mirror doc per member (tagged
+  `isGroupLesson`/`groupId`/`groupLessonKey`), so it shows up for free in
+  every existing per-student mechanism (teacher's "Ближайшие уроки" feed,
+  all 3 reminder tiers, weekly income, the student's own next-lesson/
+  history/materials) instead of a parallel group-specific implementation of
+  each. Reschedule/cancel are teacher-only, immediate, whole-group actions
+  (no propose/confirm dance) — individual-lesson entry points now refuse to
+  touch a group mirror (`assertNotGroupMirror`) so a student's own bot
+  commands can never desync it. Topic/assignment/material edits reuse the
+  exact same individual-lesson functions, fanned out once per member.
+  Removed as redundant: `functions/reminders.js`'s parallel group-reminder
+  loop (~150 lines), `subscribeToIncomeGroupLessons`/
+  `computeWeeklyGroupIncome` (finance-section.jsx), `StudentDashboard.jsx`'s
+  dual "individual vs group nearest lesson" merge, and 4 of 7 group-specific
+  notification message builders. Verified for real via a deployed-and-
+  deleted diagnostic exercising create/reschedule/complete/extra/cancel
+  against live throwaway data — all correct. Deployed (functions, firestore
+  indexes, hosting). Full detail: `activeContext.md`.
+- **Session 27** — zone1 nudged further left again (`right-[230px]`, same
+  direction session 26 established), and the sticker-workshop modal's
+  placement picker enlarged to be the "коллекция" tab's dominant visual
+  element (student places up to ~5 stickers) — a new `MINI_DASHBOARD_SCALE`
+  CSS-transform wrapper scales the whole hand-drawn mockup + zone markers
+  up 1.6× as one unit rather than hand-multiplying every authored pixel
+  value, the inventory grid next to it stopped growing to compete for
+  space, and the old small `maxHeight:300` scroll cap became a generous
+  `72vh`. Full detail: `activeContext.md`.
+- **Sticker positions corrected again after real user testing, plus a real
+  stacking-order bug root-caused (session 26)** — direct follow-up to
+  session 25, this time verified against the actual deployed page (not
+  screenshots) by the user. zone1/zone2/zone3 offsets tightened again
+  (zone1's clearance had been sized against the header's icons but the
+  "Посмотреть все уроки" link below it is actually wider; zone2 now sits
+  almost entirely inside its card instead of hanging past the edge; zone3
+  pushed further up/right to guarantee it never reaches the "Русский
+  язык" title or "Заполнить" button, which share nearly this card's whole
+  height with no safe gap between them). **Real bug found and fixed**:
+  `zone4`/`zone5` could land on a plain `CurriculumProgressCard` instead
+  of `ExamRadar` whenever a student's *first* program happened to have no
+  goal set — fixed by computing which program is the first to actually
+  render `ExamRadar` (`firstExamRadarIndex`) rather than assuming index 0;
+  `CurriculumProgressCard` lost its decoration entirely, by explicit
+  instruction. **Real stacking-order bug found and fixed**: a
+  `position:relative` card with no `z-index` of its own can't win a
+  stacking comparison against a later DOM sibling no matter what z-index
+  its own overflowing decoration child carries — added `z-10` to
+  `ExamRadar`'s own section so zone5's bottom overlap actually paints over
+  the next card instead of disappearing behind it. Every zone's position
+  was also unified to one value across all breakpoints (mobile/desktop
+  `sm:` splits removed), per the user's own direction after confirming
+  session 25's mobile-specific offsets already looked right on a real
+  phone. **New**: a sticker can now only occupy one zone at a time —
+  placing it somewhere new automatically clears any other zone that
+  already held it (`sticker-workshop-modal.jsx`'s `placeArmed`), where
+  previously nothing stopped the same sticker being placed in several
+  zones at once. **Also this session (separate, mid-session request): the
+  Sticker Workshop modal itself gained a real mobile layout** — the cases
+  grid and case-detail view had no responsive behavior at all (fixed
+  3-column / two-column-side-by-side), now single-column below 640px via
+  a new reactive `useIsMobile` hook (a real `resize` listener, unlike the
+  file's two pre-existing one-time-only `window.innerWidth` checks used
+  for decorative header art). The already-responsive "коллекция" tab was
+  explicitly left untouched. Full detail: `activeContext.md`.
+- **Session 25** — sticker positions first corrected against a reference
+  screenshot (new anchor scheme, zone3 moved onto `GoalCard`, real
+  `truncate`-class text-wrap bug fixed, placement picker rebuilt with a
+  real `MiniDashboard` mockup instead of abstract labels). Superseded in
+  several specifics by session 26 after real-device testing — see that
+  entry above. Full detail: `changelog/2026-08-august.md`.
+- **Group lessons: 11-item punch-list pass — visual polish, custom dropdowns
+  everywhere, real cascade-delete bug fix, merged lesson-card layout (both
+  individual and group), program progress + progress bar added to the group
+  lesson dialog, "Следующие уроки" moved to its own button+dialog (matching
+  the student row), extra lessons can now target a group, and group lessons
+  now show up in the top "Ближайшие уроки" panel (session 24)** — member
+  pills got a visible border; "+ Добавить программу" left-aligned (was a
+  bare `<button>` stretching + centering by default); every remaining
+  native `<select>` for programs/schedule-day/extra-lesson-student is now
+  `TeacherSelect`, in both Группы and Ученики. Real bug fix: deleting a
+  group's own program now cascades to delete each member's individual copy
+  too (`sourceGroupProgramId` stamped at fan-out time, queried at delete
+  time) — previously those copies were orphaned. `HomeworkLessonDialog` and
+  the new `GroupLessonDialog` now share one merged "Тема урока и задание"
+  section with a single save button; the group dialog gained a program
+  topic-picker, a covered-material checklist for completing a lesson, and a
+  real `ProgressBar`. New backend `createExtraGroupLesson` (mirrors
+  `createExtraLesson`: Calendar event via `colorIdForSubject`, a new
+  `group_extra_lesson_assigned` notification per member) lets extra lessons
+  target a whole group. New `subscribeToUpcomingGroupLessonsForTeacher`
+  fills the gap where group lessons never appeared in the dashboard's top
+  upcoming-lessons panel. Verified for real (not just built): a temporary
+  diagnostic function confirmed both the cascade-delete and the extra-
+  group-lesson creation against live throwaway data, then was deleted.
+  Deployed (functions + hosting). Full detail: `activeContext.md`.
+- **Six independent follow-ups: student Finance section, custom Settings
+  dropdowns + a root-caused autofocus-glow fix, Group 69 art pinned to the
+  sticker button, auto-pin the registration-link message on both bots
+  (session 23)** — plus analysis-only groundwork (no code) for a future VK
+  multi-tenancy split and a Google Calendar OAuth-warning fix, both
+  explicitly deferred per the user's own instruction. New bilingual
+  `StudentFinanceSection` (paid-lesson count + the same `balanceLedger`
+  history the teacher sees, read-only) — **needs a new Firestore rule
+  published before it'll show data**, see `activeContext.md`. New
+  `GlassSelect` (student-side parallel of the existing `TeacherSelect`)
+  wired into both Settings dialogs' timezone/language fields; the
+  "orange glow on open" complaint was root-caused to a missing
+  `initialFocus` on the student `GlassDialog`'s Popup (same bug/fix
+  `TeacherDialogContent` already had) rather than just stripping ring
+  classes. `Group 69.png` now pinned to the sticker-workshop button's
+  right edge, height-scaled (not fixed-width) so it shrinks/stretches with
+  the button. Telegram + VK now pin their own `PIN_SAVED` registration
+  message right after sending it (`pinChatMessage`/`messages.pin`,
+  best-effort, never affects registration success). Deployed
+  (`telegramWebhook`, `vkWebhook`, hosting). Full detail:
+  `changelog/2026-08-august.md`.
+- **Group lessons follow-up: button placement, a real missing index, group-
+  level curriculum programs (session 22)** — "+ Создать группу" now lives
+  in "Ученики" until the first group exists, then moves to "Группы"
+  (`groups` list lifted from `GroupsSection` into `TeacherDashboard.jsx`).
+  Found and fixed 2 real bugs via a live diagnostic (not guessed): a
+  missing composite index for the finance income query (`status ASC,
+  teacherId ASC` — reversed field order from the existing individual-lesson
+  index), and a completely missing Firestore Rule for the new
+  `teachers/{uid}/groups/{groupId}/programs` subcollection (**still needs
+  the user to add it — text in `activeContext.md`**). New: group-level
+  curriculum programs (`assignGroupProgram`/`reassignGroupProgram`/
+  `deleteGroupProgram`) — a shared/common progress checklist on the group
+  itself, plus a real fan-out that assigns the same template to every
+  member individually (reuses `assignCurriculumTemplate` unmodified, so
+  each student's own dashboard keeps working exactly as before). Verified
+  end-to-end via a real deployed diagnostic against actual Firestore data,
+  not just a clean build. Full detail: `changelog/2026-08-august.md`.
 - **Placed decoration stickers now render on the live student dashboard
   (session 21)** — closes the gap open since session 17 (placement wrote
   real data via `saveDecoration` but nothing outside the sticker-workshop
@@ -38,172 +210,20 @@
   screenshot's proportions plus the real JSX structure, not pixel-measured
   against a running page; flagged for a real-DevTools check next session,
   particularly at desktop widths between ~640-810px where the page's side
-  margins get tight. Full detail: `activeContext.md`.
-- **Sticker Workshop's last missing case artwork closed (session 20)** —
-  session 18 left MYTHIC (the 3rd seeded case) with a plain text-label
-  fallback because no matching lettering asset existed in the project;
-  the user corrected this — the design's 3rd case slot has always used a
-  *photo-card* treatment (bordered, `object-fit:cover`), not the SLAY/
-  LEGACY transparent-lettering style, specifically because its source
-  asset (`reels-lettering.png`) isn't stylized text art. That treatment
-  belongs to whichever case fills the 3rd slot, independent of the
-  design's original demo name ("REELS"). Wired it in as
-  `src/assets/gamification/mythic-lettering.png` for MYTHIC, using the
-  design's exact photo-card positioning (distinct card-vs-detail
-  dimensions). `CaseTitle` now supports a `type: "sticker" | "photo"` per
-  `CASE_LETTERING` entry plus a `variant: "card" | "detail"` prop so both
-  visual treatments coexist. All 3 seeded cases now show real art — no
-  case names are missing artwork anymore. Deployed hosting only. Full
-  detail: `activeContext.md`.
-- **Group lessons — all 5 phases shipped and deployed in one session
-  (session 19)**: data model (`teachers/{uid}/groups`+`.../lessons`),
-  teacher CRUD/management UI ("Группы" panel under "Ученики"), per-slot
-  draft generation + Google Calendar sync (one event per slot, not per
-  member), completing a group lesson (loops every attendee through the
-  same `deductLessonFromBalance`/`markTopicsCovered`/`createNotification`
-  building blocks individual lessons use), student-side "next lesson"/
-  materials/history merging (individual vs. group, whichever's sooner —
-  no participant names shown, no reschedule/cancel buttons for a student),
-  bot/website homework attach picks whichever lesson is nearer, group-
-  aware reminders (always a separate notification from that student's own
-  individual-lesson reminder), and weekly income summed per attendee.
-  Reused rather than duplicated wherever the task asked: extracted a
-  shared `schedule-slots-editor.jsx` out of the student edit form,
-  extracted a shared Calendar event-diffing loop (`syncSlotEvents`) out of
-  the student sync function, exported 3 previously-internal
-  `googleCalendar.js` helpers instead of reimplementing them, reused
-  `ATTENDANCE_OPTIONS`/`RATING_OPTIONS`/`ToggleGroup` from
-  `HomeworkLessonDialog`. **Verified end-to-end against real deployed
-  code** (not just built) via a temporary diagnostic Cloud Function using 2
-  throwaway students — create→generate→reschedule→cancel→regenerate→
-  complete-with-per-attendee-results→balance actually deducted per
-  attendee→next draft regenerated, all green, then cleaned up. One new
-  Firestore composite index deployed (`lessons` collectionGroup,
-  `memberIds array-contains` + `status ==`). **Firestore Rules for the 2
-  new subcollections still need to be added by the user** (same
-  `permission-denied`-until-Rules-published gap session 17 hit for
-  `stickerSets`) — exact rule text and the one known disclosed scope gap
-  (`LessonHistoryDialog`'s full-history view isn't merged, only the
-  3-item preview is) are in `activeContext.md`.
-- **Sticker Workshop modal visual polish pass, checked against the design
-  canvas element-by-element (session 18)** — full-width 3-column case
-  grid (`repeat(3,minmax(0,1fr))`, was an `auto-fill` grid that packed 4-5
-  narrow columns instead of 3 wide ones); case titles render as photo
-  lettering (`slay-lettering.png`/`legacy-lettering.png`, copied from
-  `roulette-design/` into `src/assets/gamification/`) for the 2 of 3 seed
-  cases that have matching art, with an explicit text fallback (not a
-  placeholder image) for MYTHIC, whose lettering doesn't exist yet
-  anywhere in the project; header hero-cat/arcade-title enlarged and
-  repositioned to the design's actual coordinates; a `preloadImages()` +
-  `assetsReady` gate now blocks the modal's real content behind a
-  pixel-art loading screen (`LoadingScreen`/`PixelCat`, hand-animated
-  rainbow-hued running cat) until every shared image resolves (or a
-  4s timeout fallback fires); the case-opening reel is now a genuine
-  3-phase spin (accelerate → linear-speed plateau → decelerate to the
-  exact server result) at double the previous duration (9s), replacing
-  the old single-curve `cubic-bezier` ease-out. Verified only via `npx
-  vite build` + `npx eslint` (clean, zero new violations) — no live
-  browser render this session either. Full detail: `activeContext.md`.
-- **Gamification's cases/collection/placement UI fully migrated to a
-  designed arcade-cabinet fullscreen modal, real data end-to-end (session
-  17)** — replaces the session-15 stub UI (plain grid + basic dialog) with
-  a hand-ported React version of a Claude Design canvas export
-  (`src/components/student/sticker-workshop-modal.jsx`, opened via
-  `sticker-workshop-button.jsx`, rendered through `createPortal` at
-  `z-index:1000`, deliberately outside the app's own `GlassDialog`
-  system). Every screen reads real Firestore data (`stickerSets`/
-  inventory/decoration via the existing `GamificationProvider`) and the
-  case-opening reel only ever lands on the actual `openCase` Cloud
-  Function result — the server call resolves *before* the reel/strip is
-  even built, so there's no client-random value the animation could
-  disagree with. The 3 old dashed "+" placeholder zones on the live
-  dashboard (`sticker-zone.jsx`) were deleted outright per the task's
-  instruction — placement now only happens inside the modal's own
-  screenshot-based zone picker; nothing currently renders a placed sticker
-  back onto the live dashboard page (known gap, not an oversight — see
-  `activeContext.md`). Deliberately Russian-only (source design has no
-  i18n), unlike the rest of the bilingual (session 16) student dashboard —
-  an explicit, scoped exception, not a regression. Verified only via a
-  clean `npx vite build`; no live browser click-through this session (no
-  DevTools automation available in this environment). Full detail:
-  `activeContext.md`.
-- **Student dashboard English localization (session 16)** —
-  react-i18next + a dedicated `studentI18n` instance, isolated from the
-  teacher panel (no new dependency or wrapping there at all). Language
-  read from `students/{id}.language` (default "ru"), now editable via a
-  real Settings `<select>` (added mid-session — phase 1 deliberately
-  shipped without one). Every student-page component translated;
-  `formatLessonDateTime`/`formatRelativeTime` gained an optional
-  `locale` param (default unchanged, so every teacher-side call site is
-  byte-for-byte unaffected). Typical subjects (`STATIC_SUBJECTS`, 10
-  entries) and the two seeded exam-type unit labels translate via small
-  dictionaries (`src/locales/subjectTranslations.js`/
-  `examUnitTranslations.js`); a teacher's free-form custom subject/unit
-  is never auto-translated. Student notifications are now bilingual
-  **site and bots both** — `notificationMessages.js` (CommonJS `core/` +
-  ESM `lib/` mirror, same pairing shape as `schedule.js`/`subjects.js`)
-  builds text from `type`+`params` at render/send time instead of a
-  frozen string; `createNotification`'s `target: "teacher"` path is
-  completely unchanged. See [[activeContext]] for the full breakdown
-  (13+ call sites converted, the `material_added` dual-phrasing wrinkle,
-  `mapNotificationDoc` missing the new `params` field — same recurring
-  "mapper's explicit field list is the real gate" bug class again).
-- **Real timezone/notification-delivery bug found and fixed (session
-  16)** — `isSlotEqual` (`functions/index.js`, gates whether the
-  `syncUpcomingLessonOnScheduleChange` trigger recomputes an existing
-  upcoming lesson's `date`) never compared `timeZone`, only day/time/
-  duration — so a schedule re-save that only corrected a slot's missing
-  timezone anchor was judged "no change" and silently never recomputed
-  the lesson date, even though the UI made it look like re-saving should
-  fix it. Found via live Firestore data (a temporary guarded Cloud
-  Function, deployed/invoked/deleted, not guesswork) and verified
-  end-to-end on the actual affected student before cleanup. See
-  [[activeContext]].
-- **Gamification MVP — sticker cases (session 15), stub art only** —
-  students open a case (6 coins default) for a server-weighted-random
-  sticker (`openCase` Cloud Function, `functions/core/gamification.js`);
-  duplicates convert to +2 coins instead of a second copy. Inventory grid
-  + 3 fixed decoration zones on `StudentDashboard.jsx`. Verified
-  end-to-end against the real deployed backend. **Not yet live for real
-  students — Firestore Rules for the 3 new collections not yet
-  published.** Full detail: `changelog/2026-08-august.md`.
-- **Real fixes for two bugs that looked fixed in an earlier pass but
-  weren't (session 15)** — video call button (`mapLessonDoc` dropping
-  `teacherId`) and schedule-time-vs-timezone display (anchor and display
-  timezone were accidentally the same value). Full detail:
-  `changelog/2026-08-august.md`.
-- Dialog backdrop/animation consistency pass, `TeacherSelect` designed
-  dropdown (session 15) — full detail: `changelog/2026-08-august.md`.
-- **Session 14** — per-schedule-slot subject binding (`scheduleSlots[]`
-  elements can carry their own `subject`, falls back to the student's
-  first subject when unset; drives Calendar colors, per-lesson subject
-  tag, auto-selected homework program), language-level (A1–C2) topic
-  progression (reuses the existing `minScoreRequired` mechanic, no radar/
-  backend changes), designed `TeacherPopover` topic/prototype picker
-  replacing a plain `<select>`. Full detail: `changelog/2026-08-august.md`.
-- **Session 13** — multi-program support (a student can hold several
-  curriculum programs at once, `students/{id}/programs/{programId}`;
-  pre-session-13 students have no `programs/` docs yet, migration script
-  prepared but not run), free-form exam types + subjects (replaced the
-  hardcoded ЕГЭ/ОГЭ/Школа enum and 2-subject list with
-  `teachers/{uid}/examTypes` + a hashed-color subject palette),
-  transactional `confirmReschedule`/`confirmCancellation` (race fix via
-  `db.runTransaction`), client-side video-call-availability window
-  (replaced a server flag + scheduler with a plain time comparison). Full
-  detail: `changelog/2026-08-august.md`.
-- **Session 12** — multi-tenancy Phase 4a (per-user timezone/color-theme
-  Settings; fixed a hardcoded-single-teacher login bug blocking every
-  teacher but the first), **Firestore Rules published, no longer a
-  permissive placeholder** (surfaced and fixed a tenant-isolation bug
-  class — six list/collectionGroup queries had no explicit `teacherId`
-  filter; see [[systemPatterns]] for the reusable pattern), full
-  timezone-handling rewrite (every date interpreted/displayed in the
-  relevant *person's* own saved timezone, `Europe/Moscow` only as a
-  no-value fallback — see [[systemPatterns]] for the conversion helpers),
-  plus an extra-lesson Calendar-sync bug fix, `ExamRadar`'s `no_data`
-  status, and a curriculum topic picker. Full detail:
-  `changelog/2026-08-august.md`; scope boundary in `projectbrief.md`
-  updated to reflect multi-tenancy.
+  margins get tight. Full detail: `changelog/2026-08-august.md`.
+- Sessions 12-20 (multi-tenancy Phase 4a + Firestore Rules published,
+  fixing a real tenant-isolation bug class along the way — see
+  [[systemPatterns]]; full timezone-handling rewrite, same reasoning;
+  multi-program support + migration run; free-form exam types/subjects;
+  per-slot subject binding + language-level topic progression; student-page
+  i18n with bilingual site+bot notifications, plus a real `isSlotEqual`/
+  timezone bug found via live diagnosis; gamification MVP through Sticker
+  Workshop's full arcade-cabinet UI, visual polish pass, and MYTHIC case
+  art; group lessons v1, all 5 phases in one pass) — full detail archived
+  in `changelog/2026-08-august.md`. All still working per code present;
+  superseded specifics (group lessons v1 → sessions 22-30's rearchitecture,
+  Sticker Workshop → session 21's live-dashboard rendering) noted where
+  relevant above.
 - Sessions 2-11 (teacher/student auth, weekly multi-slot schedules,
   homework/materials, reschedule/cancellation flows, Telegram+VK bots,
   reminders, Google Calendar sync, VK idempotency guard, unified
@@ -231,13 +251,15 @@
   re-saves that student's schedule once** (a no-op save is enough — the
   fix is in the trigger's diff check, not the data itself). Not
   backfilled proactively for every student. See [[activeContext]].
-- **Resolved session 21: placed decoration stickers now render on the live
-  dashboard** (was open since session 17's modal migration deleted the old
-  placeholder zones) — see "What works" above and `activeContext.md` for
-  the 5-zone implementation. Not yet confirmed against a real browser
-  render (no DevTools automation in this environment) — the exact zone
-  offsets are the loose end to check next session, not the rendering
-  mechanism itself.
+- **Resolved session 21**: placed decoration stickers now render live on
+  the dashboard (5 zones); positions were later corrected twice more
+  against real user testing (sessions 25-26) and should now be considered
+  accurate, not just "unconfirmed" — see `changelog/2026-08-august.md`
+  (session 21) and `activeContext.md` (sessions 25-26).
+- **From session 23, action required (status unconfirmed)**:
+  `students/{id}/balanceLedger` has no public read rule — the student
+  Finance section will `permission-denied` until one is published. Exact
+  rule text in `changelog/2026-08-august.md` (session 23 entry).
 - **Gamification's 3 collections (`stickerSets`, `students/{id}/inventory`,
   `students/{id}/decoration`) now have published Firestore Rules — plain
   `allow read: if true` on all three, confirmed session 17** (root cause

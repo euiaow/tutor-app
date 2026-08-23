@@ -158,7 +158,7 @@ async function deleteBotSessionsForStudent(studentId, student) {
   }
 }
 
-const VALID_COLOR_THEMES = new Set(["pink", "amber"])
+const { VALID_THEME_IDS: VALID_COLOR_THEMES } = require("./themes")
 const VALID_LANGUAGES = new Set(["ru", "en"])
 
 // Generic IANA-zone validity check (Intl throws RangeError for a bogus

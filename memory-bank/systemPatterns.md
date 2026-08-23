@@ -19,6 +19,10 @@ functions/                 Firebase Cloud Functions (Node, CommonJS)
     students.js              CRUD, deleteStudent (cleans up calendar+bots)
     lessons.js               upcoming-lesson lifecycle, homework, reschedule/
                               cancellation state machines, completeLesson
+    groups.js                group lessons + group curriculum programs — a
+                              group lesson is real per-member students/{id}/
+                              lessons mirror docs, NOT its own doc type (see
+                              "Group lessons: mirror-doc fan-out" below)
     schedule.js               normalizeScheduleSlots, getUpcomingLessonDates
     googleCalendar.js         sync schedule slots <-> calendar events
     googleAuth.js             OAuth client/token storage for the calendar
@@ -606,6 +610,92 @@ src/
   queryScope: "COLLECTION_GROUP"}]}`). Rule of thumb: a query filter on
   exactly one field with no `orderBy`/second field never needs a composite
   index entry.
+  **Confirmed again, the hard way, session 28**: this applies even to a
+  *bare* single-field equality filter with no other field at all (e.g.
+  `where("groupLessonKey", "==", key)` alone) — Firestore auto-indexes a
+  field per-*collection*, but a collectionGroup query over that same field
+  still needs an explicit `fieldOverrides` entry with `queryScope:
+  "COLLECTION_GROUP"`, or it 400s with "requires an index... not ready yet"
+  even under the Admin SDK (bypasses Rules, not index requirements). Caught
+  via a live diagnostic that failed until the fieldOverride was deployed
+  and had time to finish building (a few minutes, unlike composite indexes
+  which can take longer) — don't assume a freshly-deployed index is
+  query-ready immediately, poll/retry rather than treating the first
+  failure as a real bug.
+- **Group lessons: mirror-doc fan-out, not a separate doc type (session
+  28-30 rearchitecture — replaced an earlier, session-17/22 design that had
+  group lessons as their own docs under `teachers/{uid}/groups/{groupId}/
+  lessons`).** A group lesson is now one real `students/{studentId}/
+  lessons/{id}` doc per member — the *exact same* shape
+  `createUpcomingDraft` produces for an individual lesson — tagged
+  `isGroupLesson: true`, `groupId`, `groupLessonKey` (a fresh `randomUUID()`
+  tying one occurrence's N mirrors together; nothing else about it is a
+  real doc id, since there's no longer a single canonical "the" lesson).
+  Because a mirror is a completely ordinary lesson doc, every existing
+  per-student mechanism sees it for free with zero new code: the teacher's
+  "Ближайшие уроки" feed, all 3 reminder tiers, weekly income, the
+  student's own next-lesson/history/materials. Group-level teacher actions
+  (reschedule/cancel/complete/create-extra) are fan-out orchestration in
+  `core/groups.js`, keyed by `groupLessonKey` (`db.collectionGroup("lessons")
+  .where("groupLessonKey", "==", key)`), each updating every mirror plus
+  one shared Calendar event (all mirrors carry an identical copy of the
+  same `googleEventId`). Reschedule/cancel are teacher-only and immediate
+  (no propose/confirm handshake — a shared class time isn't something one
+  member can unilaterally renegotiate); the individual-lesson entry points
+  that *do* have a confirm handshake (`proposeReschedule`/
+  `proposeCancellation`/`cancelLessonDirectly`) refuse to touch a doc with
+  `isGroupLesson: true` (`assertNotGroupMirror`), so a student's own bot
+  "перенести"/"отменить" flow can never desync their mirror from the rest
+  of the group — this guard lives in `core/lessons.js` itself, protecting
+  every caller (bot included) at once rather than needing every UI entry
+  point individually audited. `slotIndex` on a mirror is always `null` (the
+  group's own recurring slot lives in a separate `groupSlotIndex` field) —
+  this was a real, previously-latent bug fix too:
+  `bucketUpcomingBySlot` used to default any non-numeric `slotIndex` into
+  bucket 0, which a single rare extra lesson could get away with but a
+  *weekly, guaranteed* group mirror could not — fixed to skip non-numeric
+  `slotIndex` entirely rather than default it.
+- **Group curriculum programs: tag-and-reuse, not a separate stored copy
+  (session 28-30, same rearchitecture wave).** A group's program used to be
+  its own doc under `teachers/{uid}/groups/{groupId}/programs` — a second,
+  independently-tracked copy that silently diverged from a member's own
+  individual assignment of the same subject, and whose "covered" toggles
+  never reached the student's real progress at all. Deleted entirely. A
+  group now just remembers `programTemplateId`; assigning it
+  (`assignGroupProgram`) reuses a member's existing program if they already
+  have one for that subject (tags it `sourceGroupId`, `createdByGroup:
+  false` — it's still fundamentally *their* data, survives the group being
+  deleted) or creates a fresh one via `assignCurriculumTemplate` (tagged
+  `createdByGroup: true` — exists *because of* the group, deleted with it).
+  The group's displayed progress is computed at *read* time
+  (`getGroupProgramView`, `firebase/groups.js`) by intersecting every
+  linked member's own real program — a topic reads "covered by the group"
+  only once every member's own program has it checked, and a student's own
+  extra progress beyond that naturally shows higher on their own page.
+  Marking a topic covered from the group view fans out to every linked
+  member's own program via the ordinary `setCurriculumItemCovered` — same
+  "reuse the individual-student function, just called N times" shape the
+  lesson mirror fan-out above uses. **General pattern worth remembering for
+  any future "group-of-X shares Y" feature**: don't give the group its own
+  independent copy of member data — tag the member's own doc instead
+  (`sourceGroupId`/`createdByGroup`-style fields) and compute any
+  group-level aggregate view at read time.
+- **A shared-component circular import can hide behind two files that look
+  unrelated (session 30).** `upcoming-lesson-card.jsx` needed
+  `GroupRescheduleDialog`/`GroupCancelDialog` (defined in
+  `groups-section.jsx`); `groups-section.jsx` later needed
+  `UpcomingLessonCard` itself (to reuse the exact same lesson-card
+  rendering for the group's own "Следующие занятия" list) — a genuine
+  A→B→A cycle that Vite's build didn't error on (ESM circular deps are
+  technically legal, just risky: one side's export can be `undefined` at
+  the point the other module evaluates, depending on load order) and would
+  only have surfaced as a confusing runtime bug. Fixed by relocating the
+  two dialog components into a third file (`group-lesson-dialog.jsx`) that
+  neither original file imports, keeping the dependency graph strictly
+  one-directional. **When two files start importing from each other, move
+  the piece one of them only needs incidentally into a third, lower file
+  instead of leaving the cycle in place "because the build didn't
+  complain."**
 - **Timezone conversion for user-entered date/time input is centralized in
   `src/lib/timezone.js`** (`localInputsToUtcDate`/`datetimeLocalToUtcDate`/
   `utcDateToLocalInput`), reusing the project's existing hand-rolled
@@ -749,6 +839,36 @@ src/
   card's — if the desired visual position spans two cards, pick whichever
   one is closer and let it overlap outward from there (see `activeContext.md`
   session 21 for zone1-5's exact anchor choices).
+- **Sizing a corner-overlap decoration against real named neighbors
+  (session 25 correction to the pattern above): compute the negative
+  offset from the actual `gap`/`padding` values in the surrounding layout,
+  not a guessed round number.** Session 21's zone1/zone2 offsets were
+  picked without reference to anything concrete and landed directly on the
+  header's settings-gear/avatar icons. The general check: for a top-corner
+  overlap, the negative `top` offset must stay ≥ -(the flex `gap` to the
+  previous sibling) or it starts sitting on that sibling's own content —
+  the current card's own padding is a safe buffer beyond that (an
+  element's `p-6`/`p-7` is real empty space before its first child
+  renders, so a shallow overlap that stays within that padding width lands
+  on nothing). The same logic applies in reverse for a bottom-corner
+  overlap against the card's own bottom padding, which is why bottom
+  corners are generally the safer default when either edge would satisfy
+  the design brief, and why two zones sharing one anchor card should split
+  across a top and a bottom corner rather than doubling up on one side.
+- **A decoration that overlaps *downward* into a later sibling needs
+  `z-index` on its anchor card, not just on itself (session 26, zone5 on
+  `ExamRadar`).** A `position:relative` card with no `z-index` of its own
+  does not win a stacking comparison against a later DOM sibling, no
+  matter what `z-index` its own overflowing child carries — the child's
+  `z-10` only out-ranks other elements *inside that same stacking
+  context* (i.e. other children of the same card), not a wholly separate
+  sibling section. In practice: a decoration overlapping *upward* into an
+  *earlier* sibling needs no fix (it already wins by plain DOM paint
+  order — later elements paint over earlier ones by default), but one
+  overlapping *downward* into a *later* sibling needs the anchor card
+  itself promoted with a real `z-index` (e.g. `relative z-10`, not just
+  `relative`) or it silently renders underneath whatever comes next,
+  looking like the decoration vanished rather than like a CSS bug.
 
 ## Component relationships
 
