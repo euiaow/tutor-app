@@ -369,17 +369,17 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
                 />
               </Field>
               <Field label="Тип шкалы">
-                <select
+                <TeacherSelect
                   value={newTypeScale}
-                  onChange={(e) => setNewTypeScale(e.target.value)}
+                  onChange={setNewTypeScale}
                   disabled={saving}
-                  className={teacherInputCls}
-                >
-                  <option value="score">Числовой балл</option>
-                  <option value="grade">Оценка</option>
-                  <option value="language_level">Уровни языка (A1–C2)</option>
-                  <option value="none">Без шкалы</option>
-                </select>
+                  options={[
+                    { value: "score", label: "Числовой балл" },
+                    { value: "grade", label: "Оценка" },
+                    { value: "language_level", label: "Уровни языка (A1–C2)" },
+                    { value: "none", label: "Без шкалы" },
+                  ]}
+                />
               </Field>
               {newTypeScale !== "none" && newTypeScale !== "language_level" ? (
                 <div className="flex gap-3">

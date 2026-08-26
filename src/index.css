@@ -400,6 +400,24 @@
   color: var(--text-color);
   font-family: var(--font-sans);
 
+  /* Safety net: guarantees --accent-color/--heading-color/--subheading-color/
+     --text-color always have SOME valid value on this element, even if the
+     per-theme class's own runtime-injected rule (applyThemeRegistry, an
+     unlayered <style> tag) somehow fails to apply. Without this, a var()
+     reference with no fallback anywhere below (e.g. --ink: var(--heading-color))
+     would register as guaranteed-invalid the instant --heading-color is
+     missing — and that invalidity propagates through every derived token
+     that references it, silently collapsing non-inherited properties like
+     background-color down to their initial value (transparent), not the
+     dark/opaque color anyone would expect. The real per-theme class (e.g.
+     .amber-scope) always wins over these — it's unlayered, and unlayered
+     rules always beat anything inside a named @layer regardless of order —
+     these values only ever apply as a last-resort fallback. */
+  --accent-color: oklch(0.72 0.19 47);
+  --heading-color: oklch(0.26 0.02 60);
+  --subheading-color: oklch(0.52 0.02 60);
+  --text-color: oklch(0.35 0.02 60);
+
   --background: oklch(from var(--accent-color) 0.975 0.012 h);
   --foreground: var(--text-color);
   --ink: var(--heading-color);

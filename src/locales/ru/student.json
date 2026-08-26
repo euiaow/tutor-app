@@ -14,7 +14,7 @@
   },
   "header": {
     "welcome": "Добро пожаловать",
-    "greeting": "Привет, {{name}}! ✌️",
+    "greeting": "Привет, {{name}}!",
     "settingsAria": "Настройки"
   },
   "page": {
@@ -174,11 +174,7 @@
     "timezone": "Часовой пояс",
     "language": "Язык",
     "colorTheme": "Цветовая тема",
-    "saveError": "Не удалось сохранить настройки",
-    "colorThemeOptions": {
-      "pink": "Розовая (учительская)",
-      "amber": "Янтарная (ученическая)"
-    }
+    "saveError": "Не удалось сохранить настройки"
   },
   "login": {
     "pageTitle": "Вход",
@@ -196,6 +192,7 @@
   },
   "gamification": {
     "portalTitle": "Стикеры и кейсы",
+    "portalTitleShort": "Стикеры",
     "portalHint": "Открой кейс и собери коллекцию"
   },
   "finance": {

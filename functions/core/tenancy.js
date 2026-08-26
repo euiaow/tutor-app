@@ -16,6 +16,25 @@ function assertMatchesOrUnowned(actualTeacherId, requestingTeacherId, message) {
   }
 }
 
+// Admin panel Phase 3: a blocked teacher's account must not be able to act
+// on their own (or, for legacy unowned data, their claimed) resources even
+// though the ownership check itself would pass. Checked against
+// `ownerTeacherId` — the teacherId the resource actually belongs to, which
+// in normal operation is the same as the caller, but is kept as an explicit
+// separate param so a future caller can't accidentally check the wrong
+// account. One extra read (teachers/{ownerTeacherId}) per call — acceptable
+// for correctness, not on any hot path.
+async function assertTeacherNotBlocked(ownerTeacherId) {
+  if (!ownerTeacherId) {
+    return
+  }
+
+  const snapshot = await db.collection("teachers").doc(ownerTeacherId).get()
+  if (snapshot.exists && snapshot.data().blocked === true) {
+    throw new HttpsError("permission-denied", "Доступ приостановлен")
+  }
+}
+
 async function assertOwnsStudent(studentId, teacherId) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -27,6 +46,10 @@ async function assertOwnsStudent(studentId, teacherId) {
   }
 
   const data = snapshot.data()
+  // Legacy unowned data (no data.teacherId) has no real owner to check —
+  // fall back to the requesting teacher's own blocked status, which is what
+  // matters in every real (non-legacy) case anyway.
+  await assertTeacherNotBlocked(data.teacherId || teacherId)
   assertMatchesOrUnowned(data.teacherId, teacherId, "Not your student")
 
   return data
@@ -53,6 +76,8 @@ async function assertOwnsGroup(groupId, teacherId) {
     throw new HttpsError("not-found", "Группа не найдена")
   }
 
+  await assertTeacherNotBlocked(teacherId)
+
   return snapshot.data()
 }
 
@@ -67,9 +92,10 @@ async function assertOwnsTemplate(templateId, teacherId) {
   }
 
   const data = snapshot.data()
+  await assertTeacherNotBlocked(data.teacherId || teacherId)
   assertMatchesOrUnowned(data.teacherId, teacherId, "Not your template")
 
   return data
 }
 
-module.exports = { assertOwnsStudent, assertOwnsTemplate, assertOwnsGroup }
+module.exports = { assertOwnsStudent, assertOwnsTemplate, assertOwnsGroup, assertTeacherNotBlocked }

@@ -6,6 +6,7 @@ const TEACHERS_COLLECTION = "teachers"
 
 const generateTeacherSlugCallable = httpsCallable(functions, "generateTeacherSlug")
 const getTeacherBySlugCallable = httpsCallable(functions, "getTeacherBySlug")
+const updateTeacherNameCallable = httpsCallable(functions, "updateTeacherName")
 
 // Multi-tenancy Phase 3: slug uniqueness has to be checked server-side
 // (admin SDK reads across every teacher's doc) — the per-teacher Firestore
@@ -16,7 +17,7 @@ export async function generateTeacherSlug(name) {
 }
 
 // Public — no auth required, used by the unauthenticated /app/:slug landing
-// page. Returns { id, name, slug } or null.
+// page. Returns { id, name, slug, vkGroupId, telegramBotKey } or null.
 export async function getTeacherBySlug(slug) {
   const result = await getTeacherBySlugCallable({ slug })
   return result.data.teacher
@@ -42,4 +43,14 @@ export function subscribeToTeacherProfile(uid, onData, onError) {
 export async function updateTeacherSettings(uid, { timezone, colorTheme }) {
   const ref = doc(db, TEACHERS_COLLECTION, uid)
   await updateDoc(ref, { timezone, colorTheme })
+}
+
+// A callable, not a direct client write like updateTeacherSettings above —
+// "name" wasn't previously an update-able field via the client Firestore
+// Rules (it was only ever set once, at profile creation), so this goes
+// through a Cloud Function (Admin SDK) instead of depending on the live
+// Rules text to already allow it. Used by both the first-login name prompt
+// and Settings' own name field+"Изменить" control.
+export async function updateTeacherName(name) {
+  await updateTeacherNameCallable({ name })
 }

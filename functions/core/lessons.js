@@ -500,10 +500,10 @@ async function deleteOneProposalMessage(proposalMessage, context) {
   try {
     if (proposalMessage.platform === "telegram") {
       const { deleteMessage } = require("../adapters/telegram")
-      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId)
+      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId, proposalMessage.botKey)
     } else if (proposalMessage.platform === "vk") {
       const { deleteMessage } = require("../adapters/vk")
-      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId)
+      await deleteMessage(proposalMessage.chatId, proposalMessage.messageId, proposalMessage.groupId)
     }
   } catch (error) {
     logger.warn("deleteProposalMessages: failed to delete bot proposal message", {

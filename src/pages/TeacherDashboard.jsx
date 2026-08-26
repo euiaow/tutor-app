@@ -21,7 +21,6 @@ import { RegistrationLinkDialog } from "@/components/teacher/registration-link-d
 import { PendingRegistrations } from "@/components/teacher/pending-registrations"
 import { HomeworkLessonDialog } from "@/components/teacher/homework-lesson-dialog"
 import { ExtraLessonDialog } from "@/components/teacher/extra-lesson-dialog"
-import { TeacherBotConnectStatus } from "@/components/teacher/teacher-bot-connect"
 import { StudentTags } from "@/components/student-tags"
 import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
@@ -42,8 +41,12 @@ import {
   TeacherDialogDescription,
   TeacherDialogTitle,
   TeacherModalFooter,
+  TeacherSaveBtn,
+  TeacherStatusBadge,
+  teacherInputCls,
   Title,
 } from "@/components/teacher/theme-ui"
+import { GroupLessonDialog } from "@/components/teacher/group-lesson-dialog"
 import { NotificationsList } from "@/components/notifications-list"
 import { subscribeToStudents } from "@/firebase/students"
 import {
@@ -64,7 +67,7 @@ import {
   getGoogleCalendarStatus,
   startGoogleOAuth,
 } from "@/firebase/google-calendar"
-import { subscribeToTeacherProfile, updateTeacherSettings } from "@/firebase/teachers"
+import { subscribeToTeacherProfile, updateTeacherSettings, updateTeacherName } from "@/firebase/teachers"
 import { getThemeById } from "@/lib/themes"
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
 import { resolveTimeZone } from "@/lib/timezone"
@@ -73,6 +76,84 @@ import { SettingsDialog } from "@/components/settings-dialog"
 const MAX_CLUSTERED_LESSONS = 3
 const MAX_LESSON_GAP_DAYS = 6
 const MS_PER_DAY = 1000 * 60 * 60 * 24
+
+// Mirrors the admin panel's own status wording (AdminDashboard.jsx's
+// SubscriptionStatus) but as one short line for the header, next to
+// "Кабинет преподавателя" — a trial-plan teacher never sees payment dates
+// at all, only a subscription-plan one does.
+function subscriptionHeaderLabel(teacherProfile) {
+  if (!teacherProfile) return null
+  if (teacherProfile.plan !== "subscription") return "Пробный период"
+
+  const paidUntil = teacherProfile.subscriptionPaidUntil?.toDate?.() ?? null
+  if (!paidUntil) return "Подписка не оплачена"
+
+  const day = String(paidUntil.getDate()).padStart(2, "0")
+  const month = String(paidUntil.getMonth() + 1).padStart(2, "0")
+  return paidUntil.getTime() > Date.now() ? `Подписка до ${day}.${month}` : `Подписка истекла ${day}.${month}`
+}
+
+// First-login prompt: a brand-new teachers/{uid} doc is bootstrapped with
+// name: user.displayName || "" (App.jsx), which is empty unless their
+// Google/etc. auth provider happened to supply one — this blocks the
+// dashboard behind a one-field "как вас зовут" form until a real name is
+// saved, so the admin panel and this page's own header never show a blank/
+// "Без имени" teacher for long. Deliberately not built on TeacherDialog:
+// that shared shell always renders a dismissible close-X, and this must
+// not be dismissible without saving a name.
+function NamePromptDialog() {
+  const [name, setName] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  async function handleSave(event) {
+    event.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError("Введите имя")
+      return
+    }
+    setSaving(true)
+    setError("")
+    try {
+      await updateTeacherName(trimmed)
+    } catch (err) {
+      console.error("Failed to save teacher name:", err)
+      setError(err?.message || "Не удалось сохранить имя")
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-ink/25 p-4 backdrop-blur-sm">
+      <form
+        onSubmit={handleSave}
+        className="glass-panel w-full max-w-sm rounded-[2rem] p-6 outline-none md:p-7"
+      >
+        <h2 className="font-display text-xl tracking-tight text-ink">Как вас зовут?</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Это имя будет отображаться в шапке кабинета и в админ-панели.
+        </p>
+
+        <input
+          autoFocus
+          type="text"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Имя"
+          disabled={saving}
+          className={`${teacherInputCls} mt-5`}
+        />
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherSaveBtn type="submit" disabled={saving} className="mt-5 w-full">
+          {saving ? <Loader2 className="mx-auto size-4 animate-spin" aria-hidden="true" /> : "Сохранить"}
+        </TeacherSaveBtn>
+      </form>
+    </div>
+  )
+}
 
 // If a student's lessons are weekly, showing 3 of them a week apart isn't
 // useful — only the first one is actually "coming up soon". Take lessons
@@ -130,17 +211,28 @@ function collapseGroupLessons(lessons) {
   return [...individual, ...byGroupKey.values()]
 }
 
-function PastLessonCard({ lesson, studentName, student }) {
+function PastLessonCard({ lesson, studentName, student, students = [] }) {
   const timeZone = useTimeZone()
   const [dialogOpen, setDialogOpen] = useState(false)
+  const isGroupLesson = Boolean(lesson.isGroupLesson)
+  // Same minimal stand-in shape UpcomingLessonCard uses — GroupLessonDialog
+  // only reads id/name/subject off it, member roster comes from its own
+  // mirror lookup keyed by groupLessonKey.
+  const groupStub = { id: lesson.groupId, name: lesson.groupName || "Группа", subject: lesson.subject }
 
   return (
     <li className="flex items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <StudentDot />
-          <span className="truncate font-semibold text-ink">{studentName}</span>
-          <StudentTags student={student} />
+          <span className="truncate font-semibold text-ink">{isGroupLesson ? lesson.groupName || "Группа" : studentName}</span>
+          {isGroupLesson ? (
+            <TeacherStatusBadge tone="rose">
+              Группа{Array.isArray(lesson.memberIds) ? ` · ${lesson.memberIds.length} уч.` : ""}
+            </TeacherStatusBadge>
+          ) : (
+            <StudentTags student={student} />
+          )}
         </div>
         <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
           <Clock className="size-3" aria-hidden="true" />
@@ -152,14 +244,25 @@ function PastLessonCard({ lesson, studentName, student }) {
         Открыть
       </GhostBtn>
 
-      <HomeworkLessonDialog
-        studentId={lesson.studentId}
-        studentName={studentName}
-        student={student}
-        lessonId={lesson.id}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
+      {isGroupLesson ? (
+        <GroupLessonDialog
+          teacherId={lesson.teacherId}
+          group={groupStub}
+          students={students}
+          groupLessonKey={dialogOpen ? lesson.groupLessonKey : null}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
+      ) : (
+        <HomeworkLessonDialog
+          studentId={lesson.studentId}
+          studentName={studentName}
+          student={student}
+          lessonId={lesson.id}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
+      )}
     </li>
   )
 }
@@ -186,7 +289,7 @@ function AllPastLessonsDialog({ open, onOpenChange, students }) {
     getAllCompletedLessons(uid)
       .then((data) => {
         if (cancelled) return
-        setLessons(data)
+        setLessons(collapseGroupLessons(data))
       })
       .catch((fetchError) => {
         console.error("Failed to load all completed lessons:", fetchError)
@@ -223,6 +326,7 @@ function AllPastLessonsDialog({ open, onOpenChange, students }) {
                   lesson={lesson}
                   studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
                   student={students.find((s) => s.id === lesson.studentId)}
+                  students={students}
                 />
               ))}
             </ul>
@@ -291,8 +395,6 @@ function TeacherNotificationsBell() {
 
           <NotificationsList notifications={notifications} onNotificationClick={handleNotificationClick} />
         </div>
-
-        <TeacherBotConnectStatus />
       </TeacherDialogContent>
     </TeacherDialog>
   )
@@ -552,6 +654,7 @@ export function TeacherDashboard() {
   }, [googleCalendarConnected])
 
   const clusteredUpcomingLessons = selectClusteredUpcomingLessons(collapseGroupLessons(upcomingLessons))
+  const collapsedCompletedLessons = collapseGroupLessons(completedLessons)
 
   // Статы — новый блок из макета, без прямого аналога в текущем коде.
   // Считаются из данных, уже загруженных на этой странице (без
@@ -583,15 +686,27 @@ export function TeacherDashboard() {
   // need this same pair of classes applied to themselves, not just this root.
   const themeClass = `${getThemeById(teacherProfile?.colorTheme ?? "pink").cssClassName} themed`
   const resolvedTimeZone = resolveTimeZone(teacherProfile?.timezone)
+  // teacherProfile is null only while the very first snapshot hasn't
+  // arrived yet — an existing profile doc always has (at minimum) an empty
+  // string, so `=== ""` is the real "hasn't set a name yet" signal, not
+  // `!teacherProfile.name` (which would also match briefly during load).
+  const needsNamePrompt = teacherProfile != null && teacherProfile.name === ""
 
   return (
-    <UserPrefsProvider timeZone={resolvedTimeZone} themeClass={themeClass}>
+    <UserPrefsProvider
+      timeZone={resolvedTimeZone}
+      themeClass={themeClass}
+      vkGroupId={teacherProfile?.vkGroupId ?? null}
+      telegramBotKey={teacherProfile?.telegramBotKey ?? null}
+    >
     <div className={`${themeClass} relative min-h-screen px-4 py-6 md:px-8 md:py-10`}>
       <div aria-hidden className="bg-grain-blobs">
         <div className="blob-a" />
         <div className="blob-b" />
         <div className="grain-layer" />
       </div>
+
+      {needsNamePrompt ? <NamePromptDialog /> : null}
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
         <header className="glass-panel flex items-center justify-between gap-4 rounded-[2rem] px-5 py-4">
@@ -603,8 +718,11 @@ export function TeacherDashboard() {
               <GraduationCap className="size-5" aria-hidden="true" />
             </div>
             <div className="hidden md:block">
-              <h1 className="font-display text-lg tracking-tight text-ink">Учебный портал</h1>
-              <p className="text-xs text-muted-foreground">Кабинет преподавателя</p>
+              <h1 className="font-display text-lg tracking-tight text-ink">{teacherProfile?.name || "Учебный портал"}</h1>
+              <p className="text-xs text-muted-foreground">
+                Кабинет преподавателя
+                {subscriptionHeaderLabel(teacherProfile) ? ` · ${subscriptionHeaderLabel(teacherProfile)}` : ""}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -628,6 +746,8 @@ export function TeacherDashboard() {
           variant="teacher"
           open={settingsOpen}
           onOpenChange={setSettingsOpen}
+          name={teacherProfile?.name ?? ""}
+          onSaveName={(nextName) => updateTeacherName(nextName)}
           timezone={teacherProfile?.timezone ?? ""}
           colorTheme={teacherProfile?.colorTheme ?? "pink"}
           onSave={(values) => updateTeacherSettings(auth.currentUser.uid, values)}
@@ -793,23 +913,24 @@ export function TeacherDashboard() {
           <GroupsSection students={students} groups={groups} />
         )}
 
-        <div className={`grid gap-5 ${completedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
-          {completedLessons.length > 0 ? (
+        <div className={`grid gap-5 ${collapsedCompletedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
+          {collapsedCompletedLessons.length > 0 ? (
             <Panel>
               <div className="flex items-center justify-between">
                 <Title>Прошедшие уроки</Title>
               </div>
               <ul className="mt-4 divide-y divide-glass-border">
-                {completedLessons.slice(0, completedVisibleCount).map((lesson) => (
+                {collapsedCompletedLessons.slice(0, completedVisibleCount).map((lesson) => (
                   <PastLessonCard
                     key={lesson.id}
                     lesson={lesson}
                     studentName={students.find((s) => s.id === lesson.studentId)?.name ?? "Ученик"}
                     student={students.find((s) => s.id === lesson.studentId)}
+                    students={students}
                   />
                 ))}
               </ul>
-              {completedLessons.length > completedVisibleCount ? (
+              {collapsedCompletedLessons.length > completedVisibleCount ? (
                 <button
                   type="button"
                   onClick={() => setIsAllPastLessonsOpen(true)}

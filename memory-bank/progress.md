@@ -2,6 +2,142 @@
 
 ## What works (per commit history + code present)
 
+- **Session 38 — full cascade-delete built for teacher/student/group
+  tenancy levels (none existed for teachers before), plus a real production
+  cleanup of 23 orphaned students** — `deleteTeacher` didn't exist at all
+  before this session, so deleting a teacher's Firebase Auth account (the
+  only removal path that existed) left 100% of their Firestore data behind
+  forever; this is confirmed as the actual cause of "the database doesn't
+  clean up," not a hypothetical. `deleteStudent` itself was also
+  incomplete — it never cleaned up `programs`/`balanceLedger`/`inventory`/
+  `decoration`/`coinLedger` or the student's own `notifications`, and never
+  removed a deleted student from group `memberStudentIds`. New
+  `deleteTeacherAccount` (admin-only, `AdminDashboard.jsx`'s type-to-confirm
+  "Удалить учителя") cascades through every group/student/template/token/
+  notification a teacher owns, then the teacher doc and Auth account itself
+  — this is now the only correct way to remove a teacher. Ran the real
+  cleanup against production: found and removed 2 orphan teacherIds' worth
+  of already-orphaned data (23 students plus all their nested data, 3
+  templates, tokens, ~50 notifications) via a dry-run-then-execute temporary
+  diagnostic, verified 0 orphans remain, current teachers' data untouched.
+  Deployed (`functions:deleteTeacherAccount`, `functions:deleteStudent`,
+  hosting); code not yet committed. Full detail: `activeContext.md`,
+  `systemPatterns.md`'s new cascade-delete entry.
+- **Session 37 — real infrastructure bug found: `firebase deploy --only
+  hosting` was succeeding but not reaching users for hours** — the user
+  reported 3 separate rounds of "your fix isn't showing up" for changes
+  that were, in fact, correctly deployed; `curl`-ing the live site's
+  response headers confirmed `index.html` was being served from a stale
+  CDN cache (`Cache-Control: max-age=3600`, `X-Cache: HIT`, `Last-Modified`
+  hours old) — Firebase Hosting's platform default for HTML. Fixed with an
+  explicit `headers` block in `firebase.json` (`no-cache` on `**`,
+  `immutable` long-cache kept only on the content-hashed `/assets/**`
+  bundle, which is genuinely safe to cache forever). Verified with `curl
+  -I` against both a bare route and an actual asset URL, not just assumed
+  from the config. **Every deploy from now on should be visible
+  immediately** — see `techContext.md` for the general diagnostic
+  (`curl -sI .../ | grep cache-control`) if a future "I deployed this, why
+  doesn't it show up" report ever recurs. Full detail: `activeContext.md`.
+- **Session 36 — placement-picker zone2 was rendering off the mockup's
+  own edge (real bug), zone5/button offsets nudged again, case-opening
+  reel simplified to one continuous deceleration** — **real bug found**:
+  `ZONE_DEFS`' zone2 marker (`x:250,w:34`) extended 24px past
+  `MiniDashboard`'s own 260px width, hanging off the interactive preview's
+  edge (worse once session 27's 1.6× scale enlarged everything) — moved to
+  `x:222`, now fits. zone5 nudged another 20px left (desktop only);
+  sticker-workshop button's `Group 70` (mobile) shrunk 1px more and moved
+  1px right. **Case-opening reel simplified to a single continuous
+  deceleration** — dropped the medium-speed plateau entirely per an
+  explicit new spec (three straight sessions had each introduced a fresh
+  bug trying to get a fast→medium→stop shape right); now one CSS
+  transition, one easing curve (easeOutQuint) for the whole 12s spin, no
+  phase seams left for a bug to hide in. Full detail: `activeContext.md`.
+- **Session 35 — zone5/button offsets diverged further, case-opening reel
+  rebuilt from scratch to an explicit 12s spec** — zone5 desktop offset
+  moved another 15px left; the sticker-workshop button's two image offsets
+  (desktop `Group 69`, mobile `Group 70`) split into independent constants
+  and nudged 2px/1px right respectively, `Group 70` shrunk a further 3px.
+  **Case-opening reel rebuilt from scratch** (not patched again) to a new
+  explicit spec: 12s total (was 9s) — fast start, smooth fast→medium over
+  the first 3s, constant medium for the next 3s, smooth medium→0 over the
+  final 6s. Distance ratios (0.42/0.29/~0.29) are derived from that speed
+  story (documented in the code, not another guess) rather than picked to
+  "look about right." Full detail: `activeContext.md`.
+- **Session 34 — sticker-workshop button art nudged again, zone5 split
+  desktop-only, and the case-opening reel's wrong motion root-caused for
+  real (bad easing curves, not bad ratios)** — `Group 70` (mobile button
+  art) shrunk another 3px, both button images shifted 1px further right
+  together. `zone5` (`ExamRadar`) is the first zone to need a breakpoint
+  split since session 26 unified everything — desktop moved 5px further
+  left, mobile untouched. **Real bug found**: the case-opening reel's
+  reported motion ("fast → decelerates almost to zero → medium → sudden
+  fast burst → stop") traced to the two bespoke bezier curves themselves,
+  not the phase time/distance ratios (already correct since session 32) —
+  both curves had a control point reaching ~85% of their own distance
+  within ~15% of their own time, which reads as "sprint to the finish
+  immediately, then crawl," not smooth deceleration. Replaced with named,
+  well-known easing curves (easeOutQuad / easeOutQuart) instead of another
+  hand-picked guess. Full detail: `activeContext.md`.
+- **Session 33 — corrections to 2 of session 32's changes** — greeting
+  emoji (✌️) moved out of the `header.greeting` translation string
+  entirely (both locales) and into its own `hidden sm:inline` span, so it
+  no longer costs line-height on mobile while staying byte-identical on
+  desktop. Sticker-workshop button's desktop art reverted to `Group 69`
+  (session 32 shouldn't have touched desktop at all — the user only ever
+  wanted a mobile fix) — the button now renders both `Group 69`
+  (`hidden sm:block`) and `Group 70` (`block sm:hidden`) instead of one
+  globally-swapped image. Mobile-only layout fixes: title shortened to
+  "Стикеры" (new `portalTitleShort` key, desktop keeps the full title),
+  balance badge moved to its own line under the title instead of squeezed
+  onto it, `Group 70` nudged another 3px shorter. Full detail:
+  `activeContext.md`.
+- **Session 32 — sticker zone1 restructured for mobile (real-device
+  feedback), zone5 nudged, workshop button art swapped + mobile text
+  shortened, case-opening reel timing corrected** — zone1 needed a real
+  mobile-specific layout, not just a different offset: new
+  `DashboardHeader` component (`useGamification()` can't see its own
+  `<GamificationProvider>`'s value from the same render call, needs a real
+  descendant) hides "Добро пожаловать" and lets the greeting wrap onto 2
+  lines (natural word-wrap, no i18n changes) when zone1 is occupied, on
+  mobile only; zone1 now renders twice — desktop-only inside
+  `NextLessonPlate` (unchanged since session 26) and a new mobile-only
+  instance anchored to the header itself, clearing the gear+avatar
+  cluster. zone5 nudged left/up. `StickerWorkshopButton`'s art swapped
+  from `Group 69.png` to a user-supplied ~20-30%-narrower `Group 70.png`
+  (same height/offset fit) instead of algorithmically capping width, paired
+  with hiding the hint line on mobile and `truncate`-protecting the title.
+  **Real animation-shape bug fixed**: the case-opening reel's "3-phase
+  spin" (session 18) had phase 1 as an *accelerating* curve so brief it
+  read as "starts at a flat medium speed" instead of the intended
+  fast-start — flipped to a genuine ease-out (fast→medium) and rebalanced
+  all 3 phases' time/distance shares to match the explicit spec (fast
+  start → medium plateau for ~half the total time → decelerate to a hard
+  stop). All frontend-only, hosting redeployed each round. Full detail:
+  `activeContext.md`.
+- **Session 31 — color-theme system rearchitected as a real registry
+  (background image + accent + 3 fixed text colors), 5 real bugs found and
+  fixed** — replaced two fully hand-tuned ~30-variable CSS palettes
+  (`.teacher-theme`/`.amber-scope`) with `src/lib/themes.js`'s
+  `THEME_REGISTRY`: each theme is just 5 fields (`backgroundImage`,
+  `accent`, `heading`, `subheading`, `text`, `radius`); everything else
+  (`--card`, `--border`, `--shadow-*`, `--gradient-*`, decorative blobs) is
+  derived from those via CSS relative-color syntax in one shared
+  `index.css` block (`.themed`) — adding a theme is now a pure data change
+  (confirmed live: user added a third theme, "blue", with zero CSS edits).
+  Teacher's theme picker (previously `disabled`, dead code) is now live;
+  teacher and student share one registry. Found and fixed 5 real bugs
+  along the way: an invalid `oklch(... h)` reference outside `oklch(from
+  ...)` silently broke white button text to black; `--gradient-warm` was
+  never per-theme (student accent buttons/icons/tags stayed orange under
+  any theme); `StudentGrainBackground` hardcoded one background image
+  regardless of theme; `GroupLessonDialog`/`HomeworkLessonDialog` (both
+  portaled to `document.body`) had a literal hardcoded pink theme class
+  instead of `useThemeClass()` like every other portaled dialog; stale
+  locale entries shadowed the registry's own theme labels, causing a
+  name mismatch between the teacher and student pickers. Also added a
+  `TeacherSelect` for "Тип шкалы" (was a native `<select>`). Deployed
+  hosting + `functions:updateStudentSettings` (new theme id needs
+  server-side validation too). Full detail: `activeContext.md`.
 - **Session 30 — quick polish on session 29's group work** — group hourly
   rate now sums member rates (was a min–max range); student's own subject
   row is now a tag pill matching the group's; group program's name/percent/
@@ -60,82 +196,15 @@
   deleted diagnostic exercising create/reschedule/complete/extra/cancel
   against live throwaway data — all correct. Deployed (functions, firestore
   indexes, hosting). Full detail: `activeContext.md`.
-- **Session 27** — zone1 nudged further left again (`right-[230px]`, same
-  direction session 26 established), and the sticker-workshop modal's
-  placement picker enlarged to be the "коллекция" tab's dominant visual
-  element (student places up to ~5 stickers) — a new `MINI_DASHBOARD_SCALE`
-  CSS-transform wrapper scales the whole hand-drawn mockup + zone markers
-  up 1.6× as one unit rather than hand-multiplying every authored pixel
-  value, the inventory grid next to it stopped growing to compete for
-  space, and the old small `maxHeight:300` scroll cap became a generous
-  `72vh`. Full detail: `activeContext.md`.
-- **Sticker positions corrected again after real user testing, plus a real
-  stacking-order bug root-caused (session 26)** — direct follow-up to
-  session 25, this time verified against the actual deployed page (not
-  screenshots) by the user. zone1/zone2/zone3 offsets tightened again
-  (zone1's clearance had been sized against the header's icons but the
-  "Посмотреть все уроки" link below it is actually wider; zone2 now sits
-  almost entirely inside its card instead of hanging past the edge; zone3
-  pushed further up/right to guarantee it never reaches the "Русский
-  язык" title or "Заполнить" button, which share nearly this card's whole
-  height with no safe gap between them). **Real bug found and fixed**:
-  `zone4`/`zone5` could land on a plain `CurriculumProgressCard` instead
-  of `ExamRadar` whenever a student's *first* program happened to have no
-  goal set — fixed by computing which program is the first to actually
-  render `ExamRadar` (`firstExamRadarIndex`) rather than assuming index 0;
-  `CurriculumProgressCard` lost its decoration entirely, by explicit
-  instruction. **Real stacking-order bug found and fixed**: a
-  `position:relative` card with no `z-index` of its own can't win a
-  stacking comparison against a later DOM sibling no matter what z-index
-  its own overflowing decoration child carries — added `z-10` to
-  `ExamRadar`'s own section so zone5's bottom overlap actually paints over
-  the next card instead of disappearing behind it. Every zone's position
-  was also unified to one value across all breakpoints (mobile/desktop
-  `sm:` splits removed), per the user's own direction after confirming
-  session 25's mobile-specific offsets already looked right on a real
-  phone. **New**: a sticker can now only occupy one zone at a time —
-  placing it somewhere new automatically clears any other zone that
-  already held it (`sticker-workshop-modal.jsx`'s `placeArmed`), where
-  previously nothing stopped the same sticker being placed in several
-  zones at once. **Also this session (separate, mid-session request): the
-  Sticker Workshop modal itself gained a real mobile layout** — the cases
-  grid and case-detail view had no responsive behavior at all (fixed
-  3-column / two-column-side-by-side), now single-column below 640px via
-  a new reactive `useIsMobile` hook (a real `resize` listener, unlike the
-  file's two pre-existing one-time-only `window.innerWidth` checks used
-  for decorative header art). The already-responsive "коллекция" tab was
-  explicitly left untouched. Full detail: `activeContext.md`.
-- **Session 25** — sticker positions first corrected against a reference
-  screenshot (new anchor scheme, zone3 moved onto `GoalCard`, real
-  `truncate`-class text-wrap bug fixed, placement picker rebuilt with a
-  real `MiniDashboard` mockup instead of abstract labels). Superseded in
-  several specifics by session 26 after real-device testing — see that
-  entry above. Full detail: `changelog/2026-08-august.md`.
-- **Group lessons: 11-item punch-list pass — visual polish, custom dropdowns
-  everywhere, real cascade-delete bug fix, merged lesson-card layout (both
-  individual and group), program progress + progress bar added to the group
-  lesson dialog, "Следующие уроки" moved to its own button+dialog (matching
-  the student row), extra lessons can now target a group, and group lessons
-  now show up in the top "Ближайшие уроки" panel (session 24)** — member
-  pills got a visible border; "+ Добавить программу" left-aligned (was a
-  bare `<button>` stretching + centering by default); every remaining
-  native `<select>` for programs/schedule-day/extra-lesson-student is now
-  `TeacherSelect`, in both Группы and Ученики. Real bug fix: deleting a
-  group's own program now cascades to delete each member's individual copy
-  too (`sourceGroupProgramId` stamped at fan-out time, queried at delete
-  time) — previously those copies were orphaned. `HomeworkLessonDialog` and
-  the new `GroupLessonDialog` now share one merged "Тема урока и задание"
-  section with a single save button; the group dialog gained a program
-  topic-picker, a covered-material checklist for completing a lesson, and a
-  real `ProgressBar`. New backend `createExtraGroupLesson` (mirrors
-  `createExtraLesson`: Calendar event via `colorIdForSubject`, a new
-  `group_extra_lesson_assigned` notification per member) lets extra lessons
-  target a whole group. New `subscribeToUpcomingGroupLessonsForTeacher`
-  fills the gap where group lessons never appeared in the dashboard's top
-  upcoming-lessons panel. Verified for real (not just built): a temporary
-  diagnostic function confirmed both the cascade-delete and the extra-
-  group-lesson creation against live throwaway data, then was deleted.
-  Deployed (functions + hosting). Full detail: `activeContext.md`.
+- Sessions 24-27 (group lessons 11-item follow-up pass with a real
+  cascade-delete bug fix; sticker positioning corrected twice more against
+  real reference/device testing with a real stacking-order bug root-caused
+  and one-sticker-one-slot enforced; Sticker Workshop modal gained a real
+  mobile layout; small zone1/placement-picker polish) — full detail
+  archived in `changelog/2026-08-august.md` (2026-08-24 batch, plus session
+  25 archived there separately earlier). All still working per code
+  present; sticker positions should be considered accurate as of session
+  26, not "unconfirmed."
 - **Six independent follow-ups: student Finance section, custom Settings
   dropdowns + a root-caused autofocus-glow fix, Group 69 art pinned to the
   sticker button, auto-pin the registration-link message on both bots
@@ -286,13 +355,17 @@
   next session whether it's live and mark-as-read actually sticks now.
   See [[activeContext]].
 - No automated test suite in the repo.
-- **Git commit hygiene, checked session 16: currently clean** — only
-  `memory-bank/` had uncommitted changes at session end (session 16's
-  own code changes were already committed, e.g. `1c94118` "англ язык,
-  бэкенд под стикеры"). The "work sits uncommitted for many sessions"
-  risk flagged repeatedly through session 9 has not recurred since —
-  worth a quick `git status` check at the start of future sessions
-  rather than assuming either way.
+- **Git commit hygiene — recurred as of session 38, reversing session 16's
+  "clean" note.** A large uncommitted diff has accumulated again: most of
+  `functions/`, most of `src/`, and 3 fully untracked files
+  (`functions/core/admin.js`, `src/firebase/admin.js`,
+  `src/pages/AdminDashboard.jsx` — the admin panel built across sessions
+  not yet captured in this changelog, plus session 38's cascade-delete
+  work on top). Last real commit on record is `1be152b` ("отов бэкенд под
+  темы, осталось задизайнить добавить"). Not committed per this project's
+  standing rule (only commit when the user explicitly asks) — flagging
+  this so a future session doesn't assume recent work is safely saved
+  just because it's deployed; deployed and committed are independent here.
 - **Migration run (session 13)**: `migrateToPrograms.js` ran — 2
   programs migrated, 2 flagged for manual review (unresolved
   `examTypeId`, disposable test data, not fixed further per user

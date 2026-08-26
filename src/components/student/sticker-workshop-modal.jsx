@@ -163,7 +163,7 @@ function ink(fill) {
 // Still a cosmetic placement aid, not pixel-identical to the live page.
 const ZONE_DEFS = [
   { id: "zone1", label: "У ПРИВЕТСТВИЯ", x: 146, y: 14, w: 40, h: 26 },
-  { id: "zone2", label: "СПРАВА ОТ УРОКА", x: 250, y: 96, w: 34, h: 24 },
+  { id: "zone2", label: "СПРАВА ОТ УРОКА", x: 222, y: 96, w: 34, h: 24 },
   { id: "zone3", label: "КАРТОЧКА ЦЕЛИ", x: 66, y: 216, w: 40, h: 22 },
   { id: "zone4", label: "УГОЛ EXAM RADAR", x: 196, y: 286, w: 40, h: 22 },
   { id: "zone5", label: "НИЗ EXAM RADAR", x: 206, y: 398, w: 40, h: 22 },
@@ -238,15 +238,23 @@ const REEL_ITEM = 104
 const REEL_WIN = 62
 const REEL_LENGTH = 74
 
-// Doubled from the original 4500ms flat ease-out. Split into three explicit
-// phases (task 5) instead of one easing curve for the whole spin: a short
-// accelerating burst, a long constant-speed plateau with NO slowdown, then a
-// deceleration phase that lands exactly on the server-provided sticker.
-const SPIN_DURATION_MS = 9000
-const SPIN_PHASE1_TIME_RATIO = 0.08 // quick rev-up
-const SPIN_PHASE2_TIME_RATIO = 0.6 // steady plateau, ~60% of total time — remainder (~32%) is the deceleration phase
-const SPIN_PHASE1_DIST_RATIO = 0.06
-const SPIN_PHASE2_DIST_RATIO = 0.62 // remainder (~32%) is covered during deceleration, ending exactly on `target`
+// Session 36 — simplified back down to a single continuous deceleration,
+// per an explicit new spec that dropped the medium-speed plateau entirely:
+// starts fast, decelerates smoothly all the way to a dead stop, over the
+// whole 12s. No more 3-phase chained-setTimeout choreography (sessions 29/
+// 34/35 each tried a fast→medium→stop shape and each attempt introduced a
+// new timing/curve bug) — one CSS transition for the entire spin is both
+// simpler and has no seam between phases for a bad curve to hide in.
+// SPIN_EASE is easeOutQuint (easings.net) — a strong, continuous fast-start
+// deceleration across the *entire* duration, not just a short final snap.
+const SPIN_DURATION_MS = 12000
+const SPIN_EASE = "cubic-bezier(0.22, 1, 0.36, 1)" // easeOutQuint
+// The "result" phase must not flip until the CSS transition has actually
+// finished landing on `target` — SPIN_DONE_DELAY_MS pads past
+// SPIN_DURATION_MS specifically so the total *never* comes in under the
+// requested 12s even accounting for the double requestAnimationFrame delay
+// before the transition itself starts.
+const SPIN_DONE_DELAY_MS = SPIN_DURATION_MS + 250
 
 function randomOf(list) {
   return list[Math.floor(Math.random() * list.length)]
@@ -526,12 +534,6 @@ export function StickerWorkshopModal({
       const target = -(REEL_WIN * REEL_ITEM + 48) + jitter
 
       const startX = -80
-      const totalDist = target - startX
-      const phase1Time = Math.round(SPIN_DURATION_MS * SPIN_PHASE1_TIME_RATIO)
-      const phase2Time = Math.round(SPIN_DURATION_MS * SPIN_PHASE2_TIME_RATIO)
-      const phase3Time = SPIN_DURATION_MS - phase1Time - phase2Time
-      const phase1X = startX + totalDist * SPIN_PHASE1_DIST_RATIO
-      const phase2X = startX + totalDist * (SPIN_PHASE1_DIST_RATIO + SPIN_PHASE2_DIST_RATIO)
 
       setStrip(built)
       setSpinX(startX)
@@ -542,29 +544,15 @@ export function StickerWorkshopModal({
 
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          // Phase 1: short accelerating burst.
-          setSpinTransition(`transform ${phase1Time}ms cubic-bezier(.55,0,.85,.35)`)
-          setSpinX(phase1X)
+          // One continuous deceleration for the whole spin — starts fast,
+          // eases smoothly all the way down to a dead stop landing exactly
+          // on the server result, no plateau/seam in between.
+          setSpinTransition(`transform ${SPIN_DURATION_MS}ms ${SPIN_EASE}`)
+          setSpinX(target)
         })
       })
 
-      spinTimersRef.current.push(
-        setTimeout(() => {
-          // Phase 2: steady plateau at constant speed — linear, no slowdown.
-          setSpinTransition(`transform ${phase2Time}ms linear`)
-          setSpinX(phase2X)
-
-          spinTimersRef.current.push(
-            setTimeout(() => {
-              // Phase 3: smooth deceleration, lands exactly on the server result.
-              setSpinTransition(`transform ${phase3Time}ms cubic-bezier(.12,.85,.18,1)`)
-              setSpinX(target)
-            }, phase2Time),
-          )
-        }, phase1Time),
-      )
-
-      spinTimersRef.current.push(setTimeout(() => setPhase("result"), SPIN_DURATION_MS + 250))
+      spinTimersRef.current.push(setTimeout(() => setPhase("result"), SPIN_DONE_DELAY_MS))
     } catch (err) {
       console.error("Failed to open case:", err)
       setError(err?.message || "Не удалось открыть кейс")

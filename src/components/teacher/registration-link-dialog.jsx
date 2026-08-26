@@ -3,6 +3,7 @@ import { AlertCircle, Check, Copy, Plus } from "lucide-react"
 import { Field, GhostBtn, SolidBtn, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, TeacherDialogTitle, teacherInputCls } from "@/components/teacher/theme-ui"
 import { generateRegistrationLink } from "@/firebase/registration"
 import { buildRegistrationMessages } from "@/lib/registration-links"
+import { useVkGroupId, useTelegramBotKey } from "@/lib/user-prefs-context"
 
 export function RegistrationLinkDialog() {
   const [open, setOpen] = useState(false)
@@ -12,8 +13,10 @@ export function RegistrationLinkDialog() {
   const [token, setToken] = useState(null)
   const [copiedChannel, setCopiedChannel] = useState(null)
 
+  const vkGroupId = useVkGroupId()
+  const telegramBotKey = useTelegramBotKey()
   const loading = status === "loading"
-  const messages = token ? buildRegistrationMessages(token) : null
+  const messages = token ? buildRegistrationMessages(token, vkGroupId, telegramBotKey) : null
 
   function reset() {
     setStudentName("")

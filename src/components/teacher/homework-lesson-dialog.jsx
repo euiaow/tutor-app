@@ -40,7 +40,7 @@ import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { resolveLessonSubject } from "@/lib/subjects"
 import { SubjectTag } from "@/components/student-tags"
-import { useTimeZone } from "@/lib/user-prefs-context"
+import { useTimeZone, useThemeClass } from "@/lib/user-prefs-context"
 
 // Exported so group-lesson-dialog.jsx (Phase 3 of group lessons) can reuse
 // the exact same attendance/rating vocabulary and pill-toggle control for
@@ -225,6 +225,11 @@ export function HomeworkLessonDialog({
   onOpenChange,
 }) {
   const timeZone = useTimeZone()
+  // See group-lesson-dialog.jsx's identical fix — portaled straight to
+  // document.body, so it needs the teacher's actual chosen theme applied
+  // directly to itself rather than a hardcoded "teacher-theme" (always pink
+  // regardless of what the teacher picked in Settings — real bug).
+  const themeClass = useThemeClass() || "teacher-theme themed"
   const popupRef = useRef(null)
   const [derivedLessonId, setDerivedLessonId] = useState(null)
   const lessonId = fixedLessonId ?? derivedLessonId
@@ -543,12 +548,12 @@ export function HomeworkLessonDialog({
             TeacherDialogContent's own `elevated` prop. */}
         <DialogPrimitive.Backdrop
           forceRender
-          className="teacher-theme themed fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0"
+          className={`${themeClass} fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0`}
         />
         <DialogPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}
-          className="teacher-theme themed glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
+          className={`${themeClass} glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]`}
         >
           <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">

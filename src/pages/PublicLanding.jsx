@@ -11,7 +11,7 @@ import { buildSelfServiceLinks } from "@/lib/registration-links"
 // who to attribute the new student to (multi-tenancy Phase 3).
 export function PublicLanding({ teacher }) {
   const [copied, setCopied] = useState(false)
-  const links = buildSelfServiceLinks(teacher.slug)
+  const links = buildSelfServiceLinks(teacher.slug, teacher.vkGroupId, teacher.telegramBotKey)
 
   async function handleCopyVkCode() {
     try {

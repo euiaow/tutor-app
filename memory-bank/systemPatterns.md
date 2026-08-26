@@ -719,7 +719,64 @@ src/
   theme's scope class reads these hooks instead of receiving props
   threaded down manually. Falls back safely (device timezone / no theme
   class) if called outside a Provider, though that should never happen in
-  practice.
+  practice. **Any component portaled straight to `document.body`
+  (`DialogPrimitive.Portal`, a Popover, etc.) MUST call `useThemeClass()`
+  itself and apply the result directly to its own backdrop/popup** — it's
+  outside the themed root's DOM subtree, so CSS custom properties can't
+  reach it by inheritance. Two dialogs (`GroupLessonDialog`,
+  `HomeworkLessonDialog`) were found session 31 with a *literal hardcoded*
+  `className="teacher-theme themed"` instead — always rendered pink no
+  matter what theme the teacher actually picked, because they were written
+  before `useThemeClass()` existed and simply never updated. Grep for a
+  bare `"teacher-theme"`/`"amber-scope"` string literal in any portaled
+  dialog before assuming an existing one is fine.
+- **Color-theme registry (session 31 rearchitecture — `src/lib/themes.js`'s
+  `THEME_REGISTRY` + `src/lib/apply-theme-styles.js`'s `applyThemeRegistry()`
+  + `index.css`'s shared `.themed` block)**: a theme is exactly 5
+  author-facing fields — `backgroundImage` (a `/bg/...` public path or
+  `null`), `accent`, `heading`, `subheading`, `text`, `radius`. Adding a
+  theme is a pure data change here (plus a matching id in
+  `functions/core/themes.js`'s `VALID_THEME_IDS`, hand-kept in sync since
+  Functions/CommonJS can't import the frontend's ESM registry) — no CSS or
+  component edits needed, confirmed live when a third theme ("blue") was
+  added with none. `applyThemeRegistry()` runs once in `main.jsx` before
+  React mounts, injecting one tiny runtime `<style>` rule per theme
+  (`.{cssClassName} { --accent-color; --heading-color; --subheading-color;
+  --text-color; --theme-bg-image; --radius; }`) — everything else any
+  component actually reads (`--card`, `--border`, `--shadow-*`,
+  `--gradient-*`, decorative blob gradients, `--rose-deep`, etc., ~20
+  tokens total) is derived from just those 4 colors in `index.css`'s
+  `.themed` rule using CSS relative-color syntax
+  (`oklch(from var(--accent-color) L C h)`, reuses the accent's own hue at
+  a fresh lightness/chroma per surface) — this one shared derivation block
+  is what replaced two independently hand-tuned ~30-variable palettes
+  (`.teacher-theme`/`.amber-scope`) that used to drift out of sync with
+  each other by construction. An element must carry BOTH the theme's own
+  `cssClassName` AND the literal `themed` class for the derivation to
+  apply (`useThemeClass()` always returns both together as one string;
+  never hand-write just one half). Two sharp edges found the hard way this
+  session, both now guarded against directly in `.themed`:
+  - A bare `var()` reference with **no fallback**, used *outside* an
+    `oklch(from ...)` context, referencing a channel keyword like `h`
+    (hue) that's only meaningful *inside* that context, silently
+    invalidates the whole declaration (`--primary-foreground: oklch(0.99
+    0.005 h)` — bare `h` there is nonsense — broke white button text to
+    black on every accent surface). Never reference `l`/`c`/`h` outside an
+    `oklch(from ...)` expression.
+  - A custom property whose value can't resolve (e.g. its own `var()`
+    reference is missing) becomes "guaranteed-invalid," and that
+    invalidity **propagates through every token derived from it** —
+    critically, a *non-inherited* CSS property (like `background-color`)
+    that ends up reading a guaranteed-invalid custom property collapses to
+    its own **initial value** (transparent), not to any visible fallback
+    or the ancestor's value. `.themed` now declares safe literal defaults
+    for `--accent-color`/`--heading-color`/`--subheading-color`/
+    `--text-color` *before* deriving anything from them — the real
+    per-theme values still win (an unlayered runtime-injected rule always
+    beats a rule inside a named `@layer`, like `.themed`'s own `@layer
+    base`, regardless of source order or specificity), so this only ever
+    matters as a last-resort safety net if the per-theme rule somehow
+    fails to apply.
 - **`functions/core/notifier.js`'s `createNotification` resolves the
   *recipient's* timezone itself and accepts `text` as either a plain
   string or a `(timeZone) => string` builder function** — added session 12
@@ -1229,3 +1286,74 @@ src/
   future trigger that diffs "before" vs "after" to decide whether to act
   should be audited for every field the downstream computation actually
   reads, not just the fields a human would call "the schedule."**
+
+- **Cascade-delete now exists at every tenancy level (session 38) — before
+  this session, `deleteTeacher` didn't exist at all, and `deleteStudent`
+  itself was incomplete.** This is the direct fix for "deleting an
+  account leaves its data behind," confirmed as a real, already-happened
+  production problem (23 orphaned students plus their lessons/programs/
+  balance ledger/gamification data/notifications/tokens from one deleted
+  test teacher, found and cleaned this session — see `activeContext.md`).
+  - `deleteStudent` (`functions/core/students.js`) used to delete only the
+    `lessons` subcollection + registration tokens + bot sessions + Storage
+    files + Calendar events, then the student doc — leaving `programs`,
+    `balanceLedger`, `inventory`, `decoration`, `coinLedger` permanently
+    orphaned under a doc path that no longer resolves (Firestore doesn't
+    cascade-delete subcollections when a parent doc is deleted; a
+    `collectionGroup` query can still find them forever). Now also deletes
+    those 5 subcollections (`db.recursiveDelete()` per subcollection — no
+    Storage/Calendar side effects to special-case, unlike `lessons`),
+    every `notifications/` doc keyed by that `studentId`, and removes the
+    student from any group's `memberStudentIds` (otherwise a deleted
+    student left in a group would get silently "recreated" —
+    `ensureUpcomingGroupLessons` would happily write a fresh
+    `students/{deletedId}/lessons/{id}` under a nonexistent parent on the
+    next occurrence).
+  - `deleteStudentLessons` gained a `keepGroupLessons` option (default
+    `true`): a group-lesson mirror doc (`isGroupLesson: true`) is left
+    untouched when one student alone is deleted — deleting one member's
+    copy of a shared occurrence would desync it from the rest of the group
+    for no reason, per explicit product decision (a group's mirrors are
+    only ever meant to be deleted together, via `deleteGroup`). A full
+    teacher-account cascade passes `keepGroupLessons: false` since by that
+    point every group the teacher owns is already being deleted anyway —
+    this is just a safety net there, not the primary mechanism.
+  - New `functions/core/teacherDeletion.js`'s `deleteTeacherData(teacherId,
+    {deleteAuthUser})` is the one real cascade for "this teacher account is
+    gone": every group (via the existing `deleteGroup`, which already
+    cascades lesson mirrors/Calendar events/program unlink-or-delete),
+    every student (via `deleteStudent`, `keepGroupLessons: false`),
+    `curriculumTemplates`/`registrationTokens`/`teacherConnectTokens`/
+    `notifications`/`oauthStates` filtered by `teacherId`, then
+    `db.recursiveDelete(teachers/{teacherId})` (picks up anything left
+    under the doc — `integrations`, `examTypes`, `customSubjects`,
+    `subscriptionPayments`, any group that failed above), then optionally
+    `getAuth().deleteUser(teacherId)`. Reused by two callers: the new
+    admin-only `deleteTeacherAccount` callable (`deleteAuthUser: true` —
+    exposed as a type-to-confirm "Удалить учителя" button in
+    `AdminDashboard.jsx`'s per-teacher "Опасная зона" section) and the
+    one-off orphan-cleanup pass below (`deleteAuthUser: false`). **This is
+    the only correct way to remove a teacher going forward** — deleting
+    just the Firebase Auth account by hand (Console or otherwise) does NOT
+    cascade and reproduces the exact orphaned-data problem this session
+    fixed.
+  - **"Orphan" detection needs Firestore ∩ Auth, not either alone** — a
+    `teachers/{uid}` Firestore doc can outlive its own Firebase Auth
+    account (that's exactly how the pre-existing orphaned data was
+    created: the Auth account was deleted with no cascade, but nothing
+    ever touched the Firestore doc or its descendants). The one-off
+    cleanup script (temporary guarded `onRequest`, same "deploy, curl,
+    delete" pattern as `migrateToPrograms`/`isSlotEqual` diagnostics —
+    already removed from the codebase after use) computed `validTeacherIds
+    = firestoreTeacherIds ∩ authUids`, then scanned every top-level
+    teacherId-bearing collection plus every `teachers/{id}/<name>`
+    subcollection via `collectionGroup` (reaches orphaned subcollections
+    even when the parent doc is long gone) for any teacherId not in that
+    valid set — a `mode=report` (read-only) pass was reviewed before a
+    separate `mode=execute` pass, which just called `deleteTeacherData`
+    per orphan teacherId found, reusing the exact same cascade rather than
+    a parallel one-off deletion routine. **Any future "clean up orphaned
+    tenant data" pass should follow this same shape**: define validity as
+    an intersection of two independent sources of truth, dry-run first,
+    execute by calling the real production cascade function, never a
+    bespoke delete-everything-that-matches script.

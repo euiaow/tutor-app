@@ -316,25 +316,46 @@ function CompactStatusBadge({ tone, children }) {
   )
 }
 
-// Read-only — no confirm/reject/reschedule affordances here on purpose,
-// those live on the main "Следующий урок" card; this is just an overview
-// of every upcoming draft across all of a student's schedule slots.
-function UpcomingLessonRow({ lesson }) {
+// Styled like the teacher's own per-student upcoming-lessons card
+// (upcoming-lesson-card.jsx) but with every section shown at once instead
+// of behind an "Открыть" — assignment, own homework submission, and
+// reschedule/cancel all inline, since this dialog is the student's one
+// detailed view of a lesson that isn't their single "Следующий урок" card.
+// Reschedule/cancel reuse the exact same ProposeRescheduleDialog/
+// ProposeCancelDialog this file already defines for that card, with the
+// same isGroupLesson guard (a group mirror can't be individually
+// rescheduled/cancelled — see core/lessons.js's assertNotGroupMirror).
+function UpcomingLessonRow({ lesson, studentId }) {
   const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
+  const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+
+  const assignment = lesson.homework.assignment
+  const hasAssignment = assignment.text.trim() !== "" || assignment.files.length > 0
+  const submissionFiles = lesson.homework.submission.files ?? []
+  const lastSubmission = submissionFiles[submissionFiles.length - 1]
+  const effectiveDate = lesson.rescheduledDate ?? lesson.date
+
   return (
-    <li className="glass-inset flex flex-col gap-1.5 rounded-2xl px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <CalendarDays className="size-3.5" aria-hidden="true" />
-        {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
+    <li className="glass-inset flex flex-col gap-3 rounded-2xl px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CalendarDays className="size-3.5" aria-hidden="true" />
+          {formatLessonDateTime(effectiveDate, timeZone, dateLocale)}
+        </div>
+        {lesson.isGroupLesson ? (
+          <CompactStatusBadge tone="warn">{lesson.groupName || t("nextLesson.groupLabel", { name: lesson.subject })}</CompactStatusBadge>
+        ) : null}
       </div>
-      <p className="text-sm text-secondary-foreground">
-        {lesson.topic || <span className="text-muted-foreground">{t("common.noTopic")}</span>}
+
+      <p className="text-sm font-medium text-secondary-foreground">
+        {lesson.topic || <span className="font-normal text-muted-foreground">{t("common.noTopic")}</span>}
       </p>
 
       {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
-        <div className="mt-0.5 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CompactStatusBadge tone="warn">
             {lesson.rescheduleStatus === "pending_student"
               ? t("upcomingRow.pendingStudent")
@@ -342,7 +363,7 @@ function UpcomingLessonRow({ lesson }) {
           </CompactStatusBadge>
           <span className="flex items-center gap-1.5 text-xs">
             <span className="text-muted-foreground line-through">
-              {formatLessonDateTime(lesson.rescheduledDate ?? lesson.date, timeZone, dateLocale)}
+              {formatLessonDateTime(effectiveDate, timeZone, dateLocale)}
             </span>
             <ArrowRight className="size-3 text-muted-foreground" aria-hidden="true" />
             <span className="font-semibold text-foreground">
@@ -362,6 +383,122 @@ function UpcomingLessonRow({ lesson }) {
             ? t("upcomingRow.pendingStudentCancellation")
             : t("upcomingRow.cancellationProposed")}
         </CompactStatusBadge>
+      ) : null}
+
+      <div className="glass-soft rounded-2xl p-3.5">
+        <span className="font-display text-[0.65rem] font-medium tracking-[0.02em] text-muted-foreground">
+          {t("nextLesson.assignment")}
+        </span>
+        {hasAssignment ? (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {assignment.text ? <p className="text-sm text-secondary-foreground">{assignment.text}</p> : null}
+            {assignment.files.length > 0 ? (
+              <ul className="flex flex-col gap-1">
+                {assignment.files.map((file, index) => (
+                  <li key={`${file.url}-${index}`}>
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 text-sm font-semibold text-foreground underline underline-offset-2"
+                    >
+                      <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{file.title}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.assignmentEmpty")}</p>
+        )}
+      </div>
+
+      <div className="glass-soft rounded-2xl p-3.5">
+        <span className="font-display text-[0.65rem] font-medium tracking-[0.02em] text-muted-foreground">
+          {t("nextLesson.myHomework")}
+        </span>
+        {submissionFiles.length === 0 ? (
+          <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.homeworkNotSubmitted")}</p>
+        ) : (
+          <>
+            <p className="mt-1.5 flex items-center gap-1.5 text-sm font-semibold text-secondary-foreground">
+              <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              {t("nextLesson.homeworkReceived")}
+              {lastSubmission?.submittedAt ? (
+                <span className="font-normal text-muted-foreground">
+                  ({formatLessonDateTime(lastSubmission.submittedAt, timeZone, dateLocale)})
+                </span>
+              ) : null}
+            </p>
+            <ul className="mt-1.5 flex flex-col gap-1">
+              {submissionFiles.map((file, index) => (
+                <li key={`${file.url}-${index}`}>
+                  <a
+                    href={file.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 text-sm text-foreground underline underline-offset-2"
+                  >
+                    <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">
+                      {t("nextLesson.fileLabel", { index: index + 1 })}
+                      {file.submittedAt ? ` (${formatLessonDateTime(file.submittedAt, timeZone, dateLocale)})` : ""}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+
+      {lesson.isGroupLesson ? (
+        <p className="text-xs text-muted-foreground">{t("nextLesson.groupNoActions")}</p>
+      ) : lesson.rescheduleStatus !== "pending_teacher" || lesson.cancellationStatus !== "pending_teacher" ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {lesson.rescheduleStatus !== "pending_teacher" ? (
+            <button
+              type="button"
+              onClick={() => setRescheduleDialogOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2 text-xs font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
+            >
+              <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("nextLesson.rescheduleButton")}
+            </button>
+          ) : null}
+          {lesson.cancellationStatus !== "pending_teacher" ? (
+            <button
+              type="button"
+              onClick={() => setCancelDialogOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-medium text-destructive-foreground transition-transform hover:scale-[1.02]"
+              style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("nextLesson.cancelButton")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!lesson.isGroupLesson ? (
+        <>
+          <ProposeRescheduleDialog
+            studentId={studentId}
+            lessonId={lesson.id}
+            initialDate={effectiveDate}
+            open={rescheduleDialogOpen}
+            onOpenChange={setRescheduleDialogOpen}
+          />
+          <ProposeCancelDialog
+            studentId={studentId}
+            lessonId={lesson.id}
+            lessonDate={effectiveDate}
+            open={cancelDialogOpen}
+            onOpenChange={setCancelDialogOpen}
+          />
+        </>
       ) : null}
     </li>
   )
@@ -392,7 +529,7 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
 
   return (
     <GlassDialog open={open} onOpenChange={onOpenChange}>
-      <GlassDialogContent>
+      <GlassDialogContent className="max-w-2xl">
         <GlassDialogTitle>{t("allUpcomingDialog.title")}</GlassDialogTitle>
         <GlassDialogDescription>{t("allUpcomingDialog.description")}</GlassDialogDescription>
 
@@ -402,9 +539,9 @@ function AllUpcomingLessonsDialog({ studentId, open, onOpenChange }) {
           ) : lessons.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("allUpcomingDialog.empty")}</p>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-3">
               {lessons.map((lesson) => (
-                <UpcomingLessonRow key={lesson.id} lesson={lesson} />
+                <UpcomingLessonRow key={lesson.id} lesson={lesson} studentId={studentId} />
               ))}
             </ul>
           )}
@@ -716,6 +853,15 @@ function DashboardHeader({ t, firstName, initial, onSettingsClick }) {
           }
         >
           {t("header.greeting", { name: firstName })}
+          {/* The ✌️ moved out of the translated string itself (was baked
+              into "greeting" in both locales) and into its own hidden-on-
+              mobile span — it was adding real line-height on a narrow
+              phone for no benefit, per direct feedback. Desktop keeps it,
+              unchanged. */}
+          <span aria-hidden="true" className="hidden sm:inline">
+            {" "}
+            ✌️
+          </span>
         </h1>
       </div>
       <button

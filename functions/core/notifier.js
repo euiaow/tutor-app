@@ -142,7 +142,12 @@ async function createNotification({
       if (result && result.messageId != null) {
         sentMessage = { platform: result.platform, chatId: result.chatId, messageId: result.messageId }
       }
-    } else if (target === "teacher" && studentId) {
+    } else if (target === "teacher" && teacherId) {
+      // studentId is NOT required here (unlike the guard used to read) — a
+      // teacher notification about the teacher's own account (e.g.
+      // checkExpiringSubscriptions' subscription reminders) has no student
+      // involved at all, but still needs bot dispatch same as every other
+      // teacher notification.
       const { sendMessageToTeacher } = require("./teacherNotifier")
       const results = await sendMessageToTeacher(teacherId, resolvedText, { telegramReplyMarkup, vkKeyboard })
       delivered = results.length > 0

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Check, Copy, Loader2 } from "lucide-react"
 import {
-  SolidBtn,
   TeacherCancelBtn,
   TeacherDialog,
   TeacherDialogContent,
@@ -18,8 +17,16 @@ import {
   subscribeToTeacherContact,
 } from "@/firebase/teacherConnect"
 import { openExternalLink } from "@/lib/telegramWebApp"
+import { VK_PERSONAL_GROUP, VK_SHARED_GROUP } from "@/lib/registration-links"
+import { useVkGroupId } from "@/lib/user-prefs-context"
 
-const VK_COMMUNITY_CHAT_URL = "https://vk.ru/im/convo/-240507222?entrypoint=profile_page"
+// null (never assigned a personal community — every new teacher, by design)
+// resolves to SHARED here, same direction as registration-links.js's
+// resolveVkGroup — this is the teacher's own vkGroupId, not a student's.
+function vkCommunityChatUrl(vkGroupId) {
+  const group = vkGroupId === VK_PERSONAL_GROUP.id ? VK_PERSONAL_GROUP : VK_SHARED_GROUP
+  return `https://vk.ru/im/convo/-${group.id}?entrypoint=profile_page`
+}
 
 // Same shape as student-row.jsx's DeleteStudentDialog / pending-
 // registrations.jsx's CancelRegistrationDialog — reused by pattern. Opened
@@ -83,28 +90,66 @@ function DisconnectConfirmDialog({ platform, label, open, onOpenChange }) {
   )
 }
 
-function TelegramConnectBody({ onDone }) {
-  const [loading, setLoading] = useState(false)
+// The link is fetched as soon as the popover opens (same pattern as
+// VkConnectBody's code fetch below) rather than on click — a click handler
+// that awaits a network call before calling window.open() no longer counts
+// as a "direct result of a click" to most browsers' popup blockers, so the
+// window.open() silently gets blocked with no visible error. Fetching ahead
+// of time lets the button render as a real <a href> instead, which every
+// browser always allows regardless of timing (same reasoning as
+// contact-button.jsx's ContactLink).
+function TelegramConnectBody({ open, onDone }) {
+  const [deepLink, setDeepLink] = useState(null)
+  const [error, setError] = useState(false)
 
-  async function handleConnect() {
-    setLoading(true)
-    try {
-      const { deepLink } = await generateTeacherConnectToken("telegram")
-      window.open(deepLink, "_blank", "noopener,noreferrer")
-      onDone()
-    } catch (error) {
-      console.error("Failed to generate Telegram connect link:", error)
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    setDeepLink(null)
+    setError(false)
+    generateTeacherConnectToken("telegram")
+      .then(({ deepLink: link }) => {
+        if (!cancelled) setDeepLink(link)
+      })
+      .catch((err) => {
+        console.error("Failed to generate Telegram connect link:", err)
+        if (!cancelled) setError(true)
+      })
+
+    return () => {
+      cancelled = true
     }
+  }, [open])
+
+  function handleClick(event) {
+    if (window.Telegram?.WebApp?.openLink) {
+      event.preventDefault()
+      window.Telegram.WebApp.openLink(deepLink)
+    }
+    onDone()
   }
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-foreground/80">Нажмите кнопку, чтобы подключить Telegram-бота</p>
-      <SolidBtn onClick={handleConnect} disabled={loading}>
-        {loading ? "Открываем..." : "Открыть Telegram"}
-      </SolidBtn>
+      {error ? (
+        <p className="text-sm font-semibold text-destructive">Не удалось получить ссылку</p>
+      ) : (
+        // A real <a href> (not SolidBtn's <button>) — needs to be a genuine
+        // anchor for the popup-blocker fix above to actually work.
+        <a
+          href={deepLink ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-disabled={!deepLink}
+          onClick={deepLink ? handleClick : (event) => event.preventDefault()}
+          className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:brightness-105 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          style={{ background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" }}
+        >
+          {deepLink ? "Открыть Telegram" : "Открываем..."}
+        </a>
+      )}
     </div>
   )
 }
@@ -112,6 +157,7 @@ function TelegramConnectBody({ onDone }) {
 // The VK code is fetched as soon as the popover opens — the teacher's next
 // step is copying it, not clicking anything first.
 function VkConnectBody({ open }) {
+  const vkGroupId = useVkGroupId()
   const [code, setCode] = useState(null)
   const [copied, setCopied] = useState(false)
 
@@ -145,7 +191,7 @@ function VkConnectBody({ open }) {
         Скопируйте код и отправьте его в{" "}
         <button
           type="button"
-          onClick={() => openExternalLink(VK_COMMUNITY_CHAT_URL)}
+          onClick={() => openExternalLink(vkCommunityChatUrl(vkGroupId))}
           className="font-semibold text-primary underline underline-offset-2 hover:text-rose-deep"
         >
           сообщения нашего сообщества ВК
@@ -211,8 +257,9 @@ function ConnectStatusRow({ label, platform, connected, renderConnectBody, popov
 }
 
 // Two independent connection statuses (Telegram/VK) for the teacher's own
-// bot-notification channels — lives under the notification list in
-// TeacherNotificationsBell's dialog.
+// bot-notification channels — lives in the Settings dialog's "Уведомления"
+// subsection (moved there from the notifications bell's own dialog, where
+// it used to sit directly under the notification list).
 export function TeacherBotConnectStatus() {
   const [contact, setContact] = useState({ telegramConnected: false, vkConnected: false })
   const [loadError, setLoadError] = useState(null)
@@ -236,7 +283,7 @@ export function TeacherBotConnectStatus() {
   // a real disconnect.
   if (loadError) {
     return (
-      <div className="flex flex-col gap-2.5 border-t border-glass-border pt-3">
+      <div className="flex flex-col gap-2.5">
         <p className="text-sm text-destructive">
           Не удалось загрузить статус подключения ботов ({loadError.code ?? loadError.message})
         </p>
@@ -245,12 +292,12 @@ export function TeacherBotConnectStatus() {
   }
 
   return (
-    <div className="flex flex-col gap-2.5 border-t border-glass-border pt-3">
+    <div className="flex flex-col gap-2.5">
       <ConnectStatusRow
         label="Telegram"
         platform="telegram"
         connected={contact.telegramConnected}
-        renderConnectBody={({ onDone }) => <TelegramConnectBody onDone={onDone} />}
+        renderConnectBody={({ open, onDone }) => <TelegramConnectBody open={open} onDone={onDone} />}
       />
       <ConnectStatusRow
         label="ВК"

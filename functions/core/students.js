@@ -1,4 +1,5 @@
 const { HttpsError } = require("firebase-functions/v2/https")
+const { FieldValue } = require("firebase-admin/firestore")
 const logger = require("firebase-functions/logger")
 const { getStorage } = require("firebase-admin/storage")
 const { db } = require("./firestore")
@@ -9,7 +10,16 @@ const LESSONS_SUBCOLLECTION = "lessons"
 const REGISTRATION_TOKENS_COLLECTION = "registrationTokens"
 const TELEGRAM_SESSIONS_COLLECTION = "telegramSessions"
 const VK_SESSIONS_COLLECTION = "vkSessions"
+const NOTIFICATIONS_COLLECTION = "notifications"
 const BATCH_SIZE = 500
+
+// Every other per-student subcollection besides "lessons" (which needs its
+// own special handling — Storage/Calendar cleanup per doc, plus the
+// keepGroupLessons carve-out below). Deleting a student used to leave all of
+// these orphaned under a doc path that no longer resolves to anything (a
+// collectionGroup query can still find them) — see activeContext.md for the
+// cleanup pass this closes.
+const OTHER_STUDENT_SUBCOLLECTIONS = ["programs", "balanceLedger", "inventory", "decoration", "coinLedger"]
 
 // Storage download URLs look like
 // https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encodedPath}?alt=media&token=...
@@ -72,12 +82,22 @@ function collectLessonFileUrls(lesson) {
 // they're invisible to the student.googleEventIds map deleteStudent's own
 // cleanup loop reads. Collected here, alongside the file-url scan this
 // function already did, rather than a second pass over the same snapshot.
-async function deleteStudentLessons(studentId, bucket, teacherId) {
+// keepGroupLessons (default true, see deleteStudent's own param) leaves any
+// isGroupLesson mirror doc untouched — a group lesson mirror is shared
+// occurrence data (see core/groups.js's module comment on groupLessonKey
+// tying N mirrors together); deleting one member's copy on its own would
+// desync that occurrence from the rest of the group for no reason, when the
+// group itself (and hence all its mirrors) is deleted as a whole via
+// deleteGroup. A full teacher-account cascade delete passes
+// keepGroupLessons: false since by that point every group the teacher owns
+// is already being deleted anyway — this is just a safety net there.
+async function deleteStudentLessons(studentId, bucket, teacherId, { keepGroupLessons = true } = {}) {
   const lessonsRef = db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION)
   const snapshot = await lessonsRef.get()
+  const docsToDelete = snapshot.docs.filter((lessonDoc) => !(keepGroupLessons && lessonDoc.data().isGroupLesson))
 
   let extraLessonCalendarEventsDeleted = 0
-  for (const lessonDoc of snapshot.docs) {
+  for (const lessonDoc of docsToDelete) {
     const lesson = lessonDoc.data()
     const fileUrls = collectLessonFileUrls(lesson)
     for (const url of fileUrls) {
@@ -99,16 +119,80 @@ async function deleteStudentLessons(studentId, bucket, teacherId) {
     }
   }
 
-  const docs = snapshot.docs
-  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+  for (let i = 0; i < docsToDelete.length; i += BATCH_SIZE) {
     const batch = db.batch()
-    for (const lessonDoc of docs.slice(i, i + BATCH_SIZE)) {
+    for (const lessonDoc of docsToDelete.slice(i, i + BATCH_SIZE)) {
       batch.delete(lessonDoc.ref)
     }
     await batch.commit()
   }
 
-  return { lessonsDeleted: docs.length, extraLessonCalendarEventsDeleted }
+  return { lessonsDeleted: docsToDelete.length, extraLessonCalendarEventsDeleted }
+}
+
+// The other per-student subcollections (programs/balanceLedger/inventory/
+// decoration/coinLedger) have no Storage/Calendar side effects to worry
+// about — a plain recursive delete per subcollection is enough.
+async function deleteOtherStudentSubcollections(studentId) {
+  for (const subcollection of OTHER_STUDENT_SUBCOLLECTIONS) {
+    try {
+      await db.recursiveDelete(db.collection(STUDENTS_COLLECTION).doc(studentId).collection(subcollection))
+    } catch (error) {
+      logger.warn("deleteStudent: failed to delete subcollection, continuing", {
+        studentId,
+        subcollection,
+        error: error.message,
+      })
+    }
+  }
+}
+
+// A deleted student left in a group's memberStudentIds would otherwise get
+// silently "recreated" the next time ensureUpcomingGroupLessons runs for
+// that group — createUpcomingDraft would happily write a fresh
+// students/{deletedId}/lessons/{id} doc under a parent that no longer
+// exists. Scoped to groups this student's own teacherId owns (a group can
+// only ever contain a teacher's own students, so this is exhaustive without
+// a wider collectionGroup scan).
+async function removeStudentFromGroups(studentId, teacherId) {
+  if (!teacherId) return
+
+  try {
+    const snapshot = await db
+      .collection("teachers")
+      .doc(teacherId)
+      .collection("groups")
+      .where("memberStudentIds", "array-contains", studentId)
+      .get()
+
+    await Promise.all(
+      snapshot.docs.map((groupDoc) => groupDoc.ref.update({ memberStudentIds: FieldValue.arrayRemove(studentId) })),
+    )
+  } catch (error) {
+    logger.warn("deleteStudent: failed to remove student from groups, continuing", {
+      studentId,
+      teacherId,
+      error: error.message,
+    })
+  }
+}
+
+async function deleteNotificationsForStudent(studentId) {
+  try {
+    const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where("studentId", "==", studentId).get()
+    if (snapshot.empty) return
+
+    const docs = snapshot.docs
+    for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+      const batch = db.batch()
+      for (const notificationDoc of docs.slice(i, i + BATCH_SIZE)) {
+        batch.delete(notificationDoc.ref)
+      }
+      await batch.commit()
+    }
+  } catch (error) {
+    logger.warn("deleteStudent: failed to delete notifications, skipping", { studentId, error: error.message })
+  }
 }
 
 // completeRegistration (core/registration.js) stamps the token doc with
@@ -221,7 +305,12 @@ async function updateStudentSettings(studentId, { timezone, colorTheme, language
   return { success: true }
 }
 
-async function deleteStudent(studentId) {
+// keepGroupLessons: true is the normal (teacher deletes one student) case —
+// see deleteStudentLessons' own comment. A full teacher-account cascade
+// delete (core/admin.js's deleteTeacherAccount) passes false, since it
+// deletes every group first anyway and this is just a safety net for
+// anything that survives that pass.
+async function deleteStudent(studentId, { keepGroupLessons = true } = {}) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
@@ -258,7 +347,7 @@ async function deleteStudent(studentId) {
   let lessonsDeleted = 0
   let extraLessonCalendarEventsDeleted = 0
   try {
-    const result = await deleteStudentLessons(studentId, bucket, student.teacherId ?? null)
+    const result = await deleteStudentLessons(studentId, bucket, student.teacherId ?? null, { keepGroupLessons })
     lessonsDeleted = result.lessonsDeleted
     extraLessonCalendarEventsDeleted = result.extraLessonCalendarEventsDeleted
   } catch (error) {
@@ -268,6 +357,9 @@ async function deleteStudent(studentId) {
     })
   }
 
+  await deleteOtherStudentSubcollections(studentId)
+  await removeStudentFromGroups(studentId, student.teacherId ?? null)
+  await deleteNotificationsForStudent(studentId)
   await deleteRegistrationTokensForStudent(studentId)
   await deleteBotSessionsForStudent(studentId, student)
 

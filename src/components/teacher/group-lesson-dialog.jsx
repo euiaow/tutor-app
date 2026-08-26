@@ -36,7 +36,7 @@ import { uploadGroupMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
 import { SubjectTag } from "@/components/student-tags"
-import { useTimeZone } from "@/lib/user-prefs-context"
+import { useTimeZone, useThemeClass } from "@/lib/user-prefs-context"
 
 function Section({ icon: Icon, label, children }) {
   return (
@@ -68,6 +68,13 @@ function groupProgramPercent(program) {
 // reloaded after any mutation that isn't already reflected in local state.
 export function GroupLessonDialog({ teacherId, group, students, groupLessonKey, open, onOpenChange }) {
   const timeZone = useTimeZone()
+  // Whichever theme (src/lib/themes.js) the teacher picked — this dialog is
+  // portaled straight to document.body (see DialogPrimitive.Portal below),
+  // so it needs the class applied directly to itself rather than inherited
+  // from TeacherDashboard's root, same reasoning as TeacherDialogContent
+  // (theme-ui.jsx). Was hardcoded to "teacher-theme themed" (always pink)
+  // regardless of the teacher's actual chosen theme — real bug, fixed here.
+  const themeClass = useThemeClass() || "teacher-theme themed"
   const popupRef = useRef(null)
   const [mirrors, setMirrors] = useState([])
   const [loading, setLoading] = useState(true)
@@ -272,12 +279,12 @@ export function GroupLessonDialog({ teacherId, group, students, groupLessonKey, 
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop
           forceRender
-          className="teacher-theme themed fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0"
+          className={`${themeClass} fixed inset-0 z-[110] bg-ink/25 backdrop-blur-sm transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0`}
         />
         <DialogPrimitive.Popup
           ref={popupRef}
           initialFocus={popupRef}
-          className="teacher-theme themed glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]"
+          className={`${themeClass} glass-panel fixed top-1/2 left-1/2 z-[111] flex max-h-[90vh] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[2rem] p-0 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:max-h-[85vh]`}
         >
           <div className="shrink-0 p-6 pb-0 sm:p-7 sm:pb-0">
             <DialogPrimitive.Title className="pr-8 font-display text-xl tracking-tight text-ink">

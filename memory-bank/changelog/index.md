@@ -31,10 +31,16 @@ these files are for full verbatim narrative detail only, rarely needed.
   the dashboard, 5 zones), session 22 (group lessons follow-up: button
   placement, missing index, group-level curriculum programs), session 23
   (six independent follow-ups: student Finance section, Settings dropdowns
-  + autofocus-glow fix, Group 69 art, bot registration-link auto-pin).
-  Archived 2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19 (×3), 2026-08-20,
-  and 2026-08-23 (sessions 16-23, in one batch) respectively.
+  + autofocus-glow fix, Group 69 art, bot registration-link auto-pin),
+  session 24 (group lessons 11-item follow-up pass), session 26 (sticker
+  positions corrected again after real device testing, stacking-order bug
+  root-caused, Sticker Workshop mobile layout), session 27 (small
+  follow-up polish: zone1 nudge, placement picker enlarged). Archived
+  2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19 (×3), 2026-08-20,
+  2026-08-23 (sessions 16-23, in one batch), and 2026-08-24 (sessions 24,
+  26, 27, in one batch — session 25 had already been archived here
+  separately, earlier) respectively.
 
 `activeContext.md` itself keeps only the most recent sessions inline (as of
-2026-08-23: sessions 24-30) — check there first for anything recent; come
+2026-08-24: sessions 28-31) — check there first for anything recent; come
 here only for older detail.

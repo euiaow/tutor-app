@@ -70,9 +70,13 @@ teacher a proper web dashboard.
   always enters and always sees lesson times in *their own* timezone —
   never a shared assumption, never the tutor's timezone imposed on a
   student elsewhere, never the device's timezone silently substituted.
-  Color theme is purely cosmetic (pink or amber, the two palettes that
-  already existed for teacher/student respectively) — either side can
-  pick either one.
+  Color theme is purely cosmetic — either side picks from the same shared
+  set of themes, each defined as a background image + accent color + fixed
+  heading/subheading/text colors (session 31 rearchitecture, replacing an
+  earlier fixed pink/amber pair that was really two independently
+  hand-tuned CSS palettes, not a real theme system — see
+  `systemPatterns.md`). Adding a theme is a data-only change (`src/lib/
+  themes.js`), not a design/CSS task.
 - **A student also has a language preference (session 16)** —
   `students/{id}.language` ("ru"/"en", own Settings `<select>`), applied
   the same "always read/see in *their own* setting" way the timezone
@@ -95,3 +99,19 @@ teacher a proper web dashboard.
   dashboard is Russian-or-English per that student's own language
   preference (session 16) — English copy should read as natural English,
   not a literal translation either.
+
+## Data lifecycle (session 38)
+
+- **Removing a teacher account must always be a full cascade, never just a
+  Firebase Auth account deletion.** Before session 38 there was no
+  `deleteTeacher` at all, so every teacher removed (test accounts, in
+  practice) left 100% of their Firestore data behind — 23 orphaned
+  students' worth of data was found and cleaned up as a direct
+  consequence. The only correct removal path now is the admin panel's
+  "Удалить учителя" action (`deleteTeacherAccount`), which cascades
+  through every student/group/template/token/notification the teacher
+  owns before removing the teacher doc and Auth account together — see
+  `systemPatterns.md`'s cascade-delete entry. An admin panel already
+  exists for managing teacher subscriptions/blocking (undocumented here
+  prior to this session — worth a fuller productContext writeup if it
+  ever becomes a bigger part of the product story).

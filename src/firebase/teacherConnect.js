@@ -1,5 +1,5 @@
 import { httpsCallable } from "firebase/functions"
-import { doc, onSnapshot, setDoc } from "firebase/firestore"
+import { doc, onSnapshot } from "firebase/firestore"
 import { db, functions, auth } from "./firebase"
 
 // Multi-tenancy Phase 1: moved from the old singleton
@@ -12,6 +12,7 @@ function teacherContactDoc() {
 }
 
 const generateTeacherConnectTokenCallable = httpsCallable(functions, "generateTeacherConnectToken")
+const disconnectTeacherPlatformCallable = httpsCallable(functions, "disconnectTeacherPlatform")
 
 // Returns { deepLink } for "telegram" or { code } for "vk" — see
 // functions/core/teacherConnect.js.
@@ -39,7 +40,11 @@ export function subscribeToTeacherContact(onData, onError) {
   )
 }
 
+// Routed through a callable (not a direct client write, unlike this file's
+// other reads/writes) — the backend needs to send a "you've been
+// disconnected" message through the bot before clearing its chat id, which
+// needs a bot secret the client never has. See
+// functions/core/teacherConnect.js's disconnectTeacherPlatform.
 export async function disconnectTeacherPlatform(platform) {
-  const field = platform === "telegram" ? "telegramChatId" : "vkPeerId"
-  await setDoc(teacherContactDoc(), { [field]: null }, { merge: true })
+  await disconnectTeacherPlatformCallable({ platform })
 }

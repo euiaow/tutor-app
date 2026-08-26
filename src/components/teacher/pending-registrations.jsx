@@ -16,7 +16,7 @@ import {
   subscribeToPendingRegistrationTokens,
 } from "@/firebase/registration"
 import { buildRegistrationMessages } from "@/lib/registration-links"
-import { useTimeZone } from "@/lib/user-prefs-context"
+import { useTimeZone, useVkGroupId, useTelegramBotKey } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
 
 // Same shape as student-row.jsx's DeleteStudentDialog — reused by pattern,
@@ -94,9 +94,11 @@ function formatDate(timestamp, timeZone) {
 
 function PendingRegistrationItem({ item }) {
   const timeZone = useTimeZone()
+  const vkGroupId = useVkGroupId()
+  const telegramBotKey = useTelegramBotKey()
   const [copiedChannel, setCopiedChannel] = useState(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const { telegram: telegramMessage, vk: vkMessage } = buildRegistrationMessages(item.token)
+  const { telegram: telegramMessage, vk: vkMessage } = buildRegistrationMessages(item.token, vkGroupId, telegramBotKey)
 
   async function handleCopy(channel, message) {
     try {

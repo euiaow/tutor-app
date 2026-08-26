@@ -1,8 +1,397 @@
 # Active Context
 
-_Last updated: 2026-08-23 (session 30)_
+_Last updated: 2026-08-27 (session 38)_
 
 ## Current work focus
+
+### Session 38 — cascade-delete built for every tenancy level (teacher/student/group), plus a real production cleanup of 23 orphaned students left by a deleted test teacher account
+
+The user reported the actual root cause behind "the database isn't cleaning
+up": test teacher accounts had been deleted (Firebase Auth accounts removed)
+at some point in the past, but **no `deleteTeacher` function ever existed at
+all** — deleting the Auth account did nothing to Firestore, so every student,
+lesson, program, template, token, and notification the test teacher ever
+created just sat there permanently, invisible from the app (no `teachers/{uid}`
+doc left to surface them anywhere) but still live in the database.
+
+**Part 1 — cascade-delete logic, now the standing mechanism, not a one-off
+fix:**
+- `deleteStudent` (`functions/core/students.js`) was itself incomplete before
+  this session — it only ever cleaned up `lessons`, registration tokens, bot
+  sessions, Storage files, and Calendar events. Now also deletes `programs`,
+  `balanceLedger`, `inventory`, `decoration`, `coinLedger` (all previously
+  orphaned forever on student delete) and the student's own `notifications`,
+  and removes the student from any group's `memberStudentIds` (otherwise a
+  deleted student left in a group gets silently "recreated" the next time
+  `ensureUpcomingGroupLessons` runs). New `keepGroupLessons` option (default
+  true) leaves group-lesson mirror docs alone on a single-student delete, per
+  explicit product decision — see `systemPatterns.md`'s new cascade-delete
+  entry for the full mechanism and reasoning.
+- Brand new `deleteTeacherAccount` (admin-only callable,
+  `functions/core/admin.js` + `functions/core/teacherDeletion.js`) — the
+  first-ever teacher-level cascade delete. Deletes every group, every
+  student (full cascade above), curriculum templates, registration/connect
+  tokens, notifications, oauth states, then `teachers/{uid}` itself
+  (`db.recursiveDelete`) and the Firebase Auth account. Exposed as a
+  type-to-confirm "Удалить учителя" button in a new "Опасная зона" section
+  on each teacher's row in `AdminDashboard.jsx`. **This is now the only
+  correct way to remove a teacher** — deleting the Auth account by hand
+  (Console) still won't cascade to Firestore, reproducing the exact bug this
+  session fixed.
+
+**Part 2 — one-time production cleanup, already run and verified:** a
+temporary guarded `onRequest` diagnostic (same "deploy, curl, delete"
+pattern as prior sessions' `migrateToPrograms`/`isSlotEqual` diagnostics)
+computed valid teacherIds as the intersection of the `teachers` Firestore
+collection and live Firebase Auth users, found exactly 2 orphan teacherIds
+(zero orphaned `teachers` docs themselves — the app's teacher list was
+already clean), ran a `mode=report` dry-run first (reviewed with the user:
+23 students + their lessons/programs/balance/gamification data, 3 curriculum
+templates, tokens, ~50 notifications under one orphan teacherId; 1 stray
+curriculum template under a second), got explicit confirmation, then ran
+`mode=execute` — which just called the same `deleteTeacherData` cascade
+`deleteTeacherAccount` uses, `deleteAuthUser: false` since an orphan by
+definition has none. Verified via a second dry-run showing 0 orphans
+remaining; the 2 real current teachers' data was untouched throughout. The
+diagnostic function was deleted from both the deployed backend and the
+codebase immediately after use, per this project's standing convention for
+these temporary scripts.
+
+**Deployed**: `functions:deleteTeacherAccount`, `functions:deleteStudent`
+(updated cascade), hosting (admin panel UI). Code is not yet committed to
+git — the user hasn't asked for a commit this session.
+
+---
+
+### Session 37 — real infrastructure bug found: `index.html` was being served from an hours-stale CDN cache, explaining why sessions 34-36's fixes "weren't visible" even after successful deploys
+
+The user reported (across 3 separate messages) that the zone5 offset,
+zone2's placement-picker fix, and the button image nudges all "weren't
+showing up" despite session 36 having deployed them. Before touching any
+more offsets, verified the actual deployed code first: `curl`-ed the live
+site and found it was serving `index-Ed0mk9t-.css` (a session-33-era
+bundle hash) while the local `dist/index.html` correctly referenced the
+latest `index-Bi8jW42_.css` — the deploys were genuinely landing on
+Firebase's origin, they just weren't reaching users.
+
+**Root cause, confirmed via response headers, not guessed**:
+`Cache-Control: max-age=3600` plus `X-Cache: HIT` on `index.html`, with a
+`Last-Modified` over 7 hours stale — Firebase Hosting's platform default
+caches HTML at the CDN edge for up to an hour, and in this case the edge
+node was serving a copy well past even that stated max-age. Every code
+fix since roughly session 33 had been correctly built and deployed; none
+of it could reach a browser loading the page fresh until that cache
+happened to expire or get evicted.
+
+**Fix**: added an explicit `headers` block to `firebase.json` —
+`Cache-Control: no-cache, max-age=0, must-revalidate` on `**` (forces
+revalidation on every load, so a new deploy is visible immediately), with
+`/assets/**` overridden back to `public, max-age=31536000, immutable`
+(Vite's own content-hashed filenames make this genuinely safe to cache
+forever — a changed file always gets a new hash/URL, so nothing stale can
+ever be served from this specific path). First attempt at the header rule
+only targeted `source: "/index.html"` literally and didn't apply to `/`
+itself (Firebase matches headers against the *original requested path*,
+and the SPA rewrite `"**" → "/index.html"` doesn't carry the header rule
+through to the path being rewritten *from*) — broadened to `source: "**"`
+plus the asset override, then verified both cases directly with `curl -I`
+(root `/` → `no-cache`, an actual `/assets/*.css` file → the immutable
+long-cache header) before declaring it fixed, not just assuming the
+config was right.
+
+**This should mean every deploy from now on is visible immediately** —
+worth remembering if a future report ever again says "I deployed this,
+why doesn't it show up," since this exact class of bug produces that
+precise symptom and is very easy to misattribute to "the code fix must be
+wrong" (which happened here — 3 rounds of user reports treated as
+"still-wrong offsets" before checking whether the deploy was even
+reaching browsers at all).
+
+---
+
+## Current work focus
+
+### Session 36 — placement-picker zone2 was rendering off the mockup's own edge (real bug, not an offset tweak), zone5/button offsets nudged again, case-opening reel simplified to one continuous deceleration
+
+**Real bug found and fixed: the placement picker's zone2 marker
+rendered outside `MiniDashboard`'s own bounding box.** `ZONE_DEFS`' zone2
+entry was `{ x: 222→was 250, w: 34 }` against a `MINI_DASHBOARD_WIDTH` of
+260 — `250 + 34 = 284`, 24px past the mockup's own right edge, so the
+marker visibly hung off the edge of the interactive preview (worse once
+session 27's `MINI_DASHBOARD_SCALE` 1.6× made the whole thing bigger,
+scaling that overflow right along with everything else). Every other
+zone's `x + w` already fit inside 260 — this was the one arithmetic slip.
+Moved to `x: 222` (`222 + 34 = 256`, fits with a small margin).
+
+**zone5 (`ExamRadar`) desktop offset**: `sm:right-[68px]` →
+`sm:right-[88px]` (another 20px left).
+
+**Sticker-workshop button**: `Group 70` (mobile) shrunk another 1px
+(`GROUP_70_HEIGHT_DELTA` -9→-10) and its own right offset moved 1px right
+(`GROUP_70_RIGHT_OFFSET` -3→-4, independent from desktop's `Group 69`
+offset since session 35).
+
+**Case-opening reel simplified to a single continuous deceleration —
+dropped the medium-speed plateau entirely, per an explicit new spec.**
+Three straight sessions (29, 34, 35) each tried a fast→medium→stop shape
+and each attempt introduced a fresh timing or curve bug — the user's
+corrected spec this time has no plateau at all: start fast, decelerate
+smoothly straight down to a stop, over (at least) 12 seconds. Rebuilt
+`confirmOpen`'s spin logic from a 3-phase chained-`setTimeout`
+choreography (3 different `setSpinTransition` calls, one per phase) down
+to **one** `setSpinTransition` call and **one** CSS transition covering
+the entire `SPIN_DURATION_MS` (still 12000) with a single easing curve,
+`SPIN_EASE` = easeOutQuint (`cubic-bezier(0.22,1,0.36,1)`, a strong,
+continuous fast-start deceleration across the whole duration, not just a
+short final snap). No more phase ratios, no more per-phase curves, no
+seam between phases for a bad curve to hide inside — genuinely simpler
+code, not just a different set of numbers. The "must not come in under
+12s" requirement was already handled correctly (the `setPhase("result")`
+timer already padded `SPIN_DURATION_MS + 250` to land after the CSS
+transition visually finishes, accounting for the double
+`requestAnimationFrame` delay before the transition even starts) — kept
+as `SPIN_DONE_DELAY_MS`, now a named constant instead of an inline
+`+ 250`, specifically so this doesn't need re-deriving if it's ever
+questioned again.
+
+**No live browser/animation-frame verification possible in this
+environment** — same standing gap. If the reel still looks wrong after
+this, the *shape* is now trivial to eyeball from the single curve
+(`SPIN_EASE`) alone, since there's no multi-phase math left to hide a bug
+in.
+
+---
+
+## Current work focus
+
+### Session 35 — zone5/button offsets diverged further, case-opening reel rebuilt from scratch to an explicit 12s timing spec
+
+**zone5 (green square, `ExamRadar`) desktop offset**: `sm:right-[53px]` →
+`sm:right-[68px]` (15px further left, mobile's `right-12` untouched).
+
+**Sticker-workshop button image offsets diverged into two independent
+constants** (`GROUP_69_RIGHT_OFFSET`/`GROUP_70_RIGHT_OFFSET`, were one
+shared constant since session 32) — desktop's `Group 69` moved 2px right
+(-2→-4), mobile's `Group 70` moved 1px right (-2→-3, its own new
+constant) and shrunk another 3px (`GROUP_70_HEIGHT_DELTA` -6→-9 total
+against the Group 69 baseline height — the user reported the session 34
+shrink hadn't visibly landed, so this stacks a further reduction on top
+rather than assuming the prior change was wrong and reverting it).
+
+**Case-opening reel rebuilt from scratch, not patched again — the user
+gave an explicit new timing spec after sessions 29/34's fixes still
+didn't land right.** New spec: **12000ms total** (was 9000ms): starts at
+fast speed; over the first 3s, speed falls smoothly fast→medium; holds
+medium (constant) for the next 3s; over the final 6s, speed falls
+smoothly medium→0, landing on the server result. Time ratios are exact
+from that spec (0.25/0.25/0.5). Distance ratios (0.42/0.29/~0.29) are
+**derived, not guessed**: phase 2's rate defines "medium" (its own
+distance÷time, since it's linear); phase 1's average rate is approximated
+as the mean of fast-and-medium (a smooth deceleration's average sits
+roughly halfway between its endpoints); phase 3's average rate is
+approximated as half of medium (decelerating from medium to a dead stop).
+Converting those three average rates × each phase's own duration into a
+proportion gives the distance split — a documented derivation this time,
+specifically so a future correction can see *why* these numbers were
+chosen instead of re-guessing from scratch again. Phase 1 keeps
+`SPIN_PHASE1_EASE` (easeOutQuad) from session 34 — that curve wasn't the
+problem. Phase 3 switched from easeOutQuart to **easeOutCubic**
+(`cubic-bezier(0.215,0.61,0.355,1)`) — gentler/more gradual, chosen
+because phase 3 is now a much longer single span (6s, half the total
+spin) than before, and a "final snap" curve like easeOutQuart is tuned for
+a short decisive stop, not a long, evenly-paced decline across 6 full
+seconds.
+
+**No live browser/animation-frame verification possible in this
+environment** for any of these three fixes — particularly the reel, which
+has now been tuned twice on reasoning alone without ever being watched
+render. If the next report still says the motion looks wrong, the
+distance-ratio *derivation* above (not just the numbers) is the first
+thing to re-examine, since it rests on approximations ("average rate ≈
+mean of endpoints") that a real easing curve won't match exactly.
+
+---
+
+## Current work focus
+
+### Session 34 — button art nudged again, zone5 split desktop-only, and the real root cause of the spin's wrong motion found (bad easing curves, not bad ratios)
+
+Three small, independent follow-ups.
+
+**Sticker-workshop button**: `Group 70` (mobile) shrunk another 3px
+(`GROUP_70_HEIGHT_DELTA` -3→-6 total against the Group 69 baseline
+height), and `GROUP_69_RIGHT_OFFSET` -1→-2 (both images share this one
+constant, so both desktop's `Group 69` and mobile's `Group 70` shifted
+right together, as asked).
+
+**zone5 (green square, `ExamRadar`) split desktop/mobile again** — the
+first time any zone has needed a breakpoint split since session 26
+unified everything. `right-12` (48px) stayed the mobile value untouched
+per explicit instruction; desktop gets `sm:right-[53px]` (5px further
+left) on top of it.
+
+**Case-opening reel: root-caused for real this time — the phase
+time/distance ratios from session 32 were already correct, the two
+*easing curves* were badly chosen.** The user's report ("fast → decelerates
+almost to zero → medium → sudden fast burst → stop") was a precise
+description of what `cubic-bezier(0.16,0.84,0.36,1)` (phase 1) and the
+original `cubic-bezier(.12,.85,.18,1)` (phase 3, unchanged since session
+18) actually do: both have a control point with y very close to 1 reached
+very early in x — e.g. phase 1 hits 84% of its own distance within just
+16% of its own time. That's not "smoothly decelerate to a medium/zero
+speed," it's "sprint almost to the finish line immediately, then crawl
+through what's left" — which for phase 1 reads as "decelerates almost to
+a dead stop" (matching the report exactly) and for phase 3 reads as a
+late speed burst once its own crawl phase catches up to the visually
+larger remaining distance. **Fix: swapped both bespoke curves for
+well-known, much gentler named easing functions from easings.net**
+instead of guessing another bespoke one — `SPIN_PHASE1_EASE` = easeOutQuad
+(`cubic-bezier(0.25,0.46,0.45,0.94)`, mild/roughly-proportional
+deceleration) and `SPIN_PHASE3_EASE` = easeOutQuart
+(`cubic-bezier(0.165,0.84,0.44,1)`, a confident final snap to a stop but
+nowhere near as front-loaded as the original). Phase 2 stays linear,
+untouched. The lesson for next time a spin/motion complaint comes in:
+check the actual *shape* of any bezier curve in use (where does it cross
+50%/80%/90% of x) before assuming the phase time/distance split is what's
+wrong — a curve can make a perfectly reasonable ratio *look* completely
+different from what it should.
+
+**No live browser/animation-frame verification possible in this
+environment** for any of the three fixes.
+
+---
+
+## Current work focus
+
+### Session 33 — greeting emoji dropped on mobile, sticker-workshop button's desktop art reverted (session 32 shouldn't have touched it), mobile button layout fixed properly
+
+Direct correction of 2 of session 32's changes, per the user's real-device
+follow-up.
+
+**Greeting emoji (✌️) hidden on mobile only.** It was baked directly into
+the `header.greeting` translation string in both locales (`"Привет,
+{{name}}! ✌️"` / `"Hi, {{name}}! ✌️"`) — taking real line-height on a
+narrow phone for no benefit. Moved it out of the translated string
+entirely (both `src/locales/{ru,en}/student.json` now end at the
+exclamation mark) and into its own `<span aria-hidden="true" className="hidden sm:inline">`
+right after the heading text in `DashboardHeader` — desktop is unaffected
+byte-for-byte, mobile just never renders it. Cleaner than trying to strip
+a fixed suffix out of translated text at render time, and doesn't need a
+second translation key.
+
+**Sticker-workshop button: desktop art reverted to Group 69 — session 32
+was wrong to touch it at all.** The original ask (session 29) was
+specifically about the *mobile* overlap; session 32 swapped desktop's art
+too, which the user explicitly did not want. `sticker-workshop-button.jsx`
+now renders **two** `<img>` elements — `group69` (`hidden sm:block`,
+exactly the original height/offset constants, byte-for-byte the pre-
+session-29 desktop behavior) and `group70` (`block sm:hidden`, mobile-
+only) — instead of one image swapped globally.
+
+**Mobile button layout, corrected (session 32's mobile version was "right
+idea, wrong execution," per the user):**
+- Title shortened to "Стикеры"/"Stickers" on mobile only — new
+  `gamification.portalTitleShort` key in both locales, desktop keeps the
+  full "Стикеры и кейсы"/"Cases and stickers" via the existing
+  `portalTitle` key unchanged.
+- The coin-balance badge moved to its own line under the (now shorter)
+  title on mobile, instead of squeezed onto the same line — two separate
+  title-row `<div>`s now exist (`hidden sm:flex` for the desktop
+  title+badge-inline layout, `sm:hidden` for the mobile stacked one),
+  rather than one row trying to serve both layouts.
+- `Group 70`'s mobile height nudged down another 3px
+  (`GROUP_70_HEIGHT_DELTA = -3`, added to the existing
+  `buttonHeight + GROUP_69_HEIGHT_OFFSET` calculation), same top alignment
+  and right offset as before — a pure size tweak, no positioning logic
+  changed.
+
+**No live browser verification possible in this environment** — same
+standing gap as every prior gamification session.
+
+---
+
+## Current work focus
+
+### Session 32 — mobile-only zone1 restructure (real device testing again), zone5 nudged, sticker-workshop button art swapped + text shortened on mobile, case-opening reel timing corrected for real this time
+
+Three independent follow-ups, all frontend-only, deployed hosting each
+round (no backend changes).
+
+**zone1 needed a genuinely different mobile treatment, not just a
+different offset.** Real-device testing (screenshots) showed the kitten
+sticker still partially covering the greeting name on a narrow phone —
+confirmed the standing risk flagged since session 26 (zone1 uses a fixed-
+px offset that doesn't scale down against a narrower header). Rather than
+chase another guessed offset, restructured the mobile case entirely: new
+`DashboardHeader` component (`StudentDashboard.jsx`) — pulled out of the
+inline header JSX specifically because `useGamification()` can't see a
+`<GamificationProvider>`'s value from within the *same* render call that
+creates that provider element; it needs a real descendant component. When
+`decoration.zone1` is occupied, `DashboardHeader` **hides "Добро
+пожаловать" and drops `truncate` on the greeting heading** on mobile only
+(both revert via `sm:` at ≥640px) — freeing vertical space and letting a
+long name wrap onto a second line instead of being physically covered,
+which needed no i18n changes since it's the browser's own natural word-
+wrap, not a hardcoded line split. zone1 itself now renders **twice**:
+unchanged inside `NextLessonPlate` but `hidden sm:block` (desktop-only,
+exactly as sessions 25/26 left it — the user confirmed desktop already
+looks right), and a new second instance directly inside `DashboardHeader`
+(`sm:hidden`, mobile-only), anchored to the header itself and positioned
+to clear the gear+avatar cluster (`right-[136px]`, the same 132px-cluster
+clearance math session 25 originally derived, reused here because the
+header — unlike the lesson card — has no wider link below it to also
+clear).
+
+**zone5 (on `ExamRadar`) nudged left and slightly up** per direct
+feedback that it was the one sticker still slightly out of place on both
+breakpoints (`bottom-[-56px] right-12`, was `bottom-[-68px] right-6`).
+
+**Sticker-workshop button: art swapped, text shortened on mobile.** The
+button's own art (`Group 69.png`, pinned to its right edge sized off the
+button's real rendered height with no width cap) could stretch to ~2/3 of
+the button's width on some renders and run into the title/balance text.
+Rather than algorithmically cap the image's width, the user supplied a
+pre-cropped narrower asset (`Group 70.png`, ~20-30% narrower at the same
+height) — swapped in directly (`sticker-workshop-button.jsx`), same
+height/offset constants reused since only the crop changed, not the
+vertical fit. Paired with the user's own explicit priority ("shrink text
+first, only on mobile"): the hint line ("Открой кейс и собери
+коллекцию") is now `hidden sm:block`, and the title+badge row gained
+`min-w-0`/`truncate`/`shrink-0` in the right places so a still-tight fit
+truncates the title gracefully instead of overflowing, rather than a
+second asset-side fix.
+
+**Case-opening reel timing corrected for real — the previous "3-phase
+spin" (session 18) had the wrong shape entirely.** The user's own
+description of the bug: it looked like half the spin ran at a flat medium
+speed, then accelerated and decelerated near the end — because phase 1
+used an *ease-in* curve (`cubic-bezier(.55,0,.85,.35)`, accelerating up
+*from rest*) but was so short (8% of total time) that the rev-up was
+barely visible, making the following medium-speed linear plateau look
+like the spin's actual starting state. Corrected per explicit spec: the
+reel must already be at full/fast speed the instant it starts (no rev-up
+from rest at all), decelerate down to a steady medium plateau, hold that
+medium speed for roughly half the total spin time, then decelerate a
+second time down to an exact stop on the server result. Implementation:
+phase 1's easing curve flipped from ease-in to ease-out
+(`cubic-bezier(0.16,0.84,0.36,1)`) so it *starts* fast and *ends* at the
+plateau's speed instead of the reverse; `SPIN_PHASE1_TIME_RATIO`
+0.08→0.15, `SPIN_PHASE2_TIME_RATIO` 0.6→0.5 (the explicit "half the total
+time" requirement), `SPIN_PHASE1_DIST_RATIO` 0.06→0.32,
+`SPIN_PHASE2_DIST_RATIO` 0.62→0.45 (phase 1 needs to cover proportionally
+more distance per unit time than before, since it's now the *fastest*
+phase rather than the slowest one ramping up). Phase 2 stays linear,
+phase 3 keeps its existing ease-out-to-a-hard-stop curve unchanged — only
+phase 1's curve direction and all three phases' time/distance shares
+changed.
+
+**No live browser verification possible in this environment** for any of
+the three fixes — the zone1 restructure's real behavior on a narrow
+phone, the button's actual fit with the new asset, and the reel's real
+perceived timing are all reasoned from the report/spec, not measured
+against a running page or a real animation frame trace.
+
+---
 
 ### Session 30 — quick follow-up polish on session 29's group work
 
@@ -63,320 +452,133 @@ Topic/assignment/material edits on a group lesson are **not** special any more �
 
 Deployed: functions, firestore indexes, hosting.
 
-
-
-Small, fast follow-up to session 26. Two independent asks.
-
-**zone1 further left.** `right-[190px]` → `right-[230px]`
-(`NextLessonPlate`, `StudentDashboard.jsx`) — a plain further nudge in the
-same direction session 26 already established was correct, no new
-reasoning needed.
-
-**Placement picker enlarged to be the tab's main visual focus
-(`sticker-workshop-modal.jsx`).** The user's framing: an average student
-will place close to all 5 zones, so the "ГДЕ РАЗМЕСТИТЬ" panel — until now
-a small 318px-wide side panel next to the sticker inventory grid, with its
-`MiniDashboard` preview capped at `maxHeight:300` and force-scrolling —
-should dominate the tab's space instead of playing second fiddle to the
-inventory list. New `MINI_DASHBOARD_SCALE = 1.6` constant scales the whole
-mockup+zone-marker subtree via a CSS `transform: scale()` wrapper, rather
-than hand-multiplying every one of `MiniDashboard`'s and `ZONE_DEFS`' hand-
-authored pixel values — everything inside (the mockup's rects/lines, each
-zone's absolute-positioned marker, the `StickerFrame` thumbnails, the
-label text) stays authored at the original 260×470 base size and scales
-uniformly as a unit; click hit-testing works correctly through a CSS
-transform so `onClick={() => setSelectedZone(z.id)}` needed no changes.
-Panel width now derives from the scaled mockup size
-(`MINI_DASHBOARD_WIDTH * MINI_DASHBOARD_SCALE + 38`) instead of a hardcoded
-`318`; the inventory grid to its left changed from a growing
-`flex:"1 1 320px"` to a fixed, non-growing `flex:"0 1 240px"` so it stops
-competing with the picker for leftover row space. The old `maxHeight:300`
-scroll cap (sized for the small pre-scale mockup, would have clipped most
-of a 1.6×-scaled one) became `maxHeight:"72vh"` — generous enough that the
-now-larger mockup should rarely need its own internal scrollbar, with a
-viewport-relative cap still there as a safety net rather than removed
-outright.
-
-**No live browser verification possible in this environment** — the
-panel's real proportions at the modal's actual 1040px-wide container, and
-whether `72vh` is the right cap on a real device, are unconfirmed against
-a running page.
-
 ---
 
-## Current work focus
+### Session 31 — Color-theme system rearchitected as a real registry (background image + accent + 3 text colors), plus 5 real bugs found and fixed along the way
 
-### Session 26 — Sticker positions corrected again after real user testing (root-caused stacking-order bug), one-sticker-one-slot enforced, Sticker Workshop modal made responsive
+User asked to check the existing pink/amber color-theme feature against a
+new target architecture: a theme should be defined by a background image +
+accent color (+ fixed heading/subheading/text colors), addable without
+touching CSS by hand. The existing system was the opposite — two color
+palettes fully hand-tuned as ~30 hardcoded CSS variables each
+(`.teacher-theme`/`.amber-scope` in `index.css`), the theme id list
+duplicated across CSS/frontend/backend, and the teacher's own theme picker
+literally `disabled` (never wired up despite the CSS already existing).
 
-Direct follow-up to session 25 — the user tested the actual deployed page
-(not just reviewed screenshots) and reported specific remaining overlaps,
-then mid-session added an unrelated but adjacent request: the case-picker
-modal itself had no mobile layout at all.
+**New architecture**: `src/lib/themes.js`'s `THEME_REGISTRY` is the single
+source of truth — each theme is exactly 5 author-facing fields: `id`,
+`label`, `radius`, `backgroundImage` (a `/bg/...` public path or `null`),
+`accent`, `heading`, `subheading`, `text`. `src/lib/apply-theme-styles.js`
+(`applyThemeRegistry()`, called once in `main.jsx` before React mounts)
+turns each entry into a tiny runtime-injected `<style>` rule —
+`.{cssClassName} { --accent-color; --heading-color; --subheading-color;
+--text-color; --theme-bg-image; --radius; }` — nothing more. **All** the
+~20 other tokens any component actually reads (`--card`, `--border`,
+`--shadow-*`, `--gradient-*`, decorative blob gradients, `--rose-deep`,
+etc.) are derived from just those 4 colors in ONE shared block in
+`index.css` (`.themed`, replacing the old `.teacher-theme`/`.amber-scope`
+duplication) via CSS relative-color syntax — `oklch(from var(--accent-color)
+L C h)` reuses the accent's own hue while choosing a fresh lightness/chroma
+per surface. Adding a theme is now a pure data change in `themes.js` (plus
+a matching id in `functions/core/themes.js`'s `VALID_THEME_IDS`, since the
+backend validates `colorTheme` server-side in `updateStudentSettings` and
+can't import the frontend's ESM registry directly) — confirmed for real
+this session when the user added a third theme ("blue") with zero CSS/
+component edits needed. Teacher and student now share the exact same
+registry/mechanism (one theme system for both roles, per explicit
+decision) — the teacher's picker (`settings-dialog.jsx`) was un-disabled
+as part of this.
 
-**Anchor/position corrections, desktop (screenshots showed real overlaps):**
-- `zone1` ("kitten"): was landing on the "Посмотреть все уроки" link,
-  which turned out to be *wider* than the header's own gear+avatar cluster
-  session 25 sized the clearance against — the link's text extends further
-  left than the icons above it, so clearing only the icons wasn't enough.
-  Moved further left and higher (`top-[-104px] right-[190px]`, was
-  `top-[-72px] right-[140px]`).
-- `zone2` ("pretty soul"): user's own correction — "почти целиком в блоке"
-  (should sit almost entirely *inside* the card, not mostly hanging past
-  its right edge as session 25 had it). Changed from a `right:-70px`
-  outside-the-border offset to `right:8px`, a small *inset*.
-- `zone3` ("МГУ", on `GoalCard`): user's correction — should overlap the
-  notifications banner above *more*, but must never touch the "Русский
-  язык" title or the "Заполнить" button, both of which span nearly this
-  card's entire height in its no-goal state (title left, button far
-  right — there's no safe vertical band to dip into at all). Pushing the
-  offset more negative (`top-[-84px]`, was `-54px`) fixes both at once:
-  less of the sticker reaches down into the card in the first place.
-  Shifted right too (`left-[52%]`, was `28%`) to clear both the title and
-  stay left of the button.
-- **`zone4`/`zone5` no longer ever render on `CurriculumProgressCard`** —
-  the user was explicit: only the `ExamRadar` card should ever carry a
-  sticker, never the plain no-goal progress card. Session 25's
-  `showDecoration={index === 0}` was wrong for this — for a student whose
-  *first* program has no goal (this test student's "Русский язык"), index
-  0 renders `CurriculumProgressCard`, not `ExamRadar`, so the sticker was
-  landing on the wrong card by construction, not just a wrong offset.
-  Fixed by computing `firstExamRadarIndex = programBlocks.findIndex(b =>
-  b.hasGoal && b.metrics)` in `StudentDashboard.jsx` and gating `ExamRadar`
-  on `index === firstExamRadarIndex` instead — `CurriculumProgressCard`
-  lost its `showDecoration` prop entirely, by design, not an oversight.
-- **Root-caused a real stacking-order bug, not just an offset**: zone5 (on
-  `ExamRadar`) was rendering *behind* the next card down (`MaterialsLibrary`
-  or whatever program block follows). A `position:relative` ancestor with
-  no `z-index` of its own doesn't win a stacking comparison against a
-  later DOM sibling, no matter what z-index its own overflowing child
-  carries — the child's `z-10` only out-ranks other elements *inside that
-  same stacking context*, not a separate sibling section entirely. Fixed
-  by adding `z-10` to `ExamRadar`'s own `<section>` (`relative z-10`), not
-  just to the `DecorationZone` inside it. This only matters for
-  *bottom*-overlapping zones reaching into a *later* sibling — top
-  overlaps into an *earlier* sibling already win by plain DOM order, no
-  fix needed there (confirmed this is why zone1/zone3/zone4's top overlaps
-  never showed this symptom). Also nudged zone5 further down per the
-  user's request (`bottom-[-68px]`, was `-56px`).
-- **Unified every position to one value for all breakpoints** (dropped
-  every `sm:` split introduced in session 25), per the user's own explicit
-  direction after testing on a real phone — confirmed zone4/zone5's
-  existing *mobile*-specific offsets already looked correct there, and
-  said a single set of offsets plus the existing `--sticker-max` responsive
-  size (unchanged, still 130px/70px) would be enough. Not fully
-  width-safe in principle for a very narrow phone (zone1/zone2 use fixed
-  px offsets that don't scale down with a narrower header, unlike zone3/
-  zone4's percentage-based ones) — accepted deliberately on the user's own
-  real-device confirmation rather than re-litigated with more untestable
-  guesses.
-- Fixed rotation angles (`decoration-zone.jsx`) were already correct from
-  session 25 (+3/-5/+2/-4/+5) — untouched this session.
+**Real bugs found and fixed** (all via user testing after each deploy —
+this environment has no browser to catch these directly):
+1. `--primary-foreground: oklch(0.99 0.005 h)` referenced the bare `h`
+   (hue) channel *outside* an `oklch(from ...)` context, where it's not a
+   valid value at all — this silently invalidated the whole declaration,
+   so button/icon text meant to be white fell back to default black on
+   every accent-colored surface. Fixed to a literal `oklch(0.99 0.005 90)`.
+2. `--gradient-warm` was declared ONLY at `:root`, never per-theme — every
+   student-page accent button/icon/progress-bar/tag that reads it
+   (`exam-radar.jsx`, `lesson-history.jsx`'s "warm" badge, several
+   `StudentDashboard.jsx` buttons) stayed hardcoded orange regardless of
+   the chosen theme. Added a derived `--gradient-warm` to `.themed`.
+3. `StudentGrainBackground` (`src/components/student-grain-background.jsx`)
+   unconditionally hardcoded `url('/bg/gr21.jpg')`, painting over the
+   theme's own `--theme-bg-image` entirely — background never changed with
+   the theme no matter what. Fixed to read
+   `var(--theme-bg-image, url('/bg/gr21.jpg'))` (the literal URL is now
+   only a fallback for `LoginScreen`, rendered before the student's own
+   theme is even loaded) and mounted a second instance *inside* the
+   `.themed` root in `StudentDashboardContent` (CSS custom properties only
+   resolve for descendants of the class that sets them — the original
+   instance lives in an outer wrapper that isn't one). Amber's own
+   registry entry was given `backgroundImage: "/bg/gr21.jpg"` explicitly to
+   preserve the pre-existing default look.
+4. `GroupLessonDialog` and `HomeworkLessonDialog` (`components/teacher/`) —
+   both portaled straight to `document.body` via `DialogPrimitive.Portal`
+   — had a **literal hardcoded** `className="teacher-theme themed"` on
+   their backdrop/popup, forcing the pink theme regardless of what the
+   teacher actually picked in Settings. Every other portaled
+   dialog/popover in the codebase already called `useThemeClass()` for
+   exactly this reason (`TeacherDialogContent`/`TeacherPopoverContent` in
+   `theme-ui.jsx`) — these two were simply missed when `useThemeClass()`
+   was introduced. Fixed to match the established pattern. This is why a
+   lesson card's own icons/buttons looked "unchanged" after a theme
+   switch — the card itself was already correctly themed, but the dialog
+   it opens on click wasn't.
+5. `ru`/`en` `student.json`'s `settings.colorThemeOptions.pink`/`.amber`
+   keys held stale hand-written labels ("Янтарная (ученическая)" etc.) that
+   shadowed the registry's own (more current) `label` field via i18n's key
+   lookup — teacher (no i18n layer) showed the fresh registry label,
+   student (reads through `t(..., {defaultValue: theme.label})`) showed
+   the stale one, so the same theme displayed two different names on the
+   two dashboards. Removed the stale keys entirely — `theme.label` is now
+   the single source of truth on both sides (a theme need never touch
+   locale files at all, only gets one if someone deliberately wants an
+   English-specific name later).
 
-**One-sticker-one-slot enforced (`sticker-workshop-modal.jsx`).** Nothing
-previously stopped the same inventory item from being written into
-multiple zones — `placeArmed(zoneId)` now looks up every other zone
-(`DECORATION_ZONES`, imported from `firebase/gamification.js`) that
-already holds `placingItemId` and clears them (`saveDecorationApi(...,
-null)`) before writing the new placement, so placing a sticker somewhere
-new always *moves* it rather than cloning it onto a second spot.
-Client-side only, matching this app's existing trust model for other
-student-facing writes — not pushed into the `saveDecoration` Cloud
-Function itself this session.
+**Defensive fix, not a confirmed-live bug**: added a same-value fallback
+for `--accent-color`/`--heading-color`/`--subheading-color`/`--text-color`
+directly inside `.themed` itself, guarding against the specific CSS
+failure mode where an unresolvable `var()` reference makes a custom
+property "guaranteed-invalid" — that invalidity silently propagates through
+every token derived from it, collapsing a non-inherited property like
+`background-color` down to its own initial value (**transparent**, not any
+visible fallback color) rather than erroring visibly. Real unlayered
+per-theme rules always win over these safety-net values regardless of
+source order (an unlayered rule always beats one inside `@layer base`,
+where `.themed` lives) — see `systemPatterns.md`'s new theme-registry entry
+for the full mechanism.
 
-**Sticker Workshop modal — mobile layout added where none existed
-(new request, arrived mid-session, not part of the positioning fixes
-above).** The "коллекция" (collection) tab was already responsive and
-untouched, per the user's own instruction. The cases grid (`tab ===
-"cases"`) and the case-detail view (`tab === "detail"`) had a fixed
-3-column / two-column-side-by-side layout with no mobile variant at all.
-New `useIsMobile(breakpoint = 640)` hook (genuinely reactive — a resize
-listener, not a one-time check) added alongside the file's existing
-`useModalFonts`/`useBodyScrollLock` hooks; deliberately *not* reusing the
-file's two pre-existing `window.innerWidth < 760` one-off checks (those
-only apply at initial paint, sizing decorative header art where a stale
-value after rotation/resize is a minor cosmetic mismatch — a whole page
-layout staying stuck in the wrong column count after rotating the phone
-would be a much more visible bug). Cases grid: `repeat(3,minmax(0,1fr))`
-→ `1fr` on mobile (single column, cases stack vertically). Detail view:
-`minmax(0,268px) minmax(0,1fr)` two-column grid → `1fr` single column on
-mobile, with the left "cover card" (fan-preview art, title, description,
-price, "ОТКРЫТЬ КЕЙС" button) switching from a fixed `width:259` to
-`width:"100%"` — description card stays first in source order either way,
-so going single-column naturally puts description on top and the "ЧТО
-МОЖЕТ ВЫПАСТЬ" sticker-pool grid below it, matching the request directly
-without needing to reorder any JSX.
+**Also this session**: added a `TeacherSelect` for "Тип шкалы" when
+creating a new exam type (`curriculum-section.jsx`) — was still a native
+`<select>`, the last one in that file.
 
-**No live browser verification possible in this environment** for the new
-mobile-modal-layout piece specifically (the position fixes above *were*
-verified by the user on a real device this session, per their own
-message) — flagged for a check next session, particularly the `resize`
-listener's actual behavior on an orientation change.
+**Deploy discipline reminder, surfaced directly by user confusion this
+session**: editing a local file (even `themes.js`) never updates the live
+site by itself — `npm run build`/`vite build` only writes to the local
+`dist/` folder. Seeing changes on the real site requires an explicit
+`firebase deploy --only hosting` afterward, and if a Cloud Function's own
+validation set changed too (e.g. `VALID_THEME_IDS` for a new theme id),
+also `--only functions:<name>` for whichever callable enforces it (here,
+`updateStudentSettings` — the teacher's own `colorTheme` write is a direct
+client Firestore update via `firebase/teachers.js`, so it never needs a
+function redeploy for a new theme id, only the student-facing callable
+does).
 
----
-
-## Current work focus
-
-### Session 25 — Sticker positioning corrected against a real reference screenshot: new anchor scheme, an explicit forbidden-zone list, mobile fixes, and a real mini-mockup placement picker
-
-Follow-up to session 21's first pass, which the user reported was visibly
-wrong on both desktop and mobile (screenshots showed a sticker sitting
-directly on top of the settings gear, another covering the student's name,
-and truncated text). Backend intentionally untouched this session (user's
-own instruction) — this was purely a positioning/UI correction using the
-same 5-zone data model session 21 already shipped.
-
-**Задача 1 — new anchor scheme, 5 zones repositioned against the reference screenshot.**
-The zone→anchor mapping changed from session 21's guess:
-- `zone1` ("kitten") stays on `NextLessonPlate` but now sits beside the
-  greeting on desktop (`sm:top-[-72px] sm:right-[140px]` — the right
-  offset is sized to clear the header's gear(44px)+gap(16px)+avatar(56px)
-  cluster with margin, not guessed) and drops to a shallow top-right corner
-  overlap on mobile (`top-[-16px] right-2`, capped at -16px specifically
-  because the header/card gap is only 20px — anything more negative starts
-  sitting on top of the avatar).
-- `zone2` ("pretty soul") stays on `NextLessonPlate`'s right edge at
-  "Задание"'s height on desktop (`sm:top-[42%] sm:right-[-70px]` — ~60% of
-  its own width outside the border, per the user's explicit spec, not
-  fully in the margin like session 21's version), moves to a **bottom**-right
-  corner on mobile (`bottom-[-14px] right-[-21px]`, not top, specifically
-  so it can't collide with zone1's new mobile corner).
-- `zone3` ("МГУ") is a **new anchor** — moved off `NextLessonPlate` onto
-  `GoalCard` ("Моя цель")'s own top border, ~28% from the left on desktop /
-  ~48% on mobile (not the spec's literal "~30%" on both — the narrower
-  mobile card would put 30% directly on top of the "Моя цель" title text
-  at that width, so it was nudged right specifically to clear that title,
-  per Задача 2's "sticker moves, not the element" rule).
-- `zone4`/`zone5` stay on the exam-radar card (`ExamRadar`/
-  `CurriculumProgressCard`, whichever renders for the student's first
-  program) but zone4 switched from a `right`-based offset to a `left`-based
-  one (`sm:left-[75%]`, matching the spec's explicit horizontal percentage
-  directly) and zone5's mobile overlap was shrunk to `-16px` (was `-40px`)
-  to land inside that card's own bottom padding rather than reaching up
-  into visible content.
-- Fixed per-zone rotation angles updated to the new spec's values
-  (`decoration-zone.jsx`'s `ZONE_ROTATION_DEG`): zone1 +3°, zone2 -5°,
-  zone3 +2°, zone4 -4°, zone5 +5° (was an arbitrary -7/6/-9/8/-5 set in
-  session 21 with no reference to match against).
-- Border-radius (10px) and the "cap the longest edge, keep real aspect
-  ratio" sizing rule were already correct from session 21 — untouched.
-
-**Задача 2 — explicit forbidden-zone list, addressed by moving stickers, not elements.**
-No literal "forbidden zone registry" data structure was built (there's no
-runtime collision detection in this codebase, and the user's own bug
-reports were all specific, named elements) — instead every offset above
-was hand-checked against the exact named list (settings gear, avatar,
-greeting name, the 7 named buttons, the numeric readouts, card titles) via
-the *page's own real layout math*, not guessed:
-- The header→card gap is exactly 20px (`gap-5` on the page's flex column),
-  which is why -20px is the hard ceiling for any zone1-style top-overlap
-  on mobile — go past it and you're on the gear/avatar, confirmed by
-  computing the header's own height (56px, the avatar) against that gap.
-- zone3's horizontal position was widened specifically because the "Моя
-  цель" title sits immediately after a 40px icon badge — at the mobile
-  card's narrower width, the spec's literal 30% mark lands inside that
-  title's own text span.
-- zone2's mobile move to the *bottom*-right corner (not top) was chosen
-  because a bottom-edge overlap lands in that card's own bottom padding
-  (`p-6`/`p-8`, real empty space before the border) — verified against the
-  actual JSX, where the "Перенести/Отменить урок" buttons are the last
-  content row before that padding starts, not flush against the border.
-- `DecorationZone`'s wrapper already carries `pointer-events-none`
-  (session 21) — stickers were never able to *block clicks* through to a
-  button underneath; this session's fixes are about visual occlusion
-  specifically, which pointer-events can't help with.
-- z-index: no change needed — `DecorationZone` uses `z-10`, and every
-  modal/dropdown/select in this app (`ui/dialog.jsx`, `glass-select.jsx`,
-  `theme-ui.jsx`'s `TeacherPopover`) renders at `z-50` or higher through a
-  portal, confirmed via a repo-wide grep before deciding this was already
-  correct rather than assuming.
-
-**Задача 3 — mobile fixes.**
-- `--sticker-max`'s mobile tier (`src/index.css`) dropped from 76px to the
-  spec's 70px.
-- **Real word-wrap bug fixed, matching the exact screenshot ("Станет
-  доступна за 3 мину…")**: the video-call status line
-  (`NextLessonPlate`, both the individual- and group-lesson variants,
-  `StudentDashboard.jsx`) had a stray `truncate` class forcing single-line
-  ellipsis inside a `grid-cols-[minmax(0,1fr)_auto]` row — swapped for
-  `break-words`, unrelated to the sticker-positioning work but the exact
-  bug the user's screenshot 4 showed. Not a sticker overlap at all, a
-  pre-existing className bug this task's screenshots happened to surface.
-- zone1's forced move off the greeting entirely on mobile, and zone2's
-  move to a bottom (not top) corner, are also part of this task (see
-  Задача 1 above — the mobile-specific offsets are what satisfy this).
-
-**Задача 4 — replaced the abstract zone-picker with a real mini-mockup.**
-`sticker-workshop-modal.jsx`'s "ГДЕ РАЗМЕСТИТЬ" panel no longer loads
-`dashboard-screen.png` (deleted from the import list and `CRITICAL_IMAGES`
-preload array — no longer referenced anywhere, confirmed via grep before
-removing, and the built bundle no longer includes it, confirmed via a
-clean `vite build` diff). New `MiniDashboard` component hand-draws a
-simplified, recognizable redraw of the real page at a fixed 260×470px
-scale (header row, lesson card with its two buttons, notification banner,
-goal card, exam-radar card, materials card — flat rects/lines, not a
-screenshot) so the picker can show all 5 zones at their real relative
-positions instead of the old abstract "КАРТОЧКА УРОКА"/"НИЗ СТРАНИЦЫ"
-labels. `ZONE_DEFS` switched from percentage-based to fixed-pixel
-coordinates over this new mockup (the `zones` builder in the modal
-dropped its `${z.x}%` string interpolation for plain numeric `left`/`top`/
-`width`/`minHeight`). An occupied zone now renders the student's actual
-placed sticker via the existing `StickerFrame` component (same one the
-inventory grid already uses) at a small size, instead of the old flat
-9×9 color-dot swatch; an empty zone still shows a dashed border with a
-short label. Clicking/hover behavior (`onClick={() => setSelectedZone(...)`,
-the `selected`/`occupied` style branches) is unchanged — only what's
-rendered underneath and what an occupied slot looks like changed.
-
-**No live browser measurement was possible this session either** (same
-standing environment gap noted in every prior gamification session) —
-every offset above was derived from the reference screenshot's visual
-proportions plus the *real* JSX/layout math (header height, gap sizes,
-padding, which elements are left- vs. right-aligned in each row), not
-measured against a running page. Verified via `npx vite build` (clean,
-`dashboard-screen.png` confirmed dropped from the bundle) and `npx eslint`
-scoped to every touched file (zero new violations — only the same
-pre-existing `react-hooks/set-state-in-effect`/`react-hooks/purity`
-findings already present throughout this codebase). Deployed hosting only
-(no functions changes, per the user's own "не меняем бэкенд" instruction —
-the 5-zone `saveDecoration` validation from session 21 already covers
-zone1-5, nothing new needed there).
-
-**Loose end for next session**: a real DevTools pass against the actual
-rendered page, at both breakpoints, particularly to confirm zone3's
-horizontal offset genuinely clears the "Моя цель" title at real font
-metrics (computed from an estimated title width, not a measured one) and
-that zone1's mobile `-16px` ceiling doesn't still graze the avatar circle's
-own rounded edge at real pixel sizes.
+Deployed across 3 rounds this session: hosting + `functions:updateStudentSettings`
+(registry rollout + blue theme), then hosting again (the 5 bug fixes
+above).
 
 ---
-
-### Session 24 — Group lessons: 11 follow-up corrections in one pass (visual polish, custom dropdowns everywhere, cascade-delete, merged lesson-card layout, program progress in the group lesson dialog, moved "ближайшие занятия" to its own dialog, extra lessons for groups, group visibility in the top upcoming-lessons panel)
-
-All 11 items deployed (functions, one new query already covered by an existing index, hosting) and the 2 new backend mechanisms (cascade-delete, extra group lesson) verified against real Admin-SDK-created throwaway data via a temporary diagnostic, same "deploy, invoke, delete" discipline as every other one-off diagnostic in this project.
-
-1. **Member pills now have a visible border** (`border border-glass-border` added to `GroupMembersList`'s pills, groups-section.jsx) — were white-on-white glass with no separation.
-2. **"+ Добавить программу" text was centered, not left-aligned** — root cause: a plain `<button>` as a flex child of a `flex-col` container stretches to full width by default (align-items: stretch), and a bare `<button>`'s own UA-stylesheet text-align is `center` — so it read as centered even though no CSS said so explicitly. Fixed with `self-start text-left`.
-3. **Every remaining native `<select>` for picking a curriculum template (or program) is now the custom `TeacherSelect`** — `ReassignGroupProgramDialog`/`AddGroupProgramControl` (groups-section.jsx), `ReassignProgramDialog`/`AddProgramControl` (student-row.jsx, per the explicit "также в разделе учеников" instruction), and the program-switcher inside `HomeworkLessonDialog`'s completing-mode progress section (found while already in that file for item 5, same pattern, fixed for consistency).
-4. **`deleteGroupProgram` now cascades to every member's individual copy** — corrected from session 22's original design (which deliberately left member copies untouched, mirroring `reassignProgram`'s own "don't reach into a student's independent data" reasoning). Real behavior change: `assignGroupProgram`'s per-member fan-out now stamps `sourceGroupProgramId` onto each created student program doc (a follow-up field write after `assignCurriculumTemplate` returns, that function itself stays completely unmodified); `deleteGroupProgram` queries `students/{id}/programs where sourceGroupProgramId == programId` for every member and deletes those too, before deleting the group's own doc. `reassignGroupProgram` was NOT changed the same way (not mentioned, left touching only the group's own shared copy) — worth revisiting if the user wants full symmetry later.
-5. **`HomeworkLessonDialog`'s "Тема урока" and "Задание" are now one `Section` with one save button** — turned out the save action was *already* unified (`handleSaveAssignment` already called both `updateHomeworkAssignment` and `updateLessonTopic` together, there was only ever one button) — the actual complaint was purely visual (two separate `glass-tile` cards reading as unrelated). Pure JSX restructure, no behavior change.
-6. **`GroupLessonDialog` got the same topic+assignment merge, PLUS 3 new pieces it didn't have before**: (a) `ProgramTopicPicker` (exported from homework-lesson-dialog.jsx, previously private) now sources from the group's own shared program via a new one-time-read `getProgramsForGroup(teacherId, groupId)` (firebase/groups.js, mirrors `getProgramsForStudent`); (b) a new "Прогресс по программе группы" section in completing mode — `CoveredMaterialChecklist` (also newly exported) lets the teacher pick which topics/prototypes this session covered, applied via a loop of `setGroupCurriculumItemCovered` calls right after `completeGroupLesson` succeeds (not part of that callable itself — a plain client-side follow-up, matching the "manual toggle" shape that function already had); (c) a real `ProgressBar` (theme-ui.jsx) showing the group program's overall percent, also added to `GroupProgramRow` in groups-section.jsx (was flat `{percent}%` text before).
-7. **"Ближайшие занятия" no longer sits inertly inside the expanded group row** — moved behind its own "Следующие уроки"/"След. уроки" button (new `GroupUpcomingLessonsDialog`, exact same "button opens a dialog with the list" shape the individual student row already uses), reusing the existing `GroupLessonsList`/`GroupLessonRow` pair unchanged inside it. The expanded row (chevron toggle) now shows only Участники + Программа. "Редактировать" shortened to "Ред." per explicit instruction.
-8. **Schedule slot's day-of-week `<select>` (`schedule-slots-editor.jsx`, shared by both the student edit form and the group form) is now `TeacherSelect`** — one shared component, one fix covers both callers.
-9. **`ExtraLessonDialog`'s student `<select>` is now `TeacherSelect`.**
-10. **`ExtraLessonDialog` can now target a group, not just a student** — a segmented "Ученик/Группа" toggle (only rendered when `groups.length > 0`, so nothing changes visually for a teacher with no groups yet) switches which `TeacherSelect` + submit path is used. New backend `createExtraGroupLesson` (functions/core/groups.js) mirrors `createExtraLesson` (core/lessons.js): `slotIndex: null, isExtraLesson: true`, one Calendar event via a new `createExtraGroupLessonEvent` (googleCalendar.js, mirrors `createExtraLessonEvent` but `colorIdForSubject(group.subject)` instead of `colorIdForStudent`), and a new notification type `group_extra_lesson_assigned` (both notificationMessages.js mirrors) sent to every member independently.
-11. **Group lessons weren't showing up in the top "Ближайшие уроки" panel at all** — that panel only ever queried individual lessons (`subscribeToUpcomingLessons`). Added a parallel `subscribeToUpcomingGroupLessonsForTeacher` (firebase/groups.js, same `teacherId==`/`status==` query shape `subscribeToIncomeGroupLessons` already uses, a strict prefix of the existing `{teacherId,status,date}` composite index — confirmed no new index needed, unlike session 22's `subscribeToIncomeGroupLessons` itself which genuinely did) and rendered the results via the newly-exported `GroupLessonRow` (groups-section.jsx) inline in the same `<ul>`, right after the individual `UpcomingLessonCard`s — not interleaved by date, appended after, a acceptable simplification given how few groups a solo tutor is likely to run at once.
-
-**Verified for real, not just built**: a temporary diagnostic (`diagnoseGroupFixesOnce`, deployed/invoked/deleted) created 2 throwaway students + a group, assigned a program, confirmed both members got a `sourceGroupProgramId`-stamped individual copy, called `deleteGroupProgram`, confirmed both individual copies were actually gone afterward — then separately called `createExtraGroupLesson` and confirmed the resulting doc has `isExtraLesson: true` and the right `memberIds`. Both real, both correct.
-
-**Still not independently re-verified by a live UI click-through** (same standing environment gap as every prior session — no browser automation here) — the `TeacherSelect` swaps, the merged dialog layouts, the "Следующие уроки" dialog, and the extra-group-lesson toggle are all confirmed by build+lint only, not a real render. Told the user to check via their own session as usual.
-
-
 
 ## Older sessions archived
 
-Sessions 16-23's full write-ups (i18n rollout, gamification MVP + Sticker
-Workshop phases 1-2, group lessons v1, and the six-item follow-up round)
-moved to `changelog/2026-08-august.md` on 2026-08-23 to keep this file
-focused on current work — durable patterns from them already live in
-`systemPatterns.md`/`progress.md`/`techContext.md`. See `progress.md`'s own
-session-by-session summary for what shipped in each.
+Sessions 16-27's full write-ups (i18n rollout, gamification MVP + Sticker
+Workshop phases 1-2 and its visual-polish/positioning follow-ups through
+session 27, group lessons v1 through the 11-item follow-up round) moved to
+`changelog/2026-08-august.md` (sessions 16-23 archived 2026-08-23; sessions
+24/26/27 archived 2026-08-24 — session 25 was already archived there
+separately) to keep this file focused on current work — durable patterns
+from them already live in `systemPatterns.md`/`progress.md`/
+`techContext.md`. See `progress.md`'s own session-by-session summary for
+what shipped in each.

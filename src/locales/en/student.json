@@ -14,7 +14,7 @@
   },
   "header": {
     "welcome": "Welcome",
-    "greeting": "Hi, {{name}}! ✌️",
+    "greeting": "Hi, {{name}}!",
     "settingsAria": "Settings"
   },
   "page": {
@@ -174,11 +174,7 @@
     "timezone": "Time zone",
     "language": "Language",
     "colorTheme": "Color theme",
-    "saveError": "Failed to save settings",
-    "colorThemeOptions": {
-      "pink": "Pink (teacher's)",
-      "amber": "Amber (student's)"
-    }
+    "saveError": "Failed to save settings"
   },
   "login": {
     "pageTitle": "Log in",
@@ -196,6 +192,7 @@
   },
   "gamification": {
     "portalTitle": "Cases and stickers",
+    "portalTitleShort": "Stickers",
     "portalHint": "Open a case and build your collection"
   },
   "finance": {

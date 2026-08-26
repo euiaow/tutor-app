@@ -30,24 +30,39 @@ async function sendReminderToStudent(studentId, message, options = {}) {
   const student = studentSnapshot.data()
 
   if (student.platform === "telegram" && student.telegramChatId) {
+    // student.telegramBotKey (set once at registration, see
+    // core/registration.js) picks which bot's token this goes out through —
+    // undefined/null (a legacy student predating the personal/shared split)
+    // falls back to the personal bot inside sendTelegramMessage/
+    // resolveTelegramToken.
     const result = await sendTelegramMessage(student.telegramChatId, message, {
       replyMarkup: options.telegramReplyMarkup,
+      botKey: student.telegramBotKey ?? null,
     })
     logger.info("sendReminderToStudent: sent via Telegram", { studentId })
     return {
       platform: "telegram",
       chatId: student.telegramChatId,
       messageId: result?.result?.message_id ?? null,
+      botKey: student.telegramBotKey ?? null,
     }
   }
 
   if (student.platform === "vk" && student.vkPeerId) {
-    const result = await sendVkMessage(student.vkPeerId, message, { keyboard: options.vkKeyboard })
+    // student.vkGroupId (set once at registration, see core/registration.js)
+    // picks which VK community's token this goes out through — undefined/
+    // null (a legacy student predating the personal/shared split) falls
+    // back to the personal community inside sendVkMessage/resolveVkToken.
+    const result = await sendVkMessage(student.vkPeerId, message, {
+      keyboard: options.vkKeyboard,
+      groupId: student.vkGroupId ?? null,
+    })
     logger.info("sendReminderToStudent: sent via VK", { studentId })
     return {
       platform: "vk",
       chatId: student.vkPeerId,
       messageId: result?.response ?? null,
+      groupId: student.vkGroupId ?? null,
     }
   }
 

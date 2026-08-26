@@ -149,6 +149,16 @@ async function completeRegistration(token, fullName, accessCode, identity = null
   const platform = identity?.platform ?? null
   const telegramChatId = platform === "telegram" ? String(identity.id) : null
   const vkPeerId = platform === "vk" ? String(identity.id) : null
+  // Which VK community this student registered through (personal or
+  // shared) — saved once, at registration time, never recomputed later, so
+  // outbound sends (reminders/notifications) always know which secret to
+  // use for this specific student. null for a Telegram-registered student.
+  const vkGroupId = platform === "vk" && identity.groupId != null ? String(identity.groupId) : null
+  // Same idea for the Telegram personal/shared bot split — which webhook
+  // (telegramWebhook vs telegramSharedWebhook) this student registered
+  // through, saved once and never recomputed. null for a VK-registered
+  // student.
+  const telegramBotKey = platform === "telegram" ? identity.botKey ?? null : null
 
   const tokenRef = db.collection(REGISTRATION_TOKENS_COLLECTION).doc(token)
   const tokenSnapshot = await tokenRef.get()
@@ -191,6 +201,8 @@ async function completeRegistration(token, fullName, accessCode, identity = null
       platform,
       telegramChatId,
       vkPeerId,
+      vkGroupId,
+      telegramBotKey,
       teacherId: freshToken.data().teacherId ?? null,
     })
 

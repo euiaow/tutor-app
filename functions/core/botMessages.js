@@ -116,6 +116,10 @@ function TEACHER_CONNECT_INVALID() {
   return "Ссылка недействительна или устарела, сгенерируйте новую в панели"
 }
 
+function TEACHER_DISCONNECTED() {
+  return "Вы отключили этот канал от уведомлений. Чтобы снова получать их сюда, подключите канал заново в панели."
+}
+
 // timeZone defaults to Europe/Moscow purely as a technical safety net for a
 // recipient with no timezone saved on their profile yet (see
 // lib/timezone.js's identical default on the frontend) — every real caller
@@ -488,6 +492,7 @@ module.exports = {
   REGISTRATION_FAILED,
   TEACHER_CONNECTED,
   TEACHER_CONNECT_INVALID,
+  TEACHER_DISCONNECTED,
   REMINDER_MIDDAY_SUMMARY,
   buildPreLessonMessage,
   buildTenMinuteReminderMessage,

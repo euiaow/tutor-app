@@ -26,7 +26,33 @@ const SESSIONS_COLLECTION = "telegramSessions"
 
 const PLACEHOLDER_DOMAIN = "princessschool-e678c.web.app"
 
+// Telegram bot split (by analogy with the VK personal/shared split):
+// TELEGRAM_BOT_TOKEN is (name kept as-is, not renamed) now specifically the
+// PERSONAL bot's token — the original bot, still serving whichever single
+// teacher it's set up for. TELEGRAM_SHARED_BOT_TOKEN is the new bot every
+// other teacher's students go through. Which one a given request/message
+// uses is resolved per-request from which webhook endpoint received it
+// (telegramWebhook = personal, telegramSharedWebhook = shared — Telegram has
+// no equivalent of VK's group_id-on-every-event, so the webhook itself is
+// the signal) via resolveTelegramToken/PERSONAL_BOT_KEY/SHARED_BOT_KEY below
+// — never a single hardcoded secret.
 const TELEGRAM_BOT_TOKEN = defineSecret("TELEGRAM_BOT_TOKEN")
+const TELEGRAM_SHARED_BOT_TOKEN = defineSecret("TELEGRAM_SHARED_BOT_TOKEN")
+
+const PERSONAL_BOT_KEY = "personal"
+const SHARED_BOT_KEY = "shared"
+
+// The single place that turns "which bot is this?" into a secret value —
+// every send/delete/pin/callback-answer/file-download call below goes
+// through this, never `TELEGRAM_BOT_TOKEN.value()` directly. Missing/
+// unrecognized botKey (null, undefined, a legacy student/teacher predating
+// this split) falls back to the PERSONAL token, since every Telegram
+// student/teacher that existed before this split registered through the
+// personal bot — falling back to the shared one would silently break their
+// delivery.
+function resolveTelegramToken(botKey) {
+  return botKey === SHARED_BOT_KEY ? TELEGRAM_SHARED_BOT_TOKEN.value() : TELEGRAM_BOT_TOKEN.value()
+}
 
 function parseStartToken(text) {
   const match = /^\/start(?:\s+(\S+))?/.exec(text.trim())
@@ -45,8 +71,12 @@ function isRescheduleRequestText(text) {
   return normalized.includes("перенести урок") || normalized.includes("хочу перенести")
 }
 
+// `options.botKey` picks which bot's token sends this — always pass it
+// explicitly (the caller knows which webhook request/student/teacher this
+// is for); omitting it falls back to the personal bot via
+// resolveTelegramToken.
 async function sendMessage(chatId, text, options = {}) {
-  const token = TELEGRAM_BOT_TOKEN.value()
+  const token = resolveTelegramToken(options.botKey)
   const url = `https://api.telegram.org/bot${token}/sendMessage`
 
   const body = { chat_id: chatId, text }
@@ -83,8 +113,8 @@ async function sendMessage(chatId, text, options = {}) {
 // answered through a different channel (see core/lessons.js's
 // deleteProposalMessage). Telegram rejects this for messages older than 48h
 // or already deleted; callers are expected to treat failure as non-fatal.
-async function deleteMessage(chatId, messageId) {
-  const token = TELEGRAM_BOT_TOKEN.value()
+async function deleteMessage(chatId, messageId, botKey) {
+  const token = resolveTelegramToken(botKey)
   const url = `https://api.telegram.org/bot${token}/deleteMessage`
 
   try {
@@ -113,8 +143,8 @@ async function deleteMessage(chatId, messageId) {
 // in a private bot chat, but a stale/blocked chat is still possible, and a
 // failure here must never affect whether registration itself is considered
 // successful — see handleAwaitingPin's call site.
-async function pinChatMessage(chatId, messageId) {
-  const token = TELEGRAM_BOT_TOKEN.value()
+async function pinChatMessage(chatId, messageId, botKey) {
+  const token = resolveTelegramToken(botKey)
   const url = `https://api.telegram.org/bot${token}/pinChatMessage`
 
   const response = await fetch(url, {
@@ -133,8 +163,8 @@ async function pinChatMessage(chatId, messageId) {
 // Telegram expects every callback_query to be acknowledged, or the button
 // keeps showing a loading spinner on the client — `text` (optional) pops up
 // as a small toast.
-async function answerCallbackQuery(callbackQueryId, text) {
-  const token = TELEGRAM_BOT_TOKEN.value()
+async function answerCallbackQuery(callbackQueryId, text, botKey) {
+  const token = resolveTelegramToken(botKey)
   const url = `https://api.telegram.org/bot${token}/answerCallbackQuery`
 
   try {
@@ -148,7 +178,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
   }
 }
 
-async function handleStart(chatId, text) {
+async function handleStart(chatId, text, botKey) {
   const rawArg = parseStartToken(text)
 
   // "/start teacher_{token}" connects the teacher's own chat to receive
@@ -161,7 +191,9 @@ async function handleStart(chatId, text) {
     const connected = await resolveTeacherConnectToken(token, "telegram", chatId)
 
     logger.info("Telegram teacher connect attempt", { chatId, token, connected })
-    await sendMessage(chatId, connected ? botMessages.TEACHER_CONNECTED() : botMessages.TEACHER_CONNECT_INVALID())
+    await sendMessage(chatId, connected ? botMessages.TEACHER_CONNECTED() : botMessages.TEACHER_CONNECT_INVALID(), {
+      botKey,
+    })
     return
   }
 
@@ -178,7 +210,7 @@ async function handleStart(chatId, text) {
 
     if (!teacher) {
       logger.warn("Telegram self-service signup: unknown teacher slug", { chatId, slug })
-      await sendMessage(chatId, botMessages.SIGNUP_LINK_INVALID())
+      await sendMessage(chatId, botMessages.SIGNUP_LINK_INVALID(), { botKey })
       return
     }
 
@@ -187,10 +219,10 @@ async function handleStart(chatId, text) {
     await db
       .collection(SESSIONS_COLLECTION)
       .doc(String(chatId))
-      .set({ token, step: "awaiting_name" })
+      .set({ token, step: "awaiting_name", botKey })
 
     logger.info("Telegram self-service signup started", { chatId, token, teacherId: teacher.id })
-    await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN())
+    await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN(), { botKey })
     return
   }
 
@@ -200,13 +232,13 @@ async function handleStart(chatId, text) {
   // once there's more than one teacher to potentially attribute it to.
   if (rawArg === "signup") {
     logger.info("Telegram self-service signup requested with no teacher slug", { chatId })
-    await sendMessage(chatId, botMessages.SIGNUP_NEEDS_TEACHER_LINK())
+    await sendMessage(chatId, botMessages.SIGNUP_NEEDS_TEACHER_LINK(), { botKey })
     return
   }
 
   if (!rawArg) {
     logger.info("Telegram /start received without a token", { chatId })
-    await sendMessage(chatId, botMessages.WELCOME_NO_TOKEN())
+    await sendMessage(chatId, botMessages.WELCOME_NO_TOKEN(), { botKey })
     return
   }
 
@@ -216,17 +248,17 @@ async function handleStart(chatId, text) {
 
   if (!tokenData || tokenData.status !== "pending") {
     logger.warn("Telegram /start with invalid or used token", { chatId, token: rawArg })
-    await sendMessage(chatId, botMessages.INVALID_TOKEN())
+    await sendMessage(chatId, botMessages.INVALID_TOKEN(), { botKey })
     return
   }
 
   await db
     .collection(SESSIONS_COLLECTION)
     .doc(String(chatId))
-    .set({ token: rawArg, step: "awaiting_name" })
+    .set({ token: rawArg, step: "awaiting_name", botKey })
 
   logger.info("Telegram session started", { chatId, token: rawArg, step: "awaiting_name" })
-  await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN())
+  await sendMessage(chatId, botMessages.WELCOME_WITH_TOKEN(), { botKey })
 }
 
 async function handleAwaitingName(chatId, sessionRef, session, text) {
@@ -235,15 +267,16 @@ async function handleAwaitingName(chatId, sessionRef, session, text) {
   await sessionRef.set({ ...session, name, step: "awaiting_pin" })
 
   logger.info("Telegram name captured", { chatId, step: "awaiting_pin" })
-  await sendMessage(chatId, botMessages.NAME_SAVED(name))
+  await sendMessage(chatId, botMessages.NAME_SAVED(name), { botKey: session.botKey })
 }
 
 async function handleAwaitingPin(chatId, sessionRef, session, text) {
   const pin = text.trim()
+  const botKey = session.botKey
 
   if (!isFourDigitPin(pin)) {
     logger.info("Telegram pin rejected: not 4 digits", { chatId })
-    await sendMessage(chatId, botMessages.INVALID_PIN())
+    await sendMessage(chatId, botMessages.INVALID_PIN(), { botKey })
     return
   }
 
@@ -253,6 +286,7 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
     const studentId = await completeRegistration(session.token, session.name, pin, {
       platform: "telegram",
       id: chatId,
+      botKey,
     })
     await sessionRef.delete()
 
@@ -260,12 +294,13 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
     const sent = await sendMessage(
       chatId,
       botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`, true),
+      { botKey },
     )
 
     const sentMessageId = sent?.ok ? sent.result?.message_id : null
     if (sentMessageId) {
       try {
-        await pinChatMessage(chatId, sentMessageId)
+        await pinChatMessage(chatId, sentMessageId, botKey)
       } catch (pinError) {
         logger.warn("Telegram pinChatMessage failed after registration", { chatId, studentId, error: pinError })
       }
@@ -275,7 +310,7 @@ async function handleAwaitingPin(chatId, sessionRef, session, text) {
     await sessionRef.delete()
 
     const message = error instanceof HttpsError ? error.message : botMessages.REGISTRATION_FAILED()
-    await sendMessage(chatId, message)
+    await sendMessage(chatId, message, { botKey })
   }
 }
 
@@ -296,8 +331,8 @@ function extractIncomingFile(message) {
   return null
 }
 
-async function downloadTelegramFile(fileId) {
-  const token = TELEGRAM_BOT_TOKEN.value()
+async function downloadTelegramFile(fileId, botKey) {
+  const token = resolveTelegramToken(botKey)
 
   const fileInfoResponse = await fetch(
     `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`,
@@ -318,7 +353,7 @@ async function downloadTelegramFile(fileId) {
   return Buffer.from(await fileResponse.arrayBuffer())
 }
 
-async function handleRescheduleRequest(chatId, studentId) {
+async function handleRescheduleRequest(chatId, studentId, botKey) {
   const lessonsSnapshot = await db
     .collection("students")
     .doc(studentId)
@@ -328,7 +363,7 @@ async function handleRescheduleRequest(chatId, studentId) {
     .get()
 
   if (lessonsSnapshot.empty) {
-    await sendMessage(chatId, botMessages.RESCHEDULE_NO_UPCOMING_LESSON())
+    await sendMessage(chatId, botMessages.RESCHEDULE_NO_UPCOMING_LESSON(), { botKey })
     return
   }
 
@@ -337,16 +372,17 @@ async function handleRescheduleRequest(chatId, studentId) {
   await db
     .collection(SESSIONS_COLLECTION)
     .doc(String(chatId))
-    .set({ step: "awaiting_reschedule_date", lessonId })
+    .set({ step: "awaiting_reschedule_date", lessonId, botKey })
 
   logger.info("Telegram reschedule request started", { chatId, studentId, lessonId })
-  await sendMessage(chatId, botMessages.RESCHEDULE_ASK_DATE())
+  await sendMessage(chatId, botMessages.RESCHEDULE_ASK_DATE(), { botKey })
 }
 
 async function handleAwaitingRescheduleDate(chatId, sessionRef, session, text) {
+  const botKey = session.botKey
   const studentId = await findStudentIdByChatIdentity("telegram", chatId)
   if (!studentId) {
-    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED())
+    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED(), { botKey })
     return
   }
 
@@ -357,7 +393,7 @@ async function handleAwaitingRescheduleDate(chatId, sessionRef, session, text) {
   const proposedDate = parseRescheduleDateInput(text, studentTimeZone)
 
   if (!proposedDate) {
-    await sendMessage(chatId, botMessages.RESCHEDULE_INVALID_DATE())
+    await sendMessage(chatId, botMessages.RESCHEDULE_INVALID_DATE(), { botKey })
     return
   }
 
@@ -366,14 +402,14 @@ async function handleAwaitingRescheduleDate(chatId, sessionRef, session, text) {
   try {
     await proposeReschedule(studentId, session.lessonId, proposedDate, "student")
     logger.info("Telegram reschedule proposed by student", { chatId, studentId, lessonId: session.lessonId })
-    await sendMessage(chatId, botMessages.RESCHEDULE_REQUEST_SENT())
+    await sendMessage(chatId, botMessages.RESCHEDULE_REQUEST_SENT(), { botKey })
   } catch (error) {
     logger.error("Telegram reschedule proposal failed", { chatId, studentId, error })
-    await sendMessage(chatId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+    await sendMessage(chatId, botMessages.RESCHEDULE_CALLBACK_FAILED(), { botKey })
   }
 }
 
-async function handleCallbackQuery(callbackQuery) {
+async function handleCallbackQuery(callbackQuery, botKey) {
   const chatId = callbackQuery?.message?.chat?.id
   const data = callbackQuery?.data
   const callbackQueryId = callbackQuery?.id
@@ -403,16 +439,16 @@ async function handleCallbackQuery(callbackQuery) {
     try {
       if (teacherConfirmReschMatch) {
         await confirmReschedule(studentId, lessonId, "teacher")
-        await answerCallbackQuery(callbackQueryId, "Перенос подтверждён")
+        await answerCallbackQuery(callbackQueryId, "Перенос подтверждён", botKey)
       } else if (teacherCancelReschMatch) {
         await cancelReschedule(studentId, lessonId)
-        await answerCallbackQuery(callbackQueryId, "Перенос отклонён")
+        await answerCallbackQuery(callbackQueryId, "Перенос отклонён", botKey)
       } else if (teacherConfirmCxlMatch) {
         await confirmCancellation(studentId, lessonId, "teacher")
-        await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена")
+        await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена", botKey)
       } else {
         await rejectCancellation(studentId, lessonId)
-        await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена")
+        await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена", botKey)
       }
     } catch (error) {
       logger.error("Telegram teacher reschedule/cancellation callback failed", { chatId, data, error })
@@ -420,7 +456,7 @@ async function handleCallbackQuery(callbackQuery) {
         teacherConfirmCxlMatch || teacherRejectCxlMatch
           ? botMessages.CANCELLATION_CALLBACK_FAILED()
           : botMessages.RESCHEDULE_CALLBACK_FAILED()
-      await answerCallbackQuery(callbackQueryId, failureMessage)
+      await answerCallbackQuery(callbackQueryId, failureMessage, botKey)
     }
     return
   }
@@ -436,29 +472,29 @@ async function handleCallbackQuery(callbackQuery) {
   const rejectCancelMatch = /^reject_cancel_([^_]+)_([^_]+)$/.exec(data)
 
   if (!confirmMatch && !cancelMatch && !confirmCancelMatch && !rejectCancelMatch) {
-    await answerCallbackQuery(callbackQueryId)
+    await answerCallbackQuery(callbackQueryId, undefined, botKey)
     return
   }
 
   const studentId = await findStudentIdByChatIdentity("telegram", chatId)
   if (!studentId) {
-    await answerCallbackQuery(callbackQueryId, "Не нашли твой аккаунт")
+    await answerCallbackQuery(callbackQueryId, "Не нашли твой аккаунт", botKey)
     return
   }
 
   try {
     if (confirmMatch) {
       await confirmReschedule(studentId, confirmMatch[1], "student")
-      await answerCallbackQuery(callbackQueryId, "Перенос подтверждён")
+      await answerCallbackQuery(callbackQueryId, "Перенос подтверждён", botKey)
     } else if (cancelMatch) {
       await cancelReschedule(studentId, cancelMatch[1])
-      await answerCallbackQuery(callbackQueryId, "Перенос отклонён")
+      await answerCallbackQuery(callbackQueryId, "Перенос отклонён", botKey)
     } else if (confirmCancelMatch) {
       await confirmCancellation(studentId, confirmCancelMatch[1], "student")
-      await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена")
+      await answerCallbackQuery(callbackQueryId, "Отмена урока подтверждена", botKey)
     } else {
       await rejectCancellation(studentId, rejectCancelMatch[1])
-      await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена")
+      await answerCallbackQuery(callbackQueryId, "Отмена урока отклонена", botKey)
     }
   } catch (error) {
     logger.error("Telegram reschedule/cancellation callback failed", { chatId, data, error })
@@ -466,25 +502,25 @@ async function handleCallbackQuery(callbackQuery) {
       confirmCancelMatch || rejectCancelMatch
         ? botMessages.CANCELLATION_CALLBACK_FAILED()
         : botMessages.RESCHEDULE_CALLBACK_FAILED()
-    await answerCallbackQuery(callbackQueryId, failureMessage)
+    await answerCallbackQuery(callbackQueryId, failureMessage, botKey)
   }
 }
 
-async function handleHomeworkFile(chatId, incomingFile) {
+async function handleHomeworkFile(chatId, incomingFile, botKey) {
   const studentId = await findStudentIdByChatIdentity("telegram", chatId)
 
   if (!studentId) {
     logger.warn("Telegram homework file received but no student is linked to this chat", {
       chatId,
     })
-    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED())
+    await sendMessage(chatId, botMessages.STUDENT_NOT_LINKED(), { botKey })
     return
   }
 
   logger.info("Telegram homework file received", { chatId, studentId, mimeType: incomingFile.mimeType })
 
   try {
-    const buffer = await downloadTelegramFile(incomingFile.fileId)
+    const buffer = await downloadTelegramFile(incomingFile.fileId, botKey)
     const url = await uploadHomeworkFile(studentId, buffer, incomingFile.mimeType)
     const lessonId = await recordHomeworkSubmission(studentId, url)
 
@@ -494,17 +530,21 @@ async function handleHomeworkFile(chatId, incomingFile) {
     // notification (and its bot message) when a lesson existed — only the
     // no-lesson case still needs a direct reply here.
     if (!lessonId) {
-      await sendMessage(chatId, botMessages.HOMEWORK_NO_LESSON())
+      await sendMessage(chatId, botMessages.HOMEWORK_NO_LESSON(), { botKey })
     }
   } catch (error) {
     logger.error("Failed to process Telegram homework file", { chatId, studentId, error })
-    await sendMessage(chatId, botMessages.HOMEWORK_SAVE_FAILED())
+    await sendMessage(chatId, botMessages.HOMEWORK_SAVE_FAILED(), { botKey })
   }
 }
 
-async function handleUpdate(update) {
+// `botKey` ("personal" | "shared") identifies which bot's webhook this
+// update arrived on — telegramWebhook/telegramSharedWebhook in index.js each
+// pass their own fixed literal, since (unlike VK's group_id) Telegram
+// updates carry no per-request signal of which bot received them.
+async function handleUpdate(update, botKey) {
   if (update?.callback_query) {
-    await handleCallbackQuery(update.callback_query)
+    await handleCallbackQuery(update.callback_query, botKey)
     return
   }
 
@@ -521,7 +561,7 @@ async function handleUpdate(update) {
     const incomingFile = extractIncomingFile(message)
 
     if (incomingFile) {
-      await handleHomeworkFile(chatId, incomingFile)
+      await handleHomeworkFile(chatId, incomingFile, botKey)
       return
     }
 
@@ -532,7 +572,7 @@ async function handleUpdate(update) {
   logger.info("Telegram update received", { chatId, text })
 
   if (text.trim().startsWith("/start")) {
-    await handleStart(chatId, text)
+    await handleStart(chatId, text, botKey)
     return
   }
 
@@ -543,13 +583,13 @@ async function handleUpdate(update) {
     if (isRescheduleRequestText(text)) {
       const studentId = await findStudentIdByChatIdentity("telegram", chatId)
       if (studentId) {
-        await handleRescheduleRequest(chatId, studentId)
+        await handleRescheduleRequest(chatId, studentId, botKey)
         return
       }
     }
 
     logger.info("Telegram message with no active session", { chatId })
-    await sendMessage(chatId, botMessages.UNKNOWN_MESSAGE())
+    await sendMessage(chatId, botMessages.UNKNOWN_MESSAGE(), { botKey })
     return
   }
 
@@ -571,7 +611,15 @@ async function handleUpdate(update) {
   }
 
   logger.warn("Telegram session in unknown step", { chatId, step: session.step })
-  await sendMessage(chatId, botMessages.UNKNOWN_MESSAGE())
+  await sendMessage(chatId, botMessages.UNKNOWN_MESSAGE(), { botKey: session.botKey })
 }
 
-module.exports = { sendMessage, deleteMessage, handleUpdate, TELEGRAM_BOT_TOKEN }
+module.exports = {
+  sendMessage,
+  deleteMessage,
+  handleUpdate,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_SHARED_BOT_TOKEN,
+  PERSONAL_BOT_KEY,
+  SHARED_BOT_KEY,
+}

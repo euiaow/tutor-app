@@ -120,7 +120,10 @@ export function ExamRadar({
       {showDecoration ? (
         <>
           <DecorationZone zone="zone4" className="top-[-56px] left-[75%]" />
-          <DecorationZone zone="zone5" className="bottom-[-56px] right-12" />
+          {/* right-12 (48px) is the mobile value, left untouched per explicit
+              instruction — sm:right-[98px] is desktop-only, nudged further
+              left across sessions 35-37 (53→68→88→98px). */}
+          <DecorationZone zone="zone5" className="bottom-[-56px] right-12 sm:right-[98px]" />
         </>
       ) : null}
       <div className="flex items-center gap-3">

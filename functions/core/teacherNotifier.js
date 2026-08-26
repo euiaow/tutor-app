@@ -27,33 +27,54 @@ async function sendMessageToTeacher(teacherId, text, options = {}) {
     return []
   }
 
-  const snapshot = await teacherContactRef(teacherId).get()
+  // teachers/{teacherId}.vkGroupId/telegramBotKey (personal/shared splits)
+  // live on the teacher's own profile doc, not the integrations/
+  // teacherContact subdoc — fetched alongside it so an outbound send knows
+  // which community/bot's token to use.
+  const [snapshot, teacherSnapshot] = await Promise.all([
+    teacherContactRef(teacherId).get(),
+    db.collection("teachers").doc(teacherId).get(),
+  ])
   const contact = snapshot.exists ? snapshot.data() : {}
+  const teacherData = teacherSnapshot.exists ? teacherSnapshot.data() : {}
 
   // Required lazily to avoid a circular require: the adapters require
   // core/lessons.js, and core/lessons.js calls into this module while
   // handling lesson reschedules.
-  const { sendMessage: sendTelegramMessage } = require("../adapters/telegram")
-  const { sendMessage: sendVkMessage } = require("../adapters/vk")
+  const { sendMessage: sendTelegramMessage, SHARED_BOT_KEY } = require("../adapters/telegram")
+  const { sendMessage: sendVkMessage, SHARED_VK_GROUP_ID } = require("../adapters/vk")
+
+  // Unlike a student's vkGroupId/telegramBotKey (where an unset field means
+  // a legacy record predating the personal/shared split, and must fall back
+  // to PERSONAL to not break already-working delivery — see
+  // reminderUtils.js), an unset field HERE means a teacher who simply never
+  // got a personal community/bot assigned — by design (see core/registration
+  // model docs) that's every new teacher, and it must resolve to SHARED, not
+  // personal. The single teacher who does need the personal one gets it via
+  // an explicit Console-set value, not this default.
+  const vkGroupId = teacherData.vkGroupId ?? SHARED_VK_GROUP_ID
+  const telegramBotKey = teacherData.telegramBotKey ?? SHARED_BOT_KEY
 
   const sentMessages = []
 
   if (contact.telegramChatId) {
     const result = await sendTelegramMessage(contact.telegramChatId, text, {
       replyMarkup: options.telegramReplyMarkup,
+      botKey: telegramBotKey,
     })
     logger.info("sendMessageToTeacher: sent via Telegram")
     sentMessages.push({
       platform: "telegram",
       chatId: contact.telegramChatId,
       messageId: result?.result?.message_id ?? null,
+      botKey: telegramBotKey,
     })
   }
 
   if (contact.vkPeerId) {
-    const result = await sendVkMessage(contact.vkPeerId, text, { keyboard: options.vkKeyboard })
+    const result = await sendVkMessage(contact.vkPeerId, text, { keyboard: options.vkKeyboard, groupId: vkGroupId })
     logger.info("sendMessageToTeacher: sent via VK")
-    sentMessages.push({ platform: "vk", chatId: contact.vkPeerId, messageId: result?.response ?? null })
+    sentMessages.push({ platform: "vk", chatId: contact.vkPeerId, messageId: result?.response ?? null, groupId: vkGroupId })
   }
 
   if (sentMessages.length === 0) {

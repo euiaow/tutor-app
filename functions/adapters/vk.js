@@ -28,8 +28,36 @@ const PROCESSED_MESSAGES_COLLECTION = "vkProcessedMessages"
 
 const PLACEHOLDER_DOMAIN = "princessschool-e678c.web.app"
 
+// VK community split: VK_GROUP_TOKEN/VK_CONFIRMATION_CODE are (despite the
+// generic-looking names, kept as-is rather than renamed) the PERSONAL
+// community's secrets — the original, fully-customized group, still used by
+// whichever single teacher it's set up for. VK_SHARED_GROUP_TOKEN/
+// VK_SHARED_CONFIRMATION_CODE are the new community every other teacher's
+// students go through. Which one a given request/message uses is resolved
+// per-request from the VK Callback API's own `group_id` (always present on
+// every event) via resolveVkToken/PERSONAL_VK_GROUP_ID/SHARED_VK_GROUP_ID
+// below — never a single hardcoded secret.
 const VK_GROUP_TOKEN = defineSecret("VK_GROUP_TOKEN")
 const VK_CONFIRMATION_CODE = defineSecret("VK_CONFIRMATION_CODE")
+const VK_SHARED_GROUP_TOKEN = defineSecret("VK_SHARED_GROUP_TOKEN")
+const VK_SHARED_CONFIRMATION_CODE = defineSecret("VK_SHARED_CONFIRMATION_CODE")
+
+// Must stay in sync with src/lib/registration-links.js's VK_PERSONAL_GROUP/
+// VK_SHARED_GROUP ids (frontend can't require this CommonJS module, so the
+// two are hand-kept parallel, not shared code).
+const PERSONAL_VK_GROUP_ID = "240507222"
+const SHARED_VK_GROUP_ID = "241047499"
+
+// The single place that turns "which VK community is this?" into a secret
+// value — every send/delete/pin/event-answer call below goes through this,
+// never `VK_GROUP_TOKEN.value()` directly. Missing/unrecognized groupId
+// (null, undefined, a legacy student/teacher predating this split) falls
+// back to the PERSONAL token, since every VK student/teacher that existed
+// before this split registered through the personal community — falling
+// back to the shared one would silently break their delivery.
+function resolveVkToken(groupId) {
+  return String(groupId) === SHARED_VK_GROUP_ID ? VK_SHARED_GROUP_TOKEN.value() : VK_GROUP_TOKEN.value()
+}
 
 const VK_API_VERSION = "5.199"
 
@@ -70,8 +98,12 @@ function parseVkPayload(rawPayload) {
   }
 }
 
+// `options.groupId` picks which community's token sends this — always pass
+// it explicitly (the caller knows which webhook request/student/teacher this
+// is for); omitting it falls back to the personal community via
+// resolveVkToken.
 async function sendMessage(peerId, text, options = {}) {
-  const token = VK_GROUP_TOKEN.value()
+  const token = resolveVkToken(options.groupId)
   const url = "https://api.vk.com/method/messages.send"
   const params = new URLSearchParams({
     access_token: token,
@@ -120,8 +152,8 @@ async function sendMessage(peerId, text, options = {}) {
 // messages.send response returns (see sendMessage below), not a
 // conversation_message_id. VK rejects this for messages older than 24h or
 // already deleted; callers are expected to treat failure as non-fatal.
-async function deleteMessage(peerId, messageId) {
-  const token = VK_GROUP_TOKEN.value()
+async function deleteMessage(peerId, messageId, groupId) {
+  const token = resolveVkToken(groupId)
   const params = new URLSearchParams({
     access_token: token,
     v: VK_API_VERSION,
@@ -153,8 +185,8 @@ async function deleteMessage(peerId, messageId) {
 // personal-cabinet link) right after sending it — mirrors telegram.js's
 // pinChatMessage. Best-effort: must never affect whether registration
 // itself is considered successful, see handleAwaitingPin's call site.
-async function pinMessage(peerId, messageId) {
-  const token = VK_GROUP_TOKEN.value()
+async function pinMessage(peerId, messageId, groupId) {
+  const token = resolveVkToken(groupId)
   const params = new URLSearchParams({
     access_token: token,
     v: VK_API_VERSION,
@@ -175,7 +207,7 @@ async function pinMessage(peerId, messageId) {
   }
 }
 
-async function handleNoSessionMessage(peerId, text, ref) {
+async function handleNoSessionMessage(peerId, text, ref, groupId) {
   const hasRef = typeof ref === "string" && ref.trim() !== ""
   const token = hasRef ? ref.trim() : text.trim()
 
@@ -189,17 +221,17 @@ async function handleNoSessionMessage(peerId, text, ref) {
   if (tokenData) {
     if (tokenData.status !== "pending") {
       logger.warn("VK token already used", { peerId, token })
-      await sendMessage(peerId, botMessages.INVALID_TOKEN())
+      await sendMessage(peerId, botMessages.INVALID_TOKEN(), { groupId })
       return
     }
 
     await db
       .collection(SESSIONS_COLLECTION)
       .doc(String(peerId))
-      .set({ token, step: "awaiting_name" })
+      .set({ token, step: "awaiting_name", groupId })
 
     logger.info("VK session started", { peerId, token, step: "awaiting_name" })
-    await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
+    await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN(), { groupId })
     return
   }
 
@@ -210,7 +242,7 @@ async function handleNoSessionMessage(peerId, text, ref) {
   const connected = await resolveTeacherConnectToken(token, "vk", peerId)
   if (connected) {
     logger.info("VK teacher connect succeeded", { peerId, token })
-    await sendMessage(peerId, botMessages.TEACHER_CONNECTED())
+    await sendMessage(peerId, botMessages.TEACHER_CONNECTED(), { groupId })
     return
   }
 
@@ -218,7 +250,7 @@ async function handleNoSessionMessage(peerId, text, ref) {
   // someone who hasn't started registration, not a broken/used link — greet
   // them instead of telling them their (nonexistent) link is invalid.
   logger.info("VK message text/ref is not a known token", { peerId })
-  await sendMessage(peerId, botMessages.WELCOME_NO_TOKEN())
+  await sendMessage(peerId, botMessages.WELCOME_NO_TOKEN(), { groupId })
 }
 
 async function handleAwaitingName(peerId, sessionRef, session, text) {
@@ -227,15 +259,16 @@ async function handleAwaitingName(peerId, sessionRef, session, text) {
   await sessionRef.set({ ...session, name, step: "awaiting_pin" })
 
   logger.info("VK name captured", { peerId, step: "awaiting_pin" })
-  await sendMessage(peerId, botMessages.NAME_SAVED(name))
+  await sendMessage(peerId, botMessages.NAME_SAVED(name), { groupId: session.groupId })
 }
 
 async function handleAwaitingPin(peerId, sessionRef, session, text) {
   const pin = text.trim()
+  const groupId = session.groupId
 
   if (!isFourDigitPin(pin)) {
     logger.info("VK pin rejected: not 4 digits", { peerId })
-    await sendMessage(peerId, botMessages.INVALID_PIN())
+    await sendMessage(peerId, botMessages.INVALID_PIN(), { groupId })
     return
   }
 
@@ -245,6 +278,7 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
     const studentId = await completeRegistration(session.token, session.name, pin, {
       platform: "vk",
       id: peerId,
+      groupId,
     })
     await sessionRef.delete()
 
@@ -252,12 +286,13 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
     const sent = await sendMessage(
       peerId,
       botMessages.PIN_SAVED(`https://${PLACEHOLDER_DOMAIN}/student/${studentId}`),
+      { groupId },
     )
 
     const sentMessageId = sent && !sent.error ? sent.response : null
     if (sentMessageId) {
       try {
-        await pinMessage(peerId, sentMessageId)
+        await pinMessage(peerId, sentMessageId, groupId)
       } catch (pinError) {
         logger.warn("VK messages.pin failed after registration", { peerId, studentId, error: pinError })
       }
@@ -267,7 +302,7 @@ async function handleAwaitingPin(peerId, sessionRef, session, text) {
     await sessionRef.delete()
 
     const message = error instanceof HttpsError ? error.message : botMessages.REGISTRATION_FAILED()
-    await sendMessage(peerId, message)
+    await sendMessage(peerId, message, { groupId })
   }
 }
 
@@ -319,7 +354,7 @@ async function downloadFileFromUrl(url) {
   return Buffer.from(await response.arrayBuffer())
 }
 
-async function handleRescheduleRequest(peerId, studentId) {
+async function handleRescheduleRequest(peerId, studentId, groupId) {
   const lessonsSnapshot = await db
     .collection("students")
     .doc(studentId)
@@ -329,7 +364,7 @@ async function handleRescheduleRequest(peerId, studentId) {
     .get()
 
   if (lessonsSnapshot.empty) {
-    await sendMessage(peerId, botMessages.RESCHEDULE_NO_UPCOMING_LESSON())
+    await sendMessage(peerId, botMessages.RESCHEDULE_NO_UPCOMING_LESSON(), { groupId })
     return
   }
 
@@ -338,16 +373,17 @@ async function handleRescheduleRequest(peerId, studentId) {
   await db
     .collection(SESSIONS_COLLECTION)
     .doc(String(peerId))
-    .set({ step: "awaiting_reschedule_date", lessonId })
+    .set({ step: "awaiting_reschedule_date", lessonId, groupId })
 
   logger.info("VK reschedule request started", { peerId, studentId, lessonId })
-  await sendMessage(peerId, botMessages.RESCHEDULE_ASK_DATE())
+  await sendMessage(peerId, botMessages.RESCHEDULE_ASK_DATE(), { groupId })
 }
 
 async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
+  const groupId = session.groupId
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
   if (!studentId) {
-    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED(), { groupId })
     return
   }
 
@@ -358,7 +394,7 @@ async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
   const proposedDate = parseRescheduleDateInput(text, studentTimeZone)
 
   if (!proposedDate) {
-    await sendMessage(peerId, botMessages.RESCHEDULE_INVALID_DATE())
+    await sendMessage(peerId, botMessages.RESCHEDULE_INVALID_DATE(), { groupId })
     return
   }
 
@@ -367,10 +403,10 @@ async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
   try {
     await proposeReschedule(studentId, session.lessonId, proposedDate, "student")
     logger.info("VK reschedule proposed by student", { peerId, studentId, lessonId: session.lessonId })
-    await sendMessage(peerId, botMessages.RESCHEDULE_REQUEST_SENT())
+    await sendMessage(peerId, botMessages.RESCHEDULE_REQUEST_SENT(), { groupId })
   } catch (error) {
     logger.error("VK reschedule proposal failed", { peerId, studentId, error })
-    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED(), { groupId })
   }
 }
 
@@ -379,10 +415,10 @@ async function handleAwaitingRescheduleDate(peerId, sessionRef, session, text) {
 // message whose text equals the button label, with `payload` carrying the
 // JSON command. Kept so any already-sent proposal still using that keyboard
 // still resolves correctly.
-async function handleReschedulePayload(peerId, payload) {
+async function handleReschedulePayload(peerId, payload, groupId) {
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
   if (!studentId) {
-    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED(), { groupId })
     return
   }
 
@@ -394,14 +430,14 @@ async function handleReschedulePayload(peerId, payload) {
     }
   } catch (error) {
     logger.error("VK reschedule payload failed", { peerId, payload, error })
-    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED())
+    await sendMessage(peerId, botMessages.RESCHEDULE_CALLBACK_FAILED(), { groupId })
   }
 }
 
 // Acknowledges a message_event callback. VK requires this call after every
 // message_event or it will keep re-delivering the same button press.
-async function sendMessageEventAnswer(object) {
-  const token = VK_GROUP_TOKEN.value()
+async function sendMessageEventAnswer(object, groupId) {
+  const token = resolveVkToken(groupId)
   const params = new URLSearchParams({
     access_token: token,
     v: VK_API_VERSION,
@@ -431,7 +467,7 @@ async function sendMessageEventAnswer(object) {
 // handleReschedulePayload via message_new. The payload carries studentId
 // directly (see botMessages.RESCHEDULE_KEYBOARDS) so this doesn't need a
 // chat-identity lookup the way handleReschedulePayload does.
-async function handleCallbackEvent(object) {
+async function handleCallbackEvent(object, groupId) {
   const peerId = object?.peer_id
   const rawPayload = object?.payload
   const payload = typeof rawPayload === "string" ? parseVkPayload(rawPayload) : rawPayload
@@ -474,21 +510,21 @@ async function handleCallbackEvent(object) {
         isCancellationFailure || isTeacherFailure
           ? botMessages.CANCELLATION_CALLBACK_FAILED()
           : botMessages.RESCHEDULE_CALLBACK_FAILED()
-      await sendMessage(peerId, failureMessage)
+      await sendMessage(peerId, failureMessage, { groupId })
     }
   } else {
     logger.info("VK message_event ignored: missing peer id or payload", { object })
   }
 
-  await sendMessageEventAnswer(object)
+  await sendMessageEventAnswer(object, groupId)
 }
 
-async function handleHomeworkFile(peerId, attachment) {
+async function handleHomeworkFile(peerId, attachment, groupId) {
   const studentId = await findStudentIdByChatIdentity("vk", peerId)
 
   if (!studentId) {
     logger.warn("VK homework file received but no student is linked to this chat", { peerId })
-    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED())
+    await sendMessage(peerId, botMessages.STUDENT_NOT_LINKED(), { groupId })
     return
   }
 
@@ -505,11 +541,11 @@ async function handleHomeworkFile(peerId, attachment) {
     // notification (and its bot message) when a lesson existed — only the
     // no-lesson case still needs a direct reply here.
     if (!lessonId) {
-      await sendMessage(peerId, botMessages.HOMEWORK_NO_LESSON())
+      await sendMessage(peerId, botMessages.HOMEWORK_NO_LESSON(), { groupId })
     }
   } catch (error) {
     logger.error("Failed to process VK homework file", { peerId, studentId, error })
-    await sendMessage(peerId, botMessages.HOMEWORK_SAVE_FAILED())
+    await sendMessage(peerId, botMessages.HOMEWORK_SAVE_FAILED(), { groupId })
   }
 }
 
@@ -551,7 +587,7 @@ async function reserveMessageProcessing(message) {
   }
 }
 
-async function handleMessageNew(object) {
+async function handleMessageNew(object, groupId) {
   const message = object?.message
   const peerId = message?.peer_id
   const text = message?.text
@@ -570,7 +606,7 @@ async function handleMessageNew(object) {
   const payload = parseVkPayload(message?.payload)
   if (payload?.command === "confirm_reschedule" || payload?.command === "cancel_reschedule") {
     logger.info("VK reschedule button pressed", { peerId, payload })
-    await handleReschedulePayload(peerId, payload)
+    await handleReschedulePayload(peerId, payload, groupId)
     return
   }
 
@@ -578,7 +614,7 @@ async function handleMessageNew(object) {
     const attachment = extractIncomingAttachment(message)
 
     if (attachment) {
-      await handleHomeworkFile(peerId, attachment)
+      await handleHomeworkFile(peerId, attachment, groupId)
       return
     }
 
@@ -595,7 +631,7 @@ async function handleMessageNew(object) {
     if (isRescheduleRequestText(text)) {
       const studentId = await findStudentIdByChatIdentity("vk", peerId)
       if (studentId) {
-        await handleRescheduleRequest(peerId, studentId)
+        await handleRescheduleRequest(peerId, studentId, groupId)
         return
       }
     }
@@ -606,15 +642,15 @@ async function handleMessageNew(object) {
 
       if (!teacher) {
         logger.warn("VK self-service signup: unknown teacher slug", { peerId, slug: signupSlug })
-        await sendMessage(peerId, botMessages.SIGNUP_LINK_INVALID())
+        await sendMessage(peerId, botMessages.SIGNUP_LINK_INVALID(), { groupId })
         return
       }
 
       const token = await createSelfServiceToken(teacher.id)
-      await sessionRef.set({ token, step: "awaiting_name" })
+      await sessionRef.set({ token, step: "awaiting_name", groupId })
 
       logger.info("VK self-service signup started", { peerId, token, teacherId: teacher.id })
-      await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN())
+      await sendMessage(peerId, botMessages.WELCOME_WITH_TOKEN(), { groupId })
       return
     }
 
@@ -622,11 +658,11 @@ async function handleMessageNew(object) {
     // specific teacher now that the community serves more than one.
     if (isBareSignupRequestText(text)) {
       logger.info("VK self-service signup requested with no teacher slug", { peerId })
-      await sendMessage(peerId, botMessages.SIGNUP_NEEDS_TEACHER_LINK())
+      await sendMessage(peerId, botMessages.SIGNUP_NEEDS_TEACHER_LINK(), { groupId })
       return
     }
 
-    await handleNoSessionMessage(peerId, text, ref)
+    await handleNoSessionMessage(peerId, text, ref, groupId)
     return
   }
 
@@ -648,11 +684,12 @@ async function handleMessageNew(object) {
   }
 
   logger.warn("VK session in unknown step", { peerId, step: session.step })
-  await sendMessage(peerId, botMessages.UNKNOWN_MESSAGE())
+  await sendMessage(peerId, botMessages.UNKNOWN_MESSAGE(), { groupId })
 }
 
 async function handleEvent(body) {
   const type = body?.type
+  const groupId = body?.group_id != null ? String(body.group_id) : null
 
   logger.info("VK raw event", {
     type: body?.type,
@@ -660,16 +697,16 @@ async function handleEvent(body) {
     objectKeys: Object.keys(body?.object || {}),
   })
 
-  logger.info("VK event received", { type })
+  logger.info("VK event received", { type, groupId })
 
   if (type === "confirmation") {
-    logger.info("VK confirmation requested")
-    return VK_CONFIRMATION_CODE.value()
+    logger.info("VK confirmation requested", { groupId })
+    return groupId === SHARED_VK_GROUP_ID ? VK_SHARED_CONFIRMATION_CODE.value() : VK_CONFIRMATION_CODE.value()
   }
 
   if (type === "message_new") {
     try {
-      await handleMessageNew(body.object)
+      await handleMessageNew(body.object, groupId)
     } catch (error) {
       logger.error("Unhandled error while processing VK message_new event", error)
     }
@@ -680,7 +717,7 @@ async function handleEvent(body) {
 
   if (type === "message_event") {
     try {
-      await handleCallbackEvent(body.object)
+      await handleCallbackEvent(body.object, groupId)
     } catch (error) {
       logger.error("Unhandled error while processing VK message_event event", error)
     }
@@ -691,4 +728,14 @@ async function handleEvent(body) {
   return "ok"
 }
 
-module.exports = { sendMessage, deleteMessage, handleEvent, VK_GROUP_TOKEN, VK_CONFIRMATION_CODE }
+module.exports = {
+  sendMessage,
+  deleteMessage,
+  handleEvent,
+  VK_GROUP_TOKEN,
+  VK_CONFIRMATION_CODE,
+  VK_SHARED_GROUP_TOKEN,
+  VK_SHARED_CONFIRMATION_CODE,
+  PERSONAL_VK_GROUP_ID,
+  SHARED_VK_GROUP_ID,
+}

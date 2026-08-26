@@ -47,6 +47,13 @@
 
 ## Technical constraints
 
+- **Color-theme derivation (session 31) depends on CSS relative-color
+  syntax** (`oklch(from var(--accent-color) L C h)`) — a 2023-era CSS
+  feature (Chrome 119+/Safari 16.4+/Firefox 128+). No fallback path exists
+  for a browser without it; this hasn't been an issue reported so far but
+  is worth knowing if a theme's derived colors ever look wrong only for
+  one specific user. See `systemPatterns.md`'s theme-registry entry for
+  the mechanism and two related var()-cascade gotchas already hit once.
 - **Domain is finalized (session 10)** — `APP_URL` (`functions/index.js`)
   and the student registration-link domain (`telegram.js`/`vk.js`) both
   point at the real `https://princessschool-e678c.web.app`. No more
@@ -121,6 +128,33 @@
   secrets-array or IAM-binding checklists for a fresh `internal` error
   without first confirming the function actually exists on the backend** —
   check `functions:list` membership before reading logs.
+- **A `hosting`-side deploy-reliability gap (session 37, frontend not
+  functions): `firebase deploy --only hosting` can succeed completely and
+  still not be visible to a user for up to an hour.** Root cause:
+  Firebase Hosting's platform default caches `index.html` at the CDN edge
+  (`Cache-Control: max-age=3600` was observed on the live response, with
+  `X-Cache: HIT` serving a copy that in this case was well past even that
+  stale-by-design window) — every hashed JS/CSS asset under `/assets/**`
+  gets a fresh URL per build (Vite content-hashing) so *those* are never
+  the problem, but the *entry HTML* referencing them can keep pointing at
+  an old build indefinitely from the user's perspective. Symptom: a user
+  reports a just-deployed visual fix "isn't showing up," and it's very
+  easy to misread that as "the code fix must be wrong" and start
+  re-tuning values that were already correct (this happened — three
+  rounds of it before the deploy pipeline itself was actually checked).
+  **Diagnostic**: `curl -sI https://<project>.web.app/ | grep -i
+  'cache-control\|x-cache\|last-modified'` — a stale `Last-Modified` and
+  `X-Cache: HIT` confirm this before assuming the code is wrong. **Fixed
+  for good** by adding a `headers` block to `firebase.json`:
+  `Cache-Control: no-cache, max-age=0, must-revalidate` on `**`, overridden
+  back to `public, max-age=31536000, immutable` on `/assets/**` so the
+  hashed bundle still gets to cache aggressively (safe, since a changed
+  file always gets a new URL). Verify a header-config change actually took
+  effect the same way — `curl -I` against both a bare route and an actual
+  asset URL — since an initial attempt that scoped the rule to
+  `source: "/index.html"` literally didn't apply to requests for `/`, even
+  though `/` is rewritten *to* `/index.html` (Firebase headers match the
+  *original requested path*, not the rewrite's destination).
 - **A separate Firebase CLI flake (session 11), distinct from the
   CPU-quota one below**: `firebase deploy --only functions:<name>` can
   fail on its very first attempt with `"Error: User code failed to load.
@@ -221,3 +255,25 @@
   --region us-central1 --force` and remove the code from `index.js`
   immediately after use. Don't try to work around a `permission-denied`
   by loosening a read pattern — reach for this instead.
+- **`firebase-admin`'s `db.recursiveDelete(ref)` (session 38, first use in
+  this codebase) deletes a document/collection and every nested
+  subcollection in one call** — used for `teachers/{uid}` (picks up
+  `groups`/`integrations`/`examTypes`/`customSubjects`/
+  `subscriptionPayments` in one shot) and per-student subcollections
+  (`programs`/`balanceLedger`/`inventory`/`decoration`/`coinLedger`) in the
+  new cascade-delete logic (`systemPatterns.md`). Reach for this instead of
+  hand-rolling a query-then-batch-delete loop any time a subcollection has
+  no other side effects (Storage files, Calendar events) to clean up
+  alongside the doc deletes — `lessons` still needs the manual loop because
+  it does have those side effects per-doc.
+- **`firebase-admin/auth`'s `getAuth()` had never been used in this
+  codebase before session 38** — every prior admin-panel feature only ever
+  read/wrote Firestore, trusting `request.auth.uid` from the callable
+  context rather than calling the Auth Admin API directly.
+  `deleteTeacherAccount`'s cascade calls `getAuth().deleteUser(teacherId)`
+  (best-effort, `auth/user-not-found` treated as a normal case, not an
+  error) and the one-off orphan-cleanup diagnostic used
+  `getAuth().listUsers(1000, pageToken)` (paginated) to build the set of
+  live Auth uids for orphan detection. No secrets/config needed for either
+  — the Admin SDK's default credentials already cover Auth, same as
+  Firestore.

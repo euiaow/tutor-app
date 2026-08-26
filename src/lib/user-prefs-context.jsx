@@ -11,8 +11,14 @@ import { getDeviceTimeZone } from "@/lib/timezone"
 // everything below just calls the hooks instead of receiving props.
 const UserPrefsContext = createContext(null)
 
-export function UserPrefsProvider({ timeZone, themeClass, children }) {
-  return <UserPrefsContext.Provider value={{ timeZone, themeClass }}>{children}</UserPrefsContext.Provider>
+export function UserPrefsProvider({ timeZone, themeClass, vkGroupId, telegramBotKey, children }) {
+  return (
+    <UserPrefsContext.Provider
+      value={{ timeZone, themeClass, vkGroupId: vkGroupId ?? null, telegramBotKey: telegramBotKey ?? null }}
+    >
+      {children}
+    </UserPrefsContext.Provider>
+  )
 }
 
 // Falls back to the device's own timezone if used outside a Provider (should
@@ -29,4 +35,20 @@ export function useTimeZone() {
 export function useThemeClass() {
   const ctx = useContext(UserPrefsContext)
   return ctx?.themeClass || ""
+}
+
+// null means "this teacher uses the shared VK community" (either a new
+// teacher who's never been assigned a personal one, or genuinely outside a
+// Provider) — see registration-links.js's resolveVkGroup for how that's
+// turned into an actual vk.me link/community id.
+export function useVkGroupId() {
+  const ctx = useContext(UserPrefsContext)
+  return ctx?.vkGroupId ?? null
+}
+
+// null means "this teacher uses the shared Telegram bot" (same reasoning as
+// useVkGroupId above) — see registration-links.js's resolveTelegramBot.
+export function useTelegramBotKey() {
+  const ctx = useContext(UserPrefsContext)
+  return ctx?.telegramBotKey ?? null
 }

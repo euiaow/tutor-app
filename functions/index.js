@@ -7,8 +7,20 @@ const logger = require("firebase-functions/logger")
 const { FieldValue } = require("firebase-admin/firestore")
 const { db } = require("./core/firestore")
 const { createRegistrationToken, cancelRegistrationToken } = require("./core/registration")
-const { handleUpdate, TELEGRAM_BOT_TOKEN } = require("./adapters/telegram")
-const { handleEvent, VK_GROUP_TOKEN, VK_CONFIRMATION_CODE } = require("./adapters/vk")
+const {
+  handleUpdate,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_SHARED_BOT_TOKEN,
+  PERSONAL_BOT_KEY,
+  SHARED_BOT_KEY,
+} = require("./adapters/telegram")
+const {
+  handleEvent,
+  VK_GROUP_TOKEN,
+  VK_CONFIRMATION_CODE,
+  VK_SHARED_GROUP_TOKEN,
+  VK_SHARED_CONFIRMATION_CODE,
+} = require("./adapters/vk")
 const {
   buildOAuthClient,
   getAuthUrl,
@@ -47,7 +59,7 @@ const {
   dailyReminderPreLesson,
   dailyReminderTenMin,
 } = require("./reminders")
-const { createTeacherConnectToken } = require("./core/teacherConnect")
+const { createTeacherConnectToken, disconnectTeacherPlatform: disconnectTeacherPlatformCore } = require("./core/teacherConnect")
 const { deleteStudent, updateStudentSettings } = require("./core/students")
 const { addPayment } = require("./core/finance")
 const { openCase: openCaseCore, saveDecoration: saveDecorationCore } = require("./core/gamification")
@@ -75,7 +87,18 @@ const {
   markTopicsCovered,
 } = require("./core/curriculum")
 const { assertOwnsStudent, assertOwnsTemplate } = require("./core/tenancy")
-const { generateTeacherSlug, findTeacherBySlug } = require("./core/teachers")
+const { generateTeacherSlug, findTeacherBySlug, updateTeacherName: updateTeacherNameCore } = require("./core/teachers")
+const {
+  isAdmin: isAdminCore,
+  recordSubscriptionPayment: recordSubscriptionPaymentCore,
+  updateTeacherNotes: updateTeacherNotesCore,
+  setTeacherBlocked: setTeacherBlockedCore,
+  setTeacherPlan: setTeacherPlanCore,
+  getTeacherStats: getTeacherStatsCore,
+  deleteTeacherAccount: deleteTeacherAccountCore,
+  checkExpiringSubscriptions,
+  touchTeacherActivity,
+} = require("./core/admin")
 
 const OAUTH_STATES_COLLECTION = "oauthStates"
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
@@ -158,6 +181,7 @@ exports.deleteStudent = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       await deleteStudent(studentId)
+      await touchTeacherActivity(request.auth.uid)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -171,7 +195,7 @@ exports.deleteStudent = onCall(
 )
 
 exports.updateHomeworkAssignment = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -182,6 +206,7 @@ exports.updateHomeworkAssignment = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       await updateHomeworkAssignment(studentId, lessonId, { text, files })
+      await touchTeacherActivity(request.auth.uid)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -195,7 +220,7 @@ exports.updateHomeworkAssignment = onCall(
 )
 
 exports.addLessonMaterial = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -206,6 +231,7 @@ exports.addLessonMaterial = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       await addLessonMaterial(studentId, lessonId, material)
+      await touchTeacherActivity(request.auth.uid)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -219,7 +245,7 @@ exports.addLessonMaterial = onCall(
 )
 
 exports.createExtraLesson = onCall(
-  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -230,6 +256,7 @@ exports.createExtraLesson = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       const result = await createExtraLesson(studentId, new Date(date))
+      await touchTeacherActivity(request.auth.uid)
       return { success: true, ...result }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -247,7 +274,7 @@ exports.createExtraLesson = onCall(
 // bot: the client uploads the file to Storage itself, then calls this to
 // record it in the same homework.submission.files the bots write to.
 exports.submitHomeworkFile = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     const { studentId, fileUrl } = request.data ?? {}
 
@@ -316,7 +343,9 @@ exports.createGroup = onCall(async (request) => {
   const { name, subject, memberStudentIds, scheduleSlots } = request.data ?? {}
 
   try {
-    return await createGroupCore(request.auth.uid, { name, subject, memberStudentIds, scheduleSlots })
+    const result = await createGroupCore(request.auth.uid, { name, subject, memberStudentIds, scheduleSlots })
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -334,7 +363,9 @@ exports.updateGroup = onCall(async (request) => {
   const { groupId, name, subject, memberStudentIds, scheduleSlots } = request.data ?? {}
 
   try {
-    return await updateGroupCore(request.auth.uid, groupId, { name, subject, memberStudentIds, scheduleSlots })
+    const result = await updateGroupCore(request.auth.uid, groupId, { name, subject, memberStudentIds, scheduleSlots })
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -352,7 +383,9 @@ exports.deleteGroup = onCall(async (request) => {
   const { groupId } = request.data ?? {}
 
   try {
-    return await deleteGroupCore(request.auth.uid, groupId)
+    const result = await deleteGroupCore(request.auth.uid, groupId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -368,7 +401,7 @@ exports.deleteGroup = onCall(async (request) => {
 // though the code looks completely correct (see systemPatterns.md's own
 // documented gotcha, hit twice already for createExtraLesson/
 // completeLesson before this).
-exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
@@ -376,7 +409,9 @@ exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_
   const parsedDate = newDate ? new Date(newDate) : null
 
   try {
-    return await rescheduleGroupLessonCore(request.auth.uid, groupId, groupLessonKey, parsedDate)
+    const result = await rescheduleGroupLessonCore(request.auth.uid, groupId, groupLessonKey, parsedDate)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -387,14 +422,16 @@ exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_
   }
 })
 
-exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
   const { groupId, groupLessonKey } = request.data ?? {}
 
   try {
-    return await cancelGroupLessonCore(request.auth.uid, groupId, groupLessonKey)
+    const result = await cancelGroupLessonCore(request.auth.uid, groupId, groupLessonKey)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -405,14 +442,16 @@ exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKE
   }
 })
 
-exports.completeGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+exports.completeGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
   const { groupId, groupLessonKey, attendeeUpdates } = request.data ?? {}
 
   try {
-    return await completeGroupLessonCore(request.auth.uid, groupId, groupLessonKey, attendeeUpdates)
+    const result = await completeGroupLessonCore(request.auth.uid, groupId, groupLessonKey, attendeeUpdates)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -433,7 +472,9 @@ exports.assignGroupProgram = onCall(async (request) => {
   const { groupId, templateId } = request.data ?? {}
 
   try {
-    return await assignGroupProgramCore(request.auth.uid, groupId, templateId)
+    const result = await assignGroupProgramCore(request.auth.uid, groupId, templateId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -451,7 +492,9 @@ exports.reassignGroupProgram = onCall(async (request) => {
   const { groupId, templateId } = request.data ?? {}
 
   try {
-    return await reassignGroupProgramCore(request.auth.uid, groupId, templateId)
+    const result = await reassignGroupProgramCore(request.auth.uid, groupId, templateId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -469,7 +512,9 @@ exports.deleteGroupProgram = onCall(async (request) => {
   const { groupId } = request.data ?? {}
 
   try {
-    return await deleteGroupProgramCore(request.auth.uid, groupId)
+    const result = await deleteGroupProgramCore(request.auth.uid, groupId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -482,7 +527,7 @@ exports.deleteGroupProgram = onCall(async (request) => {
 
 // Transitively calls createNotification — secrets required, see the same
 // note on rescheduleGroupLesson/cancelGroupLesson/completeGroupLesson.
-exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (request) => {
+exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
@@ -490,7 +535,9 @@ exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP
   const parsedDate = date ? new Date(date) : null
 
   try {
-    return await createExtraGroupLessonCore(request.auth.uid, groupId, parsedDate)
+    const result = await createExtraGroupLessonCore(request.auth.uid, groupId, parsedDate)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -502,7 +549,7 @@ exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP
 })
 
 exports.addPayment = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -513,6 +560,7 @@ exports.addPayment = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       const newBalance = await addPayment(studentId, lessonsCount, note)
+      await touchTeacherActivity(request.auth.uid)
       return { success: true, newBalance }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -535,7 +583,9 @@ exports.assignCurriculumTemplate = onCall(async (request) => {
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
     await assertOwnsTemplate(templateId, request.auth.uid)
-    return await assignCurriculumTemplate(studentId, templateId)
+    const result = await assignCurriculumTemplate(studentId, templateId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -559,7 +609,9 @@ exports.reassignProgram = onCall(async (request) => {
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
     await assertOwnsTemplate(templateId, request.auth.uid)
-    return await reassignProgram(studentId, programId, templateId)
+    const result = await reassignProgram(studentId, programId, templateId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -579,7 +631,9 @@ exports.deleteProgram = onCall(async (request) => {
 
   try {
     await assertOwnsStudent(studentId, request.auth.uid)
-    return await deleteProgram(studentId, programId)
+    const result = await deleteProgram(studentId, programId)
+    await touchTeacherActivity(request.auth.uid)
+    return result
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error
@@ -743,7 +797,7 @@ exports.getNearestUpcomingLesson = onCall(async (request) => {
 })
 
 exports.completeLesson = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -754,6 +808,7 @@ exports.completeLesson = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       await completeLesson(studentId, lessonId, { attendance, homeworkDone, rating })
+      await touchTeacherActivity(request.auth.uid)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -773,7 +828,7 @@ exports.completeLesson = onCall(
 // check). initiator defaults to "teacher" so existing teacher-side callers
 // that don't pass it keep working unchanged.
 exports.proposeReschedule = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     const { studentId, lessonId, proposedDate, initiator } = request.data ?? {}
     const role = initiator === "student" ? "student" : "teacher"
@@ -788,6 +843,9 @@ exports.proposeReschedule = onCall(
       }
       const date = new Date(proposedDate)
       const rescheduleStatus = await proposeReschedule(studentId, lessonId, date, role)
+      if (role === "teacher") {
+        await touchTeacherActivity(request.auth.uid)
+      }
       return { rescheduleStatus }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -803,7 +861,7 @@ exports.proposeReschedule = onCall(
 // confirmedBy defaults to "teacher" for the same backward-compatibility
 // reason as proposeReschedule's initiator default.
 exports.confirmReschedule = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
   async (request) => {
     const { studentId, lessonId, confirmedBy } = request.data ?? {}
     const role = confirmedBy === "student" ? "student" : "teacher"
@@ -817,6 +875,9 @@ exports.confirmReschedule = onCall(
         await assertOwnsStudent(studentId, request.auth.uid)
       }
       await confirmReschedule(studentId, lessonId, role)
+      if (role === "teacher") {
+        await touchTeacherActivity(request.auth.uid)
+      }
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -833,7 +894,7 @@ exports.confirmReschedule = onCall(
 // reschedule proposal isn't gated by request.auth at all, since either side
 // (teacher web or student web) may decline the other's proposal.
 exports.cancelReschedule = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     const { studentId, lessonId } = request.data ?? {}
 
@@ -853,7 +914,7 @@ exports.cancelReschedule = onCall(
 
 // Same both-dashboards reasoning as proposeReschedule.
 exports.proposeCancellation = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     const { studentId, lessonId, initiator } = request.data ?? {}
     const role = initiator === "student" ? "student" : "teacher"
@@ -867,6 +928,9 @@ exports.proposeCancellation = onCall(
         await assertOwnsStudent(studentId, request.auth.uid)
       }
       const cancellationStatus = await proposeCancellation(studentId, lessonId, role)
+      if (role === "teacher") {
+        await touchTeacherActivity(request.auth.uid)
+      }
       return { cancellationStatus }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -886,7 +950,7 @@ exports.proposeCancellation = onCall(
 // (cancellationStatus === "pending_student") from the student portal, which
 // has no Firebase Auth session to check. Only the teacher path is gated.
 exports.confirmCancellation = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
   async (request) => {
     const { studentId, lessonId, confirmedBy } = request.data ?? {}
 
@@ -899,6 +963,9 @@ exports.confirmCancellation = onCall(
         await assertOwnsStudent(studentId, request.auth.uid)
       }
       await confirmCancellation(studentId, lessonId, confirmedBy)
+      if (confirmedBy === "teacher") {
+        await touchTeacherActivity(request.auth.uid)
+      }
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -915,7 +982,7 @@ exports.confirmCancellation = onCall(
 // there's no "student initiates a direct cancellation" concept, this is a
 // one-way teacher action by design).
 exports.cancelLessonDirectly = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
@@ -926,6 +993,7 @@ exports.cancelLessonDirectly = onCall(
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
       await cancelLessonDirectly(studentId, lessonId)
+      await touchTeacherActivity(request.auth.uid)
       return { success: true }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -942,7 +1010,7 @@ exports.cancelLessonDirectly = onCall(
 // role param (mirrors cancelReschedule), so it isn't gated by request.auth
 // at all; either side may decline a cancellation proposal.
 exports.rejectCancellation = onCall(
-  { secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
     const { studentId, lessonId } = request.data ?? {}
 
@@ -983,6 +1051,36 @@ exports.generateTeacherConnectToken = onCall(async (request) => {
   }
 })
 
+// Teacher-only (request.auth-gated) — clears the teacher's own
+// integrations/teacherContact chat id for one platform, after best-effort
+// sending a "you've been disconnected" message through it (see
+// core/teacherConnect.js's disconnectTeacherPlatform for why this moved off
+// a direct client write). All 4 bot secrets are declared since either
+// platform's send may be needed depending on which one is being
+// disconnected.
+exports.disconnectTeacherPlatform = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    const { platform } = request.data ?? {}
+
+    try {
+      await disconnectTeacherPlatformCore(request.auth.uid, platform)
+      return { success: true }
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to disconnect teacher platform", error)
+      throw new HttpsError("internal", "Не удалось отключить канал уведомлений")
+    }
+  },
+)
+
 // Multi-tenancy Phase 3: called once from App.jsx's TeacherRoute bootstrap,
 // only when teachers/{uid} doesn't exist yet — needs admin-SDK read access
 // across every teacher's doc to check slug uniqueness, which the per-teacher
@@ -1001,6 +1099,25 @@ exports.generateTeacherSlug = onCall(async (request) => {
   } catch (error) {
     logger.error("Failed to generate teacher slug", error)
     throw new HttpsError("internal", "Не удалось сгенерировать адрес страницы")
+  }
+})
+
+exports.updateTeacherName = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+  }
+
+  const { name } = request.data ?? {}
+
+  try {
+    await updateTeacherNameCore(request.auth.uid, name)
+    return { success: true }
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to update teacher name", error)
+    throw new HttpsError("internal", "Не удалось сохранить имя")
   }
 })
 
@@ -1026,7 +1143,7 @@ exports.getTeacherBySlug = onCall(async (request) => {
 // UTC cron expression, so the fire time stays correct even if Moscow's
 // offset rules ever change.
 exports.dailyReminderMidday = onSchedule(
-  { schedule: "0 9 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { schedule: "0 9 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async () => {
     await dailyReminderMidday()
   },
@@ -1037,7 +1154,7 @@ exports.dailyReminderMidday = onSchedule(
 // hour is the same instant regardless of which zone the cron string is read
 // in.
 exports.dailyReminderPreLesson = onSchedule(
-  { schedule: "0 * * * *", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { schedule: "0 * * * *", secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async () => {
     await dailyReminderPreLesson()
   },
@@ -1047,33 +1164,200 @@ exports.dailyReminderPreLesson = onSchedule(
 // minutes (see dailyReminderTenMin's own comment for why 15, not 10). A
 // third, independent reminder tier alongside the two above.
 exports.dailyReminderTenMin = onSchedule(
-  { schedule: "*/5 * * * *", secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] },
+  { schedule: "*/5 * * * *", secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async () => {
     await dailyReminderTenMin()
   },
 )
 
-// Both secrets are needed even though this is the Telegram webhook: a
+// --- Admin panel (Phases 1-5) ---
+// Isolated contour: an admin is just a teacher's own existing Firebase Auth
+// account whose uid is also listed in config/admin.allowedUids (checked via
+// core/admin.js's assertIsAdmin on every callable below). No new auth
+// system, no new user type.
+
+exports.isAdmin = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  return await isAdminCore(request.auth.uid)
+})
+
+exports.recordSubscriptionPayment = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { teacherId, daysAdded, amount, note } = request.data ?? {}
+
+  try {
+    return await recordSubscriptionPaymentCore(request.auth.uid, { teacherId, daysAdded, amount, note })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to record subscription payment", error)
+    throw new HttpsError("internal", "Не удалось внести оплату")
+  }
+})
+
+exports.updateTeacherNotes = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { teacherId, notes } = request.data ?? {}
+
+  try {
+    return await updateTeacherNotesCore(request.auth.uid, { teacherId, notes })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to update teacher notes", error)
+    throw new HttpsError("internal", "Не удалось сохранить заметку")
+  }
+})
+
+exports.setTeacherBlocked = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { teacherId, blocked } = request.data ?? {}
+
+  try {
+    return await setTeacherBlockedCore(request.auth.uid, { teacherId, blocked })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to set teacher blocked status", error)
+    throw new HttpsError("internal", "Не удалось изменить статус блокировки")
+  }
+})
+
+exports.setTeacherPlan = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { teacherId, plan } = request.data ?? {}
+
+  try {
+    return await setTeacherPlanCore(request.auth.uid, { teacherId, plan })
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to set teacher plan", error)
+    throw new HttpsError("internal", "Не удалось изменить тарифный план")
+  }
+})
+
+exports.getTeacherStats = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Требуется авторизация")
+  }
+  const { teacherId } = request.data ?? {}
+
+  try {
+    return await getTeacherStatsCore(request.auth.uid, teacherId)
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error
+    }
+    logger.error("Failed to get teacher stats", error)
+    throw new HttpsError("internal", "Не удалось получить статистику")
+  }
+})
+
+// Irreversible — see core/admin.js's deleteTeacherAccount for the full
+// cascade this runs. Google OAuth secrets are declared because the cascade
+// deletes every Calendar event it can reach along the way (best-effort, see
+// core/teacherDeletion.js/core/students.js/core/groups.js).
+exports.deleteTeacherAccount = onCall(
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется авторизация")
+    }
+    const { teacherId } = request.data ?? {}
+
+    try {
+      return await deleteTeacherAccountCore(request.auth.uid, { teacherId })
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+      logger.error("Failed to delete teacher account", error)
+      throw new HttpsError("internal", "Не удалось удалить аккаунт учителя")
+    }
+  },
+)
+
+// Once a day — same cadence/timezone convention as dailyReminderMidday.
+// No bot secrets are declared as required here the way the lesson reminders
+// are: sendMessageToTeacher requires them only when a channel is actually
+// connected, and this function is expected to run rarely enough (0-1
+// teachers matching "exactly 3 days left" on most days) that missing
+// secrets would only matter on the rare day a reminder is actually due —
+// still, declare them for correctness since the underlying send can need
+// either.
+exports.checkExpiringSubscriptions = onSchedule(
+  { schedule: "30 9 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  async () => {
+    await checkExpiringSubscriptions()
+  },
+)
+
+// Both VK secrets are needed even though this is the Telegram webhook: a
 // homework submission here can trigger a teacher notification, and the
 // teacher's contact platform (integrations/teacherContact) may be VK.
-exports.telegramWebhook = onRequest({ secrets: [TELEGRAM_BOT_TOKEN, VK_GROUP_TOKEN] }, async (req, res) => {
-  // Wait for the update to finish processing before acknowledging, so a
-  // Cloud Functions instance freeze right after the response can't drop
-  // an in-flight Firestore write or Telegram reply. Telegram tolerates a
-  // webhook response taking a few seconds.
-  try {
-    await handleUpdate(req.body)
-  } catch (error) {
-    logger.error("Unhandled error while processing Telegram update", error)
-  }
+// telegramWebhook is the PERSONAL bot's entry point — telegramSharedWebhook
+// just below is the SHARED bot's. Both call the same handleUpdate, only the
+// literal botKey differs (Telegram gives no per-request signal of which bot
+// received an update, unlike VK's group_id, so the endpoint itself has to be
+// the signal).
+exports.telegramWebhook = onRequest(
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  async (req, res) => {
+    // Wait for the update to finish processing before acknowledging, so a
+    // Cloud Functions instance freeze right after the response can't drop
+    // an in-flight Firestore write or Telegram reply. Telegram tolerates a
+    // webhook response taking a few seconds.
+    try {
+      await handleUpdate(req.body, PERSONAL_BOT_KEY)
+    } catch (error) {
+      logger.error("Unhandled error while processing Telegram update", error)
+    }
 
-  res.status(200).send("OK")
-})
+    res.status(200).send("OK")
+  },
+)
+
+exports.telegramSharedWebhook = onRequest(
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  async (req, res) => {
+    try {
+      await handleUpdate(req.body, SHARED_BOT_KEY)
+    } catch (error) {
+      logger.error("Unhandled error while processing Telegram (shared bot) update", error)
+    }
+
+    res.status(200).send("OK")
+  },
+)
 
 // Same reasoning as telegramWebhook above: a homework submission received
 // here may need to notify the teacher on Telegram.
 exports.vkWebhook = onRequest(
-  { secrets: [VK_GROUP_TOKEN, VK_CONFIRMATION_CODE, TELEGRAM_BOT_TOKEN] },
+  {
+    secrets: [
+      VK_GROUP_TOKEN,
+      VK_CONFIRMATION_CODE,
+      VK_SHARED_GROUP_TOKEN,
+      VK_SHARED_CONFIRMATION_CODE,
+      TELEGRAM_BOT_TOKEN,
+      TELEGRAM_SHARED_BOT_TOKEN,
+    ],
+  },
   async (req, res) => {
     // Same fix as telegramWebhook: process the event fully, then respond,
     // so an instance freeze right after the response can't drop an
@@ -1466,5 +1750,26 @@ exports.syncGroupScheduleToGoogleCalendar = onDocumentWritten(
     }
   },
 )
+
+// TEMPORARY diagnostic — Admin SDK bypasses Rules, established pattern for
+// one-off reads (see techContext.md). Delete right after use.
+exports.diagCheckNotifications = onRequest(async (req, res) => {
+  const teacherId = req.query.teacherId
+  const snapshot = await db
+    .collection("notifications")
+    .where("teacherId", "==", teacherId)
+    .orderBy("createdAt", "desc")
+    .limit(10)
+    .get()
+  res.json(
+    snapshot.docs.map((d) => ({
+      id: d.id,
+      type: d.data().type,
+      target: d.data().target,
+      text: d.data().text,
+      createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+    })),
+  )
+})
 
 
