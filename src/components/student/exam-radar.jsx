@@ -12,10 +12,9 @@ import {
   BookOpen,
   Layers,
 } from "lucide-react"
-import { formatSubjects } from "@/lib/student-profile"
 import { CurriculumItemGroups } from "@/components/student/curriculum-item-groups"
 import { round1, buildRadarComment } from "@/lib/examRadar"
-import { translateSubject } from "@/locales/subjectTranslations"
+import { formatSubjectForRadarTitle } from "@/locales/subjectTranslations"
 import { translateUnitLabel } from "@/locales/examUnitTranslations"
 import { DecorationZone } from "@/components/student/decoration-zone"
 
@@ -86,10 +85,9 @@ export function ExamRadar({
       ? `${targetScore}`
       : `${targetScore}${translatedUnitLabel ? ` ${translatedUnitLabel}` : ""}`
 
-  const translatedSubjects = (subject ?? []).map((name) => translateSubject(name, i18n.language))
   const examLabel = t("examRadar.examLabel", {
     examType: examTypeName,
-    subject: formatSubjects(translatedSubjects, t("goals.noSubject")),
+    subject: formatSubjectForRadarTitle(subject, i18n.language) || t("goals.noSubject"),
   })
   const { status, daysLeft, requiredTotal, completedRequired } = metrics
   const percent = requiredTotal > 0 ? Math.round((completedRequired / requiredTotal) * 100) : 0

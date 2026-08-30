@@ -64,6 +64,14 @@ function HOMEWORK_SUBMITTED_TO_TEACHER(studentName, lessonDate, timeZone) {
   return `📝 ${studentName} прислал(а) домашнее задание к уроку ${formatMoscowDateTime(lessonDate, timeZone)}`
 }
 
+function HOMEWORK_COMMENT_ADDED_TO_TEACHER(studentName, lessonDate, comment, timeZone) {
+  return `💬 ${studentName} добавил(а) комментарий к домашке (урок ${formatMoscowDateTime(lessonDate, timeZone)}): ${comment}`
+}
+
+function HOMEWORK_COMMENT_EDITED_TO_TEACHER(studentName, lessonDate, comment, timeZone) {
+  return `💬 ${studentName} изменил(а) комментарий к домашке (урок ${formatMoscowDateTime(lessonDate, timeZone)}): ${comment}`
+}
+
 function ASSIGNMENT_ADDED(lessonDate, assignmentText, timeZone) {
   const tail = assignmentText ? assignmentText : "Проверь личный кабинет"
   return `📚 Репетитор добавил задание к уроку ${formatMoscowDateTime(lessonDate, timeZone)}: ${tail}`
@@ -480,6 +488,8 @@ module.exports = {
   SIGNUP_NEEDS_TEACHER_LINK,
   HOMEWORK_RECEIVED,
   HOMEWORK_SUBMITTED_TO_TEACHER,
+  HOMEWORK_COMMENT_ADDED_TO_TEACHER,
+  HOMEWORK_COMMENT_EDITED_TO_TEACHER,
   ASSIGNMENT_ADDED,
   EXTRA_LESSON_ASSIGNED,
   ASSIGNMENT_UPDATED,

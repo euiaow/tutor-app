@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react"
+﻿import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   Bell,
   CalendarPlus,
@@ -482,7 +482,13 @@ export function TeacherDashboard() {
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0)
   const [upcomingLessons, setUpcomingLessons] = useState([])
   const [completedLessons, setCompletedLessons] = useState([])
-  const [completedVisibleCount] = useState(5)
+  // How many rows fit the "Прошедшие уроки" panel is derived from the
+  // "Финансы" panel's real rendered height (which grows with the number of
+  // students), not a fixed count — see the measurement effect below.
+  const [completedVisibleCount, setCompletedVisibleCount] = useState(3)
+  const financeWrapperRef = useRef(null)
+  const pastLessonsPanelRef = useRef(null)
+  const pastLessonsListRef = useRef(null)
   const [isAllPastLessonsOpen, setIsAllPastLessonsOpen] = useState(false)
   const [videoCallUrl, setVideoCallUrl] = useState(null)
   const [curriculumProgressByStudent, setCurriculumProgressByStudent] = useState({})
@@ -656,6 +662,45 @@ export function TeacherDashboard() {
   const clusteredUpcomingLessons = selectClusteredUpcomingLessons(collapseGroupLessons(upcomingLessons))
   const collapsedCompletedLessons = collapseGroupLessons(completedLessons)
 
+  // Fits "Прошедшие уроки" rows to whatever height "Финансы" naturally takes
+  // (which grows with the student count) instead of a fixed row count. The
+  // grid row itself must not CSS-stretch either panel to match the other
+  // (see the "items-start" class below) — otherwise financeWrapperRef's
+  // measured height would already include a stretch driven by our own
+  // current row count, turning this into a runaway feedback loop instead of
+  // a one-shot fit.
+  useLayoutEffect(() => {
+    if (collapsedCompletedLessons.length === 0 || !financeWrapperRef.current) return
+
+    function recompute() {
+      const financeEl = financeWrapperRef.current
+      const panelEl = pastLessonsPanelRef.current
+      const listEl = pastLessonsListRef.current
+      if (!financeEl || !panelEl || !listEl || !listEl.children[0]) return
+
+      const financeHeight = financeEl.getBoundingClientRect().height
+      const chrome = panelEl.getBoundingClientRect().height - listEl.getBoundingClientRect().height
+      const rowHeight = listEl.children[0].getBoundingClientRect().height
+      if (rowHeight <= 0) return
+
+      const fit = Math.max(1, Math.floor((financeHeight - chrome) / rowHeight))
+      setCompletedVisibleCount((current) => {
+        const next = Math.min(fit, collapsedCompletedLessons.length)
+        return next === current ? current : next
+      })
+    }
+
+    recompute()
+
+    const observer = new ResizeObserver(recompute)
+    observer.observe(financeWrapperRef.current)
+    window.addEventListener("resize", recompute)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", recompute)
+    }
+  }, [collapsedCompletedLessons.length, students.length])
+
   // Статы — новый блок из макета, без прямого аналога в текущем коде.
   // Считаются из данных, уже загруженных на этой странице (без
   // дополнительных подписок), чтобы не дублировать источники правды:
@@ -751,6 +796,11 @@ export function TeacherDashboard() {
           timezone={teacherProfile?.timezone ?? ""}
           colorTheme={teacherProfile?.colorTheme ?? "pink"}
           onSave={(values) => updateTeacherSettings(auth.currentUser.uid, values)}
+          subscription={
+            teacherProfile
+              ? { plan: teacherProfile.plan, paidUntil: teacherProfile.subscriptionPaidUntil?.toDate?.() ?? null }
+              : null
+          }
         />
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -913,13 +963,14 @@ export function TeacherDashboard() {
           <GroupsSection students={students} groups={groups} />
         )}
 
-        <div className={`grid gap-5 ${collapsedCompletedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
+        <div className={`grid items-start gap-5 ${collapsedCompletedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
           {collapsedCompletedLessons.length > 0 ? (
-            <Panel>
+            <div ref={pastLessonsPanelRef}>
+              <Panel>
               <div className="flex items-center justify-between">
                 <Title>Прошедшие уроки</Title>
               </div>
-              <ul className="mt-4 divide-y divide-glass-border">
+              <ul ref={pastLessonsListRef} className="mt-4 divide-y divide-glass-border">
                 {collapsedCompletedLessons.slice(0, completedVisibleCount).map((lesson) => (
                   <PastLessonCard
                     key={lesson.id}
@@ -940,10 +991,15 @@ export function TeacherDashboard() {
                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </button>
               ) : null}
-            </Panel>
+              </Panel>
+            </div>
           ) : null}
 
-          {students.length > 0 ? <FinanceSection students={students} /> : null}
+          {students.length > 0 ? (
+            <div ref={financeWrapperRef}>
+              <FinanceSection students={students} />
+            </div>
+          ) : null}
         </div>
 
         <AllPastLessonsDialog open={isAllPastLessonsOpen} onOpenChange={setIsAllPastLessonsOpen} students={students} />

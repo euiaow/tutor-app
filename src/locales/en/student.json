@@ -40,8 +40,15 @@
     "videoCallActive": "Link is active",
     "videoCallAvailableSoon": "Available 3 minutes before the start",
     "videoCallJoin": "Join",
+    "topicLabel": "Topic:",
+    "assignmentLabel": "Assignment:",
     "assignment": "Assignment",
     "assignmentEmpty": "No assignment yet",
+    "addComment": "Add comment",
+    "editComment": "Edit comment",
+    "commentPlaceholder": "Comment on the homework...",
+    "commentSaving": "Saving...",
+    "commentSaveError": "Failed to save the comment",
     "myHomework": "My homework",
     "homeworkNotSubmitted": "You haven't submitted your homework yet",
     "homeworkReceived": "Homework received ✓",
@@ -93,7 +100,8 @@
     "noGoalHint": "Set a goal to track your progress toward the exam",
     "fillIn": "Fill in",
     "editGoalAria": "Edit goal",
-    "saveError": "Failed to save the goal"
+    "saveError": "Failed to save the goal",
+    "scoreOutOfRange": "Enter a value between {{min}} and {{max}}"
   },
   "examRadar": {
     "status": {

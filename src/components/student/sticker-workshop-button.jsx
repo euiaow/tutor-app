@@ -89,8 +89,8 @@ export function StickerWorkshopButton({ studentId, coinsBalance }) {
             {/* Desktop: full title + balance badge on one line, unchanged. */}
             <div className="hidden min-w-0 items-center gap-2 sm:flex">
               <p className="font-display truncate text-sm text-foreground">{t("gamification.portalTitle")}</p>
-              <span className="glass-tile inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-foreground">
-                {coinsBalance} 🪙
+              <span className="glass-tile-light inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-foreground">
+                {coinsBalance} 📈
               </span>
             </div>
             {/* Mobile: shortened title ("Стикеры", not "Стикеры и кейсы"),
@@ -98,8 +98,8 @@ export function StickerWorkshopButton({ studentId, coinsBalance }) {
                 squeezed onto the title's line. */}
             <div className="flex min-w-0 flex-col items-start gap-1.5 sm:hidden">
               <p className="font-display truncate text-sm text-foreground">{t("gamification.portalTitleShort")}</p>
-              <span className="glass-tile inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-foreground">
-                {coinsBalance} 🪙
+              <span className="glass-tile-light inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-foreground">
+                {coinsBalance} 📈
               </span>
             </div>
             {/* Hidden on mobile only (session 29) — the title/badge split

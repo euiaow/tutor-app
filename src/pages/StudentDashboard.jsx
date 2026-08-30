@@ -23,6 +23,7 @@ import {
   Target,
   Pencil,
   Settings,
+  MessageSquarePlus,
 } from "lucide-react"
 import { StudentGrainBackground } from "@/components/student-grain-background"
 import { ExamRadar } from "@/components/student/exam-radar"
@@ -58,6 +59,7 @@ import {
   confirmCancellation,
   rejectCancellation,
   submitHomeworkFile,
+  addHomeworkSubmissionComment,
 } from "@/firebase/lessons"
 import { uploadHomeworkSubmissionFile } from "@/firebase/materials"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
@@ -67,7 +69,7 @@ import { openExternalLink } from "@/lib/telegramWebApp"
 import { computeRadarMetrics, requiredItems, daysSinceLastUpdate } from "@/lib/examRadar"
 import { UserPrefsProvider, useTimeZone } from "@/lib/user-prefs-context"
 import { getThemeById } from "@/lib/themes"
-import { resolveTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
+import { resolveTimeZone, getDeviceTimeZone, localInputsToUtcDate, utcDateToLocalInput } from "@/lib/timezone"
 import { updateStudentSettings } from "@/firebase/students"
 import { StudentSettingsDialog } from "@/components/student/student-settings-dialog"
 import { GamificationProvider, useGamification } from "@/lib/gamification-context"
@@ -78,7 +80,7 @@ import { translateSubject } from "@/locales/subjectTranslations"
 import { translateUnitLabel } from "@/locales/examUnitTranslations"
 import { buildNotificationText } from "@/lib/notificationMessages"
 
-function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange }) {
+function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpenChange, zIndex }) {
   const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const [date, setDate] = useState("")
@@ -133,7 +135,7 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
 
   return (
     <GlassDialog open={open} onOpenChange={handleOpenChange}>
-      <GlassDialogContent>
+      <GlassDialogContent zIndex={zIndex}>
         <GlassDialogTitle>{t("rescheduleDialog.title")}</GlassDialogTitle>
         <GlassDialogDescription>{t("rescheduleDialog.description")}</GlassDialogDescription>
 
@@ -177,7 +179,7 @@ function ProposeRescheduleDialog({ studentId, lessonId, initialDate, open, onOpe
   )
 }
 
-function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChange }) {
+function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChange, zIndex }) {
   const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
@@ -209,7 +211,7 @@ function ProposeCancelDialog({ studentId, lessonId, lessonDate, open, onOpenChan
 
   return (
     <GlassDialog open={open} onOpenChange={handleOpenChange}>
-      <GlassDialogContent>
+      <GlassDialogContent zIndex={zIndex}>
         <GlassDialogTitle>{t("cancelDialog.title")}</GlassDialogTitle>
         <GlassDialogDescription>
           {lessonDate
@@ -325,18 +327,156 @@ function CompactStatusBadge({ tone, children }) {
 // ProposeCancelDialog this file already defines for that card, with the
 // same isGroupLesson guard (a group mirror can't be individually
 // rescheduled/cancelled — see core/lessons.js's assertNotGroupMirror).
+// Shared "Тема: ... / Задание: ..." block for every lesson card that shows
+// an assignment (NextLessonPlate, UpcomingLessonRow) — a 2-column grid so
+// both labels share one column width and a wrapped value line indents to
+// start under the value column instead of back under the label, per the
+// explicit layout spec this was asked for.
+function TopicAndAssignment({ topic, assignmentText }) {
+  const { t } = useTranslation("student")
+  return (
+    <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm">
+      <span className="shrink-0 font-semibold text-foreground">{t("nextLesson.topicLabel")}</span>
+      <span className="text-secondary-foreground">
+        {topic ? `"${topic}"` : <span className="text-muted-foreground">{t("common.noTopic")}</span>}
+      </span>
+      <span className="shrink-0 font-semibold text-foreground">{t("nextLesson.assignmentLabel")}</span>
+      <span className="text-secondary-foreground">
+        {assignmentText ? (
+          `"${assignmentText}"`
+        ) : (
+          <span className="text-muted-foreground">{t("nextLesson.assignmentEmpty")}</span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+// Shared state/handlers for the "add/edit comment on my homework" feature —
+// used by both NextLessonPlate and UpcomingLessonRow (all-uroki dialog), so
+// the two lesson cards never drift into two different comment behaviors.
+function useHomeworkComment(studentId, lessonId, existingComment) {
+  const { t } = useTranslation("student")
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  function startEditing() {
+    setText(existingComment || "")
+    setError("")
+    setOpen(true)
+  }
+
+  function cancel() {
+    setOpen(false)
+    setError("")
+  }
+
+  async function save() {
+    if (saving || !text.trim()) return
+    setSaving(true)
+    setError("")
+    try {
+      await addHomeworkSubmissionComment(studentId, lessonId, text.trim())
+      setOpen(false)
+    } catch (err) {
+      console.error("Failed to save homework comment:", err)
+      setError(t("nextLesson.commentSaveError"))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return { open, text, setText, saving, error, startEditing, cancel, save }
+}
+
+// The open textarea+save/cancel form only — rendered in place of whatever
+// trigger button/attach-homework row the parent normally shows, same
+// "editing replaces the row" shape UpcomingLessonRow already used for this.
+// Renders nothing when not open; the existing-comment text and the trigger
+// button that opens this stay the parent's own JSX (label/position differ
+// slightly between NextLessonPlate and UpcomingLessonRow).
+function HomeworkCommentForm({ comment }) {
+  const { t } = useTranslation("student")
+  if (!comment.open) return null
+
+  return (
+    <div className="mt-2.5 flex flex-col gap-2">
+      <textarea
+        value={comment.text}
+        onChange={(e) => comment.setText(e.target.value)}
+        disabled={comment.saving}
+        placeholder={t("nextLesson.commentPlaceholder")}
+        rows={3}
+        className="glass-inset w-full rounded-xl px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-60"
+      />
+      {comment.error ? <p className="text-xs font-semibold text-destructive">{comment.error}</p> : null}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={comment.save}
+          disabled={comment.saving || !comment.text.trim()}
+          className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-xs text-ink-foreground transition-transform hover:scale-[1.02] disabled:opacity-50"
+        >
+          {comment.saving ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              {t("nextLesson.commentSaving")}
+            </>
+          ) : (
+            t("common.save")
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={comment.cancel}
+          disabled={comment.saving}
+          className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2 text-xs font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70 disabled:opacity-50"
+        >
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function UpcomingLessonRow({ lesson, studentId }) {
   const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
   const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [uploadingHomework, setUploadingHomework] = useState(false)
+  const [uploadHomeworkError, setUploadHomeworkError] = useState("")
+  const homeworkFileInputRef = useRef(null)
 
   const assignment = lesson.homework.assignment
-  const hasAssignment = assignment.text.trim() !== "" || assignment.files.length > 0
   const submissionFiles = lesson.homework.submission.files ?? []
   const lastSubmission = submissionFiles[submissionFiles.length - 1]
   const effectiveDate = lesson.rescheduledDate ?? lesson.date
+  const comment = useHomeworkComment(studentId, lesson.id, lesson.homework.submission.comment)
+
+  async function handleHomeworkFileChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingHomework(true)
+    setUploadHomeworkError("")
+
+    try {
+      const fileUrl = await uploadHomeworkSubmissionFile(file, studentId)
+      await submitHomeworkFile(studentId, fileUrl, lesson.id)
+    } catch (err) {
+      console.error("Failed to submit homework file:", err)
+      setUploadHomeworkError(t("nextLesson.homeworkUploadError"))
+    } finally {
+      setUploadingHomework(false)
+      if (homeworkFileInputRef.current) {
+        homeworkFileInputRef.current.value = ""
+      }
+    }
+  }
 
   return (
     <li className="glass-inset flex flex-col gap-3 rounded-2xl px-4 py-4">
@@ -344,15 +484,14 @@ function UpcomingLessonRow({ lesson, studentId }) {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <CalendarDays className="size-3.5" aria-hidden="true" />
           {formatLessonDateTime(effectiveDate, timeZone, dateLocale)}
+          {lesson.rescheduleStatus === "confirmed" ? (
+            <CompactStatusBadge tone="good">{t("upcomingRow.rescheduleConfirmed")}</CompactStatusBadge>
+          ) : null}
         </div>
         {lesson.isGroupLesson ? (
           <CompactStatusBadge tone="warn">{lesson.groupName || t("nextLesson.groupLabel", { name: lesson.subject })}</CompactStatusBadge>
         ) : null}
       </div>
-
-      <p className="text-sm font-medium text-secondary-foreground">
-        {lesson.topic || <span className="font-normal text-muted-foreground">{t("common.noTopic")}</span>}
-      </p>
 
       {lesson.rescheduleStatus === "pending_student" || lesson.rescheduleStatus === "pending_teacher" ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -373,8 +512,6 @@ function UpcomingLessonRow({ lesson, studentId }) {
             </span>
           </span>
         </div>
-      ) : lesson.rescheduleStatus === "confirmed" ? (
-        <CompactStatusBadge tone="good">{t("upcomingRow.rescheduleConfirmed")}</CompactStatusBadge>
       ) : null}
 
       {lesson.cancellationStatus === "pending_student" || lesson.cancellationStatus === "pending_teacher" ? (
@@ -385,37 +522,28 @@ function UpcomingLessonRow({ lesson, studentId }) {
         </CompactStatusBadge>
       ) : null}
 
-      <div className="glass-soft rounded-2xl p-3.5">
-        <span className="font-display text-[0.65rem] font-medium tracking-[0.02em] text-muted-foreground">
-          {t("nextLesson.assignment")}
-        </span>
-        {hasAssignment ? (
-          <div className="mt-1.5 flex flex-col gap-1.5">
-            {assignment.text ? <p className="text-sm text-secondary-foreground">{assignment.text}</p> : null}
-            {assignment.files.length > 0 ? (
-              <ul className="flex flex-col gap-1">
-                {assignment.files.map((file, index) => (
-                  <li key={`${file.url}-${index}`}>
-                    <a
-                      href={file.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1.5 text-sm font-semibold text-foreground underline underline-offset-2"
-                    >
-                      <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
-                      <span className="truncate">{file.title}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : (
-          <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.assignmentEmpty")}</p>
-        )}
+      <div className="glass-inset rounded-2xl p-3.5">
+        <TopicAndAssignment topic={lesson.topic} assignmentText={assignment.text} />
+        {assignment.files.length > 0 ? (
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {assignment.files.map((file, index) => (
+              <li key={`${file.url}-${index}`}>
+                <a
+                  href={file.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 text-sm font-semibold text-foreground underline underline-offset-2"
+                >
+                  <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{file.title}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
-      <div className="glass-soft rounded-2xl p-3.5">
+      <div className="glass-inset rounded-2xl p-3.5">
         <span className="font-display text-[0.65rem] font-medium tracking-[0.02em] text-muted-foreground">
           {t("nextLesson.myHomework")}
         </span>
@@ -452,6 +580,55 @@ function UpcomingLessonRow({ lesson, studentId }) {
             </ul>
           </>
         )}
+
+        {!comment.open && lesson.homework.submission.comment ? (
+          <p className="glass-tile mt-2.5 rounded-xl px-3 py-2 text-sm text-secondary-foreground">
+            {lesson.homework.submission.comment}
+          </p>
+        ) : null}
+
+        <HomeworkCommentForm comment={comment} />
+
+        {!comment.open ? (
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            <input
+              ref={homeworkFileInputRef}
+              type="file"
+              onChange={handleHomeworkFileChange}
+              disabled={uploadingHomework}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={uploadingHomework}
+              onClick={() => homeworkFileInputRef.current?.click()}
+              className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-xs text-ink-foreground transition-transform hover:scale-[1.02] disabled:opacity-50"
+            >
+              {uploadingHomework ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                  {t("nextLesson.uploading")}
+                </>
+              ) : (
+                <>
+                  <Paperclip className="size-3.5" aria-hidden="true" />
+                  {t("nextLesson.attachHomework")}
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={comment.startEditing}
+              className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2 text-xs font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
+            >
+              <MessageSquarePlus className="size-3.5" aria-hidden="true" />
+              {lesson.homework.submission.comment ? t("nextLesson.editComment") : t("nextLesson.addComment")}
+            </button>
+          </div>
+        ) : null}
+        {uploadHomeworkError ? (
+          <p className="mt-1.5 text-xs font-semibold text-destructive">{uploadHomeworkError}</p>
+        ) : null}
       </div>
 
       {lesson.isGroupLesson ? (
@@ -472,8 +649,7 @@ function UpcomingLessonRow({ lesson, studentId }) {
             <button
               type="button"
               onClick={() => setCancelDialogOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-xs font-medium text-destructive-foreground transition-transform hover:scale-[1.02]"
-              style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2 text-xs font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
               {t("nextLesson.cancelButton")}
@@ -490,6 +666,7 @@ function UpcomingLessonRow({ lesson, studentId }) {
             initialDate={effectiveDate}
             open={rescheduleDialogOpen}
             onOpenChange={setRescheduleDialogOpen}
+            zIndex={150}
           />
           <ProposeCancelDialog
             studentId={studentId}
@@ -497,6 +674,7 @@ function UpcomingLessonRow({ lesson, studentId }) {
             lessonDate={effectiveDate}
             open={cancelDialogOpen}
             onOpenChange={setCancelDialogOpen}
+            zIndex={150}
           />
         </>
       ) : null}
@@ -622,6 +800,13 @@ function GoalCard({ studentId, program, examType, heading, showDecoration = fals
 
   async function handleSave() {
     if (saving) return
+    if (!isLanguageLevel) {
+      const numericScore = Number(targetScore)
+      if (!Number.isNaN(numericScore) && (numericScore < scaleMin || numericScore > scaleMax)) {
+        setError(t("goals.scoreOutOfRange", { min: scaleMin, max: scaleMax }))
+        return
+      }
+    }
     setSaving(true)
     setError("")
     try {
@@ -782,7 +967,7 @@ function GoalCard({ studentId, program, examType, heading, showDecoration = fals
 // one full card per program, headed by its own subject name, when there
 // are several.
 function MyGoalsSection({ studentId, programs, examTypesById }) {
-  const { t, i18n } = useTranslation("student")
+  const { t } = useTranslation("student")
   const qualifying = programs.filter((program) => {
     const examType = examTypesById[program.examTypeId]
     return examType && examType.scaleType !== "none"
@@ -813,7 +998,7 @@ function MyGoalsSection({ studentId, programs, examTypesById }) {
             studentId={studentId}
             program={program}
             examType={examTypesById[program.examTypeId]}
-            heading={translateSubject(program.subject, i18n.language) || t("goals.noSubject")}
+            heading={program.name || t("goals.noSubject")}
             showDecoration={index === 0}
           />
         ))}
@@ -1067,9 +1252,9 @@ function NextLessonPlate({ studentId, hasSchedule }) {
 
   const showPlaceholder = !hasSchedule || (!lesson && !cancelledLesson)
   const assignment = lesson?.homework.assignment
-  const hasAssignment = Boolean(assignment) && (assignment.text.trim() !== "" || assignment.files.length > 0)
   const submissionFiles = lesson?.homework.submission.files ?? []
   const lastSubmission = submissionFiles[submissionFiles.length - 1]
+  const comment = useHomeworkComment(studentId, lesson?.id ?? null, lesson?.homework.submission.comment)
 
   return (
     <section aria-labelledby="next-lesson-title" className="glass relative rounded-4xl p-6 sm:p-8">
@@ -1087,10 +1272,13 @@ function NextLessonPlate({ studentId, hasSchedule }) {
       <DecorationZone zone="zone2" className="top-[42%] right-[8px]" />
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
+          <p className="flex items-center gap-2 font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
             {!cancelledLesson && showGroupLesson
               ? t("nextLesson.groupLabel", { name: lesson.groupName || lesson.subject })
               : t("nextLesson.label")}
+            {!showGroupLesson && lesson?.rescheduleStatus === "confirmed" ? (
+              <CompactStatusBadge tone="good">{t("nextLesson.rescheduleConfirmed")}</CompactStatusBadge>
+            ) : null}
           </p>
           <h2
             id="next-lesson-title"
@@ -1167,10 +1355,6 @@ function NextLessonPlate({ studentId, hasSchedule }) {
           </StatusPlate>
         ) : null}
 
-        {!showGroupLesson && lesson?.rescheduleStatus === "confirmed" ? (
-          <StatusPlate tone="good" title={t("nextLesson.rescheduleConfirmed")} />
-        ) : null}
-
         {!showGroupLesson && lesson?.cancellationStatus === "pending_student" ? (
           <StatusPlate tone="bad" title={t("nextLesson.teacherProposesCancellation")}>
             <StatusPlateActions
@@ -1213,33 +1397,24 @@ function NextLessonPlate({ studentId, hasSchedule }) {
             ) : null}
 
             <div className="glass-inset rounded-3xl p-5">
-              <span className="font-display text-[0.7rem] font-medium tracking-[0.02em] text-muted-foreground">
-                {t("nextLesson.assignment")}
-              </span>
-              {hasAssignment ? (
-                <div className="mt-1.5 flex flex-col gap-1.5">
-                  {assignment.text ? <p className="text-sm text-secondary-foreground">{assignment.text}</p> : null}
-                  {assignment.files.length > 0 ? (
-                    <ul className="flex flex-col gap-1">
-                      {assignment.files.map((file, index) => (
-                        <li key={`${file.url}-${index}`}>
-                          <a
-                            href={file.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-1.5 text-sm font-semibold text-foreground underline underline-offset-2"
-                          >
-                            <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
-                            <span className="truncate">{file.title}</span>
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="mt-1.5 text-sm text-secondary-foreground">{t("nextLesson.assignmentEmpty")}</p>
-              )}
+              <TopicAndAssignment topic={lesson?.topic} assignmentText={assignment?.text} />
+              {assignment?.files.length > 0 ? (
+                <ul className="mt-1.5 flex flex-col gap-1">
+                  {assignment.files.map((file, index) => (
+                    <li key={`${file.url}-${index}`}>
+                      <a
+                        href={file.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1.5 text-sm font-semibold text-foreground underline underline-offset-2"
+                      >
+                        <Paperclip className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">{file.title}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
 
             <div className="glass-inset rounded-3xl p-5">
@@ -1282,31 +1457,53 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                 </>
               )}
 
-              <input
-                ref={homeworkFileInputRef}
-                type="file"
-                onChange={handleHomeworkFileChange}
-                disabled={uploadingHomework}
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={uploadingHomework}
-                onClick={() => homeworkFileInputRef.current?.click()}
-                className="mt-4 inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm text-ink-foreground transition-transform hover:scale-[1.02] disabled:opacity-50"
-              >
-                {uploadingHomework ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    {t("nextLesson.uploading")}
-                  </>
-                ) : (
-                  <>
-                    <Paperclip className="size-4" aria-hidden="true" />
-                    {t("nextLesson.attachHomework")}
-                  </>
-                )}
-              </button>
+              {!comment.open && lesson?.homework.submission.comment ? (
+                <p className="glass-tile mt-2.5 rounded-xl px-3 py-2 text-sm text-secondary-foreground">
+                  {lesson.homework.submission.comment}
+                </p>
+              ) : null}
+
+              <HomeworkCommentForm comment={comment} />
+
+              {!comment.open ? (
+                <>
+                  <input
+                    ref={homeworkFileInputRef}
+                    type="file"
+                    onChange={handleHomeworkFileChange}
+                    disabled={uploadingHomework}
+                    className="hidden"
+                  />
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={uploadingHomework}
+                      onClick={() => homeworkFileInputRef.current?.click()}
+                      className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm text-ink-foreground transition-transform hover:scale-[1.02] disabled:opacity-50"
+                    >
+                      {uploadingHomework ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          {t("nextLesson.uploading")}
+                        </>
+                      ) : (
+                        <>
+                          <Paperclip className="size-4" aria-hidden="true" />
+                          {t("nextLesson.attachHomework")}
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={comment.startEditing}
+                      className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/45 px-4 py-2 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
+                    >
+                      <MessageSquarePlus className="size-4" aria-hidden="true" />
+                      {lesson?.homework.submission.comment ? t("nextLesson.editComment") : t("nextLesson.addComment")}
+                    </button>
+                  </div>
+                </>
+              ) : null}
               {uploadHomeworkError ? (
                 <p className="mt-1.5 text-xs font-semibold text-destructive">{uploadHomeworkError}</p>
               ) : null}
@@ -1335,8 +1532,7 @@ function NextLessonPlate({ studentId, hasSchedule }) {
                   <button
                     type="button"
                     onClick={() => setCancelDialogOpen(true)}
-                    className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-destructive-foreground transition-transform hover:scale-[1.02]"
-                    style={{ background: "var(--gradient-warm)", boxShadow: "var(--shadow-soft)" }}
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-white/60 bg-white/45 px-5 py-3 text-sm font-medium text-secondary-foreground backdrop-blur-md transition-colors hover:bg-white/70"
                   >
                     <X className="h-4 w-4" />
                     {t("nextLesson.cancelButton")}
@@ -1642,11 +1838,6 @@ function StudentNotifications({ studentId }) {
   )
 }
 
-const LOCKED_MATERIALS = [
-  { id: "locked-1", title: "??????", isLocked: true, type: "secret" },
-  { id: "locked-2", title: "??????", isLocked: true, type: "secret" },
-]
-
 function getAuthKey(studentId) {
   return `auth_${studentId}`
 }
@@ -1745,6 +1936,23 @@ function StudentDashboardContent({ studentId }) {
     return unsubscribe
   }, [student?.teacherId])
 
+  // A student who's never opened Settings has no `timezone` saved — the
+  // on-site display already falls back to the device's own detected zone
+  // (resolveTimeZone below), but a bot reminder is built server-side with no
+  // access to that device, so it fell back to a hardcoded Moscow default
+  // instead and could show the wrong local time. Persisting the detected
+  // zone the first time it's known keeps the site and every future bot
+  // message reading the same value from here on, without requiring the
+  // student to visit Settings first.
+  useEffect(() => {
+    if (!student || student.timezone) return
+    updateStudentSettings(studentId, {
+      timezone: getDeviceTimeZone(),
+      colorTheme: student.colorTheme ?? "amber",
+      language: student.language ?? "ru",
+    }).catch((err) => console.error("Failed to persist detected timezone:", err))
+  }, [studentId, student])
+
   if (loading) {
     return <Spinner label={t("page.loadingStudent")} />
   }
@@ -1777,8 +1985,12 @@ function StudentDashboardContent({ studentId }) {
     .filter((lesson) => lesson.status !== "upcoming")
     .sort((a, b) => (b.date?.getTime?.() ?? 0) - (a.date?.getTime?.() ?? 0))
 
+  // Includes upcoming lessons too (not just completed ones) — a teacher can
+  // attach an assignment file while still preparing a lesson, and the
+  // student should see it in Materials right away, not only once the lesson
+  // is marked complete. The underlying live `lessons` subscription already
+  // updates this automatically if the teacher later detaches the file.
   const completedMaterials = lessons
-    .filter((lesson) => lesson.status === "completed" || !lesson.status)
     .flatMap((lesson) =>
       [...(lesson.materials || []), ...(lesson.homework?.assignment?.files || [])].map((material) => ({
         ...material,
@@ -1796,7 +2008,15 @@ function StudentDashboardContent({ studentId }) {
       return true
     })
 
-  const allMaterials = [...dedupedMaterials, ...LOCKED_MATERIALS]
+  const allMaterials = dedupedMaterials
+
+  // Gates whether a manually-toggled (not lesson-completion) covered item
+  // can count toward ExamRadar's pace — see computeRadarMetrics' own
+  // comment for why fewer than 2 real lessons isn't enough of a track
+  // record to trust yet.
+  const completedLessonsCount = lessons.filter(
+    (lesson) => lesson.status === "completed" || !lesson.status,
+  ).length
 
   const examTypesById = Object.fromEntries(examTypes.map((type) => [type.id, type]))
 
@@ -1815,6 +2035,7 @@ function StudentDashboardContent({ studentId }) {
           topics: program.topics,
           prototypes: program.prototypes,
           assignedAt: program.assignedAt,
+          completedLessonsCount,
         })
       : null
     return {
@@ -1878,7 +2099,7 @@ function StudentDashboardContent({ studentId }) {
         <div key={program.id}>
           {hasGoal && metrics ? (
             <ExamRadar
-              subject={[program.subject].filter(Boolean)}
+              subject={program.subject}
               examTypeName={examType?.name ?? "—"}
               scaleType={examType?.scaleType}
               scaleUnitLabel={examType?.scaleUnitLabel}
@@ -1893,7 +2114,7 @@ function StudentDashboardContent({ studentId }) {
           ) : (
             <CurriculumProgressCard
               progress={program}
-              subjectLabel={translateSubject(program.subject, i18n.language)}
+              subjectLabel={program.name}
             />
           )}
         </div>

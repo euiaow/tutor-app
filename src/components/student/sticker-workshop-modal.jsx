@@ -851,7 +851,7 @@ export function StickerWorkshopModal({
               <div style={{ flex: 1, minWidth: 0, background: `repeating-linear-gradient(45deg,${YELLOW} 0 6px,#111 6px 12px)`, opacity: 0.55 }} />
               <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 12px", borderLeft: `5px solid ${YELLOW}`, background: "#111" }}>
                 <span style={{ fontFamily: "'Bungee',sans-serif", fontSize: 15, color: YELLOW }}>{coinsBalance}</span>
-                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#8b8676" }}>🪙</span>
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#8b8676" }}>📈</span>
               </div>
             </div>
 

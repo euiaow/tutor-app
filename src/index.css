@@ -311,6 +311,18 @@
   border: 1px solid color-mix(in oklab, white 45%, transparent);
 }
 
+/* Lighter than glass-tile (below, 42% white via --glass-strong, shared with
+   the teacher panel) — for small student-page badges/pills that were
+   reading as flat white instead of glass (balance pill, coin-earned badge,
+   finance ledger rows) per explicit feedback. Page-scoped on purpose, same
+   reasoning as glass/glass-soft/glass-inset above — doesn't touch
+   --glass-strong itself, which the teacher panel also depends on. */
+@utility glass-tile-light {
+  background: color-mix(in oklab, white 14%, transparent);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid color-mix(in oklab, white 28%, transparent);
+}
+
 /* Decoration stickers (DecorationZone, StudentDashboard.jsx) cap their
    longest edge at 130px on desktop, 76px on the ~640px-and-narrower mobile
    layout where the dashboard cards go full-width and have far less spare

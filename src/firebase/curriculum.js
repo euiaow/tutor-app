@@ -35,6 +35,10 @@ function mapTemplateDoc(id, data) {
     subject: data.subject ?? "",
     topics: Array.isArray(data.topics) ? data.topics : [],
     prototypes: Array.isArray(data.prototypes) ? data.prototypes : [],
+    // Default minScoreRequired applied to a new topic/prototype row added
+    // after this was set — existing rows are never touched by a change
+    // here (see curriculum-section.jsx's RowList addRow).
+    defaultTargetScore: data.defaultTargetScore ?? null,
   }
 }
 
@@ -50,7 +54,7 @@ export async function getCurriculumTemplates(teacherId) {
   return snapshot.docs.map((document) => mapTemplateDoc(document.id, document.data()))
 }
 
-export async function createCurriculumTemplate({ name, examTypeId, subject, topics, prototypes }) {
+export async function createCurriculumTemplate({ name, examTypeId, subject, topics, prototypes, defaultTargetScore }) {
   const ref = collection(db, CURRICULUM_TEMPLATES_COLLECTION)
   await addDoc(ref, {
     name,
@@ -58,6 +62,7 @@ export async function createCurriculumTemplate({ name, examTypeId, subject, topi
     subject,
     topics,
     prototypes,
+    defaultTargetScore: defaultTargetScore ?? null,
     // Multi-tenancy Phase 2: templates are admin-only, teacher-owned config
     // (same "direct client write" convention as the rest of this file) —
     // stamped once at creation, never touched again by updateCurriculumTemplate.
@@ -67,7 +72,10 @@ export async function createCurriculumTemplate({ name, examTypeId, subject, topi
   })
 }
 
-export async function updateCurriculumTemplate(templateId, { name, examTypeId, subject, topics, prototypes }) {
+export async function updateCurriculumTemplate(
+  templateId,
+  { name, examTypeId, subject, topics, prototypes, defaultTargetScore },
+) {
   const ref = doc(db, CURRICULUM_TEMPLATES_COLLECTION, templateId)
   await updateDoc(ref, {
     name,
@@ -75,6 +83,7 @@ export async function updateCurriculumTemplate(templateId, { name, examTypeId, s
     subject,
     topics,
     prototypes,
+    defaultTargetScore: defaultTargetScore ?? null,
     updatedAt: serverTimestamp(),
   })
 }
@@ -105,6 +114,11 @@ function mapProgramDoc(id, data) {
   return {
     id,
     subject: data.subject ?? null,
+    // Denormalized from the template at assign/reassign time — falls back
+    // to "Без шаблона" for a program assigned before this field existed
+    // (see functions/core/curriculum.js), same fallback student-row.jsx's
+    // own live templateId lookup already used.
+    name: data.name || "Без шаблона",
     templateId: data.templateId ?? null,
     examTypeId: data.examTypeId ?? null,
     topics: Array.isArray(data.topics) ? data.topics : [],
@@ -174,7 +188,9 @@ export async function setCurriculumItemCovered(studentId, programId, kind, itemI
 
   const items = Array.isArray(snapshot.data()[kind]) ? snapshot.data()[kind] : []
   const next = items.map((item) =>
-    item.id === itemId ? { ...item, covered, coveredAt: covered ? new Date() : null } : item,
+    item.id === itemId
+      ? { ...item, covered, coveredAt: covered ? new Date() : null, coveredVia: covered ? "manual" : null }
+      : item,
   )
   await updateDoc(ref, { [kind]: next })
 }

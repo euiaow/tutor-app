@@ -36,7 +36,7 @@ function LedgerEntryRow({ entry }) {
     // produces visible depth (same outer-panel/inner-tile pairing the
     // teacher's own ledger rows use — Panel is glass-panel, rows are
     // glass-tile).
-    <li className="glass-tile flex items-center justify-between gap-3 rounded-[1.25rem] px-4 py-3 text-sm">
+    <li className="glass-tile-light flex items-center justify-between gap-3 rounded-[1.25rem] px-4 py-3 text-sm">
       <div className="min-w-0">
         <p className={`font-semibold ${isPayment ? "text-primary" : "text-foreground"}`}>
           {isPayment ? t("finance.paymentEntry", { count: entry.amount }) : t("finance.deductionEntry", { count: entry.amount })}
@@ -93,7 +93,7 @@ export function StudentFinanceSection({ studentId, paidLessonsBalance }) {
           <Wallet className="size-5 text-primary" aria-hidden="true" />
           {t("finance.title")}
         </h2>
-        <span className="glass-tile inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold text-foreground">
+        <span className="glass-tile-light inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold text-foreground">
           {t("finance.balance", { count: paidLessonsBalance ?? 0 })}
         </span>
       </div>

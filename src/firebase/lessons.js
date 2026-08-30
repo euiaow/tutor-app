@@ -20,6 +20,7 @@ const updateHomeworkAssignmentCallable = httpsCallable(functions, "updateHomewor
 const addLessonMaterialCallable = httpsCallable(functions, "addLessonMaterial")
 const createExtraLessonCallable = httpsCallable(functions, "createExtraLesson")
 const submitHomeworkFileCallable = httpsCallable(functions, "submitHomeworkFile")
+const addHomeworkSubmissionCommentCallable = httpsCallable(functions, "addHomeworkSubmissionComment")
 const completeLessonCallable = httpsCallable(functions, "completeLesson")
 const proposeRescheduleCallable = httpsCallable(functions, "proposeReschedule")
 const confirmRescheduleCallable = httpsCallable(functions, "confirmReschedule")
@@ -63,6 +64,7 @@ function mapLessonDoc(id, studentId, data) {
           submittedAt: file.submittedAt?.toDate?.() ?? null,
         })),
         submittedAt: data.homework?.submission?.submittedAt?.toDate?.() ?? null,
+        comment: data.homework?.submission?.comment ?? "",
       },
     },
     durationMinutes: data.durationMinutes ?? 60,
@@ -75,6 +77,7 @@ function mapLessonDoc(id, studentId, data) {
     cancellationInitiator: data.cancellationInitiator ?? null,
     coveredTopics: Array.isArray(data.coveredTopics) ? data.coveredTopics : [],
     coveredPrototypes: Array.isArray(data.coveredPrototypes) ? data.coveredPrototypes : [],
+    coinsEarned: typeof data.coinsEarned === "number" ? data.coinsEarned : null,
     // Neither was ever exposed here before — slotIndex is needed by
     // UpcomingLessonsListDialog's virtual-occurrence projection to match a
     // real lesson doc back to its schedule slot; isExtraLesson was already
@@ -175,8 +178,15 @@ export async function createExtraLesson(studentId, date) {
   return result.data.lessonId
 }
 
-export async function submitHomeworkFile(studentId, fileUrl) {
-  await submitHomeworkFileCallable({ studentId, fileUrl })
+// `lessonId` (optional) attaches to that specific lesson instead of the
+// student's nearest upcoming one — used by the "attach homework" button
+// under a non-nearest lesson row in the student's own "all lessons" list.
+export async function submitHomeworkFile(studentId, fileUrl, lessonId = null) {
+  await submitHomeworkFileCallable({ studentId, fileUrl, lessonId })
+}
+
+export async function addHomeworkSubmissionComment(studentId, lessonId, comment) {
+  await addHomeworkSubmissionCommentCallable({ studentId, lessonId, comment })
 }
 
 // Direct client write (same pattern as addLessonMaterial) — the teacher
@@ -402,6 +412,7 @@ function mapPlainLessonDoc(document) {
     },
     isGroupLesson: Boolean(data.isGroupLesson),
     groupName: data.groupName ?? null,
+    coinsEarned: typeof data.coinsEarned === "number" ? data.coinsEarned : null,
   }
 }
 

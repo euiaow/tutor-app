@@ -40,8 +40,15 @@
     "videoCallActive": "Ссылка активна",
     "videoCallAvailableSoon": "Станет доступна за 3 минуты до начала",
     "videoCallJoin": "Подключиться",
+    "topicLabel": "Тема:",
+    "assignmentLabel": "Задание:",
     "assignment": "Задание",
     "assignmentEmpty": "Задание пока не добавлено",
+    "addComment": "Добавить комментарий",
+    "editComment": "Изменить комментарий",
+    "commentPlaceholder": "Комментарий к домашке...",
+    "commentSaving": "Сохраняем...",
+    "commentSaveError": "Не удалось сохранить комментарий",
     "myHomework": "Моя домашка",
     "homeworkNotSubmitted": "Вы ещё не отправили домашнее задание",
     "homeworkReceived": "Домашнее задание получено ✓",
@@ -87,13 +94,14 @@
     "noSubject": "Без предмета",
     "targetLevel": "Целевой уровень",
     "targetGrade": "Целевая оценка",
-    "targetScoreUnit": "Целевой {{unit}}",
+    "targetScoreUnit": "Цель",
     "unitFallback": "балл",
     "examDate": "Дата экзамена",
     "noGoalHint": "Укажи цель, чтобы видеть свой прогресс к экзамену",
     "fillIn": "Заполнить",
     "editGoalAria": "Изменить цель",
-    "saveError": "Не удалось сохранить цель"
+    "saveError": "Не удалось сохранить цель",
+    "scoreOutOfRange": "Введи значение от {{min}} до {{max}}"
   },
   "examRadar": {
     "status": {

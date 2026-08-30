@@ -157,7 +157,7 @@ function programPercent(program) {
 // Confirms replacing one program's template-derived content — same shape
 // as DeleteStudentDialog's confirm-dialog pattern in this file, adapted for
 // a select instead of a delete button.
-function ReassignProgramDialog({ studentId, programId, templates, open, onOpenChange }) {
+function ReassignProgramDialog({ studentId, programId, templates, otherTemplateIds, open, onOpenChange }) {
   const [templateId, setTemplateId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -170,6 +170,7 @@ function ReassignProgramDialog({ studentId, programId, templates, open, onOpenCh
 
   async function handleConfirm() {
     if (saving || !templateId) return
+    if ((otherTemplateIds ?? []).includes(templateId)) return
     setSaving(true)
     setError("")
     try {
@@ -196,7 +197,14 @@ function ReassignProgramDialog({ studentId, programId, templates, open, onOpenCh
             onChange={setTemplateId}
             disabled={saving}
             placeholder="Выбрать шаблон..."
-            options={templates.map((template) => ({ value: template.id, label: template.name }))}
+            options={templates.map((template) => {
+              const alreadyAssigned = (otherTemplateIds ?? []).includes(template.id)
+              return {
+                value: template.id,
+                label: alreadyAssigned ? `${template.name} (уже назначена)` : template.name,
+                disabled: alreadyAssigned,
+              }
+            })}
           />
         </div>
 
@@ -204,7 +212,10 @@ function ReassignProgramDialog({ studentId, programId, templates, open, onOpenCh
 
         <TeacherModalFooter className="mt-5">
           <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={saving} />
-          <TeacherSaveBtn onClick={handleConfirm} disabled={saving || !templateId}>
+          <TeacherSaveBtn
+            onClick={handleConfirm}
+            disabled={saving || !templateId || (otherTemplateIds ?? []).includes(templateId)}
+          >
             {saving ? "Заменяем..." : "Заменить"}
           </TeacherSaveBtn>
         </TeacherModalFooter>
@@ -270,7 +281,7 @@ function DeleteProgramDialog({ studentId, programId, programLabel, open, onOpenC
 
 // One row per already-assigned program (Block 4 Phase 2) — subject +
 // template name + mini progress + "Заменить"/delete.
-function ProgramRow({ studentId, program, templates, disabled }) {
+function ProgramRow({ studentId, program, templates, programs, disabled }) {
   const [reassignOpen, setReassignOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const templateName = templates.find((t) => t.id === program.templateId)?.name ?? "Без шаблона"
@@ -308,6 +319,9 @@ function ProgramRow({ studentId, program, templates, disabled }) {
         studentId={studentId}
         programId={program.id}
         templates={templates}
+        otherTemplateIds={(programs ?? [])
+          .filter((p) => p.id !== program.id)
+          .map((p) => p.templateId)}
         open={reassignOpen}
         onOpenChange={setReassignOpen}
       />
@@ -325,7 +339,7 @@ function ProgramRow({ studentId, program, templates, disabled }) {
 // Muted (not accent-colored, per spec) "+ Добавить программу" text link —
 // reveals a template select + "Назначить" on click, collapses back after a
 // successful assign.
-function AddProgramControl({ studentId, templates, disabled }) {
+function AddProgramControl({ studentId, templates, programs, disabled }) {
   const [expanded, setExpanded] = useState(false)
   const [templateId, setTemplateId] = useState("")
   const [assigning, setAssigning] = useState(false)
@@ -333,6 +347,7 @@ function AddProgramControl({ studentId, templates, disabled }) {
 
   async function handleAssign() {
     if (assigning || !templateId) return
+    if ((programs ?? []).some((program) => program.templateId === templateId)) return
     setAssigning(true)
     setError("")
     try {
@@ -367,7 +382,14 @@ function AddProgramControl({ studentId, templates, disabled }) {
         onChange={setTemplateId}
         disabled={assigning || disabled}
         placeholder="Выбрать шаблон..."
-        options={templates.map((template) => ({ value: template.id, label: template.name }))}
+        options={templates.map((template) => {
+          const alreadyAssigned = (programs ?? []).some((program) => program.templateId === template.id)
+          return {
+            value: template.id,
+            label: alreadyAssigned ? `${template.name} (уже назначена)` : template.name,
+            disabled: alreadyAssigned,
+          }
+        })}
         className="min-w-0 flex-1"
       />
       <GhostBtn onClick={handleAssign} disabled={assigning || disabled || !templateId} className="shrink-0 px-4 py-2.5">
@@ -557,10 +579,11 @@ function StudentEditModal({ student, open, onOpenChange }) {
                     studentId={student.id}
                     program={program}
                     templates={templates}
+                    programs={programs}
                     disabled={saving}
                   />
                 ))}
-                <AddProgramControl studentId={student.id} templates={templates} disabled={saving} />
+                <AddProgramControl studentId={student.id} templates={templates} programs={programs} disabled={saving} />
               </div>
             </div>
           </div>

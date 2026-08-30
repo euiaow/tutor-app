@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Check,
   ChevronDown,
+  Coins,
   ExternalLink,
   FileText,
   ListChecks,
@@ -35,7 +36,6 @@ import {
   updateLessonTopic,
 } from "@/firebase/lessons"
 import { getProgramsForStudent, markTopicsCovered } from "@/firebase/curriculum"
-import { subscribeToExamTypes } from "@/firebase/examTypes"
 import { uploadMaterial } from "@/firebase/materials"
 import { formatLessonDateTime } from "@/lib/schedule"
 import { resolveLessonSubject } from "@/lib/subjects"
@@ -59,6 +59,11 @@ export const RATING_OPTIONS = [
 
 export function optionLabel(options, value) {
   return options.find((option) => option.value === value)?.label ?? "—"
+}
+
+// Trims a trailing ".0" (whole coin counts) but keeps a genuine ".5".
+function formatCoins(value) {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/\.0$/, "")
 }
 
 // Same visual family as the mockup's LessonModal glass-tile sections, but
@@ -269,7 +274,6 @@ export function HomeworkLessonDialog({
   // No lesson->subject link exists in the data (see Block 4 Phase 4 audit),
   // so the default is just the first assigned program, not a smart guess.
   const [programs, setPrograms] = useState([])
-  const [examTypes, setExamTypes] = useState([])
   const [selectedProgramId, setSelectedProgramId] = useState("")
   const [topicSelections, setTopicSelections] = useState([])
   const [prototypeSelections, setPrototypeSelections] = useState([])
@@ -385,19 +389,6 @@ export function HomeworkLessonDialog({
       })
       .catch((error) => console.error("Failed to load programs:", error))
   }, [open, studentId])
-
-  // Only needed to build the "Выбрать из программы «...»" label below —
-  // named after subject + exam type name, e.g. "Русский ЕГЭ".
-  useEffect(() => {
-    if (!open || !student?.teacherId) {
-      setExamTypes([])
-      return
-    }
-    const unsubscribe = subscribeToExamTypes(student.teacherId, setExamTypes, (error) =>
-      console.error("Failed to load exam types:", error),
-    )
-    return unsubscribe
-  }, [open, student?.teacherId])
 
   useEffect(() => {
     if (!open || slotAutoSelectRef.current) return
@@ -531,12 +522,7 @@ export function HomeworkLessonDialog({
   const submissionFiles = lesson?.homework.submission.files ?? []
   const isEditableAssignment = mode === "upcoming" && !isCompleted && !isCancelled
   const lessonSubject = lesson ? resolveLessonSubject(lesson, student) : null
-  const selectedProgramExamType = selectedProgram
-    ? examTypes.find((type) => type.id === selectedProgram.examTypeId)
-    : null
-  const selectedProgramLabel = selectedProgram
-    ? [selectedProgram.subject, selectedProgramExamType?.name].filter(Boolean).join(" ")
-    : ""
+  const selectedProgramLabel = selectedProgram ? selectedProgram.name || "Без шаблона" : ""
 
   return (
     <TeacherDialog open={open} onOpenChange={handleDialogOpenChange}>
@@ -721,6 +707,11 @@ export function HomeworkLessonDialog({
                     ))}
                   </ul>
                 )}
+                {lesson?.homework.submission.comment ? (
+                  <p className="glass-tile mt-2 rounded-[1rem] px-3 py-2 text-sm text-foreground">
+                    {lesson.homework.submission.comment}
+                  </p>
+                ) : null}
               </Section>
 
               {isCancelled ? (
@@ -731,7 +722,13 @@ export function HomeworkLessonDialog({
                   <span className="text-sm text-muted-foreground">Урок не состоялся</span>
                 </div>
               ) : isCompleted ? (
-                <div className="glass-tile flex flex-col gap-2 rounded-[1.25rem] p-4">
+                <div className="glass-tile relative flex flex-col gap-2 rounded-[1.25rem] p-4">
+                  {typeof lesson.coinsEarned === "number" ? (
+                    <span className="absolute top-0 right-0 inline-flex items-center gap-1 rounded-bl-xl rounded-tr-[1.25rem] bg-white/70 px-2.5 py-1 text-[11px] font-semibold text-amber-600">
+                      <Coins className="size-3" aria-hidden="true" />
+                      +{formatCoins(lesson.coinsEarned)}
+                    </span>
+                  ) : null}
                   <span className="text-sm font-bold text-ink">Итоги урока</span>
                   <p className="text-sm text-ink">Посещение: {optionLabel(ATTENDANCE_OPTIONS, lesson.attendance)}</p>
                   <p className="text-sm text-ink">Домашка: {lesson.homeworkDone ? "Сделана" : "Не сделана"}</p>
@@ -786,7 +783,7 @@ export function HomeworkLessonDialog({
                           disabled={completing}
                           options={programs.map((program) => ({
                             value: program.id,
-                            label: program.subject || "Без предмета",
+                            label: program.name || "Без шаблона",
                           }))}
                         />
                       ) : null}

@@ -9,12 +9,13 @@ import { useThemeClass } from "@/lib/user-prefs-context"
 // (components/teacher/theme-ui.jsx), ported rather than reused directly
 // since that one is hardcoded to the teacher-theme's rose tokens/Popover
 // wrapper and this needs the student page's own glass classes instead.
-// `glass-tile` (not `glass-inset`, which has no `backdrop-filter` at all —
-// see index.css — and reads as flat white instead of glass on a real
-// surface like this trigger) matches the blurred-glass look every other
-// student-page control uses.
+// A lighter, more transparent tint than glass-tile/glass-panel (both ~30-42%
+// white) — per explicit feedback that Settings' dropdowns read as too
+// opaque/white against the theme's own background photo. Keeps the blur
+// (unlike glass-inset, which has none) so text stays legible over a busy
+// background, just with much less white mixed in.
 const glassSelectTriggerCls =
-  "glass-tile flex h-11 w-full items-center justify-between gap-2 rounded-2xl px-3.5 text-left text-sm font-medium text-foreground outline-none transition-all disabled:opacity-50"
+  "flex h-11 w-full items-center justify-between gap-2 rounded-2xl border border-white/25 bg-white/12 px-3.5 text-left text-sm font-medium text-foreground outline-none backdrop-blur-xl transition-all disabled:opacity-50"
 
 export function GlassSelect({ value, onChange, options, placeholder = "Выбрать...", disabled, className = "" }) {
   const [open, setOpen] = useState(false)
@@ -40,7 +41,7 @@ export function GlassSelect({ value, onChange, options, placeholder = "Выбр�
             initialFocus={popupRef}
             className={cn(
               themeClass,
-              "glass-panel w-[var(--anchor-width)] max-h-72 overflow-y-auto scrollbar-hidden rounded-[1.25rem] p-1.5 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
+              "w-[var(--anchor-width)] max-h-72 overflow-y-auto scrollbar-hidden rounded-[1.25rem] border border-white/25 bg-white/12 p-1.5 shadow-[var(--shadow-glass)] backdrop-blur-xl outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
             )}
           >
             <div className="flex flex-col gap-0.5">
@@ -53,7 +54,7 @@ export function GlassSelect({ value, onChange, options, placeholder = "Выбр�
                     setOpen(false)
                   }}
                   className={cn(
-                    "truncate rounded-[0.9rem] px-2.5 py-1.5 text-left text-sm transition hover:bg-white/60",
+                    "truncate rounded-[0.9rem] px-2.5 py-1.5 text-left text-sm transition hover:bg-white/25",
                     option.value === value ? "font-semibold text-primary" : "text-foreground",
                   )}
                 >

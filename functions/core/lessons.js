@@ -466,15 +466,31 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
     }
   }
 
+  // Coins reward, 0-3 per lesson: on-time attendance + homework done + rating
+  // (excellent=1, good=0.5, needs_work/unset=0) — a completed perfect lesson
+  // scores 3, two of them exactly cover the sticker-case price (see
+  // DEFAULT_CASE_PRICE in gamification.js).
+  const attendanceScore = attendance === "on_time" ? 1 : 0
+  const homeworkScore = homeworkDone ? 1 : 0
+  const ratingScore = rating === "excellent" ? 1 : rating === "good" ? 0.5 : 0
+  const coinsEarned = attendanceScore + homeworkScore + ratingScore
+
   await lessonRef.update({
     status: "completed",
     attendance: attendance ?? null,
     homeworkDone: Boolean(homeworkDone),
     rating: rating ?? null,
     materials: Array.from(materialsByUrl.values()),
+    coinsEarned,
   })
 
-  logger.info("completeLesson: lesson marked completed", { studentId, lessonId })
+  // FieldValue.increment, not read-then-write, so concurrent completeLesson
+  // calls for the same student can't race and clobber each other's award.
+  await db.collection(STUDENTS_COLLECTION).doc(studentId).update({
+    coinsBalance: FieldValue.increment(coinsEarned),
+  })
+
+  logger.info("completeLesson: lesson marked completed", { studentId, lessonId, coinsEarned })
 
   await deductLessonFromBalance(studentId, lessonId)
 
@@ -1109,15 +1125,31 @@ async function uploadHomeworkFile(studentId, buffer, contentType) {
 // Note: a serverTimestamp() sentinel can't be nested inside an
 // arrayUnion() element, so each file entry gets a concrete Timestamp
 // instead — only the top-level submission.submittedAt uses the sentinel.
-async function recordHomeworkSubmission(studentId, fileUrl) {
-  // getNearestUpcomingLesson already sees every upcoming doc regardless of
-  // shape — including a group lesson's mirror (core/groups.js), which lives
-  // in this exact same students/{id}/lessons collection and is otherwise
-  // indistinguishable from this student's own lesson for this purpose. No
-  // separate "check the group side too" branch needed any more.
-  const nearest = await getNearestUpcomingLesson(studentId)
+// `explicitLessonId` (optional) lets the "attach homework" button under a
+// specific lesson in the student's own "all lessons" list (not just their
+// single nearest one) attach to *that* lesson instead — validated against
+// this student's own upcoming lessons so a bad/foreign id can't redirect a
+// submission onto another lesson. Every other caller (the nearest-lesson
+// button, both bots) omits it and keeps the original "always the nearest
+// upcoming lesson" behavior.
+async function recordHomeworkSubmission(studentId, fileUrl, explicitLessonId = null) {
+  let lessonId = null
+  if (explicitLessonId) {
+    const explicitSnapshot = await lessonsRef(studentId).doc(explicitLessonId).get()
+    if (explicitSnapshot.exists && explicitSnapshot.data().status === "upcoming") {
+      lessonId = explicitLessonId
+    }
+  }
 
-  const lessonId = nearest ? nearest.id : await ensureUpcomingLesson(studentId)
+  if (!lessonId) {
+    // getNearestUpcomingLesson already sees every upcoming doc regardless of
+    // shape — including a group lesson's mirror (core/groups.js), which lives
+    // in this exact same students/{id}/lessons collection and is otherwise
+    // indistinguishable from this student's own lesson for this purpose. No
+    // separate "check the group side too" branch needed any more.
+    const nearest = await getNearestUpcomingLesson(studentId)
+    lessonId = nearest ? nearest.id : await ensureUpcomingLesson(studentId)
+  }
 
   if (!lessonId) {
     logger.warn("recordHomeworkSubmission: no upcoming lesson to attach submission to", {
@@ -1179,6 +1211,49 @@ async function recordHomeworkSubmission(studentId, fileUrl) {
   return lessonId
 }
 
+// Student-facing (no request.auth — same trust model as recordHomeworkSubmission
+// above): attaches a free-text comment to a lesson's own homework submission,
+// and notifies the teacher the same way a submitted file does. Overwrites any
+// previous comment on this lesson rather than accumulating a thread — matches
+// the "one submission, one optional note" scope this was asked for.
+async function addHomeworkSubmissionComment(studentId, lessonId, comment) {
+  const ref = lessonsRef(studentId).doc(lessonId)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Урок не найден")
+  }
+  const wasEdit = Boolean(snapshot.data()?.homework?.submission?.comment)
+
+  await ref.update({ "homework.submission.comment": comment })
+
+  logger.info("addHomeworkSubmissionComment: comment recorded", { studentId, lessonId, wasEdit })
+
+  const studentSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).get()
+  const studentData = studentSnapshot.exists ? studentSnapshot.data() : null
+  const studentName = studentData?.name ?? "Ученик"
+  const teacherId = studentData?.teacherId ?? null
+  const lessonData = snapshot.data()
+  const lessonDate = lessonData?.rescheduledDate?.toDate?.() ?? lessonData?.date?.toDate?.() ?? null
+
+  try {
+    await createNotification({
+      target: "teacher",
+      studentId,
+      type: wasEdit ? "homework_comment_edited" : "homework_comment_added",
+      text: (tz) =>
+        wasEdit
+          ? botMessages.HOMEWORK_COMMENT_EDITED_TO_TEACHER(studentName, lessonDate, comment, tz)
+          : botMessages.HOMEWORK_COMMENT_ADDED_TO_TEACHER(studentName, lessonDate, comment, tz),
+      lessonId,
+      teacherId,
+    })
+  } catch (error) {
+    logger.error("addHomeworkSubmissionComment: teacher notification failed", { studentId, lessonId, error })
+  }
+
+  return { success: true }
+}
+
 module.exports = {
   lessonsRef,
   createUpcomingDraft,
@@ -1188,6 +1263,7 @@ module.exports = {
   updateHomeworkAssignment,
   addLessonMaterial,
   createExtraLesson,
+  addHomeworkSubmissionComment,
   completeLesson,
   proposeReschedule,
   confirmReschedule,

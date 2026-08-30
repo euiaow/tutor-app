@@ -53,6 +53,7 @@ const {
   cancelLessonDirectly,
   rejectCancellation,
   recordHomeworkSubmission,
+  addHomeworkSubmissionComment,
 } = require("./core/lessons")
 const {
   dailyReminderMidday,
@@ -276,7 +277,7 @@ exports.createExtraLesson = onCall(
 exports.submitHomeworkFile = onCall(
   { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
   async (request) => {
-    const { studentId, fileUrl } = request.data ?? {}
+    const { studentId, fileUrl, lessonId: explicitLessonId } = request.data ?? {}
 
     if (!studentId || typeof studentId !== "string") {
       throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
@@ -286,7 +287,7 @@ exports.submitHomeworkFile = onCall(
     }
 
     try {
-      const lessonId = await recordHomeworkSubmission(studentId, fileUrl)
+      const lessonId = await recordHomeworkSubmission(studentId, fileUrl, explicitLessonId || null)
       return { success: true, lessonId }
     } catch (error) {
       if (error instanceof HttpsError) {
@@ -295,6 +296,36 @@ exports.submitHomeworkFile = onCall(
 
       logger.error("Failed to record homework submission", error)
       throw new HttpsError("internal", "Не удалось сохранить домашнее задание")
+    }
+  },
+)
+
+// Student-facing (no request.auth — same trust model as submitHomeworkFile
+// above): a free-text note attached to one lesson's own homework submission.
+exports.addHomeworkSubmissionComment = onCall(
+  { secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  async (request) => {
+    const { studentId, lessonId, comment } = request.data ?? {}
+
+    if (!studentId || typeof studentId !== "string") {
+      throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
+    }
+    if (!lessonId || typeof lessonId !== "string") {
+      throw new HttpsError("invalid-argument", "Не указан идентификатор урока")
+    }
+    if (typeof comment !== "string" || !comment.trim()) {
+      throw new HttpsError("invalid-argument", "Не указан комментарий")
+    }
+
+    try {
+      return await addHomeworkSubmissionComment(studentId, lessonId, comment.trim())
+    } catch (error) {
+      if (error instanceof HttpsError) {
+        throw error
+      }
+
+      logger.error("Failed to add homework submission comment", error)
+      throw new HttpsError("internal", "Не удалось сохранить комментарий")
     }
   },
 )
@@ -1751,25 +1782,51 @@ exports.syncGroupScheduleToGoogleCalendar = onDocumentWritten(
   },
 )
 
-// TEMPORARY diagnostic — Admin SDK bypasses Rules, established pattern for
-// one-off reads (see techContext.md). Delete right after use.
-exports.diagCheckNotifications = onRequest(async (req, res) => {
-  const teacherId = req.query.teacherId
-  const snapshot = await db
-    .collection("notifications")
-    .where("teacherId", "==", teacherId)
-    .orderBy("createdAt", "desc")
-    .limit(10)
-    .get()
-  res.json(
-    snapshot.docs.map((d) => ({
-      id: d.id,
-      type: d.data().type,
-      target: d.data().target,
-      text: d.data().text,
-      createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
-    })),
-  )
+
+// TEMPORARY diagnostic (read-only) — inspect the programs whose templateId
+// no longer resolves to a real curriculumTemplates doc, to tell apart real
+// leftover test data from a legitimately-deleted template. Delete this and
+// the deployed function right after use, per project convention.
+exports.inspectUnresolvedProgramsTmp = onRequest(async (req, res) => {
+  if (req.query.key !== "fixnames2026") {
+    res.status(403).send("forbidden")
+    return
+  }
+
+  const [programsSnapshot, templatesSnapshot] = await Promise.all([
+    db.collectionGroup("programs").get(),
+    db.collection("curriculumTemplates").get(),
+  ])
+  const templateIds = new Set(templatesSnapshot.docs.map((doc) => doc.id))
+
+  const unresolved = programsSnapshot.docs.filter((doc) => {
+    const data = doc.data()
+    return !data.name && (!data.templateId || !templateIds.has(data.templateId))
+  })
+
+  const studentIds = [...new Set(unresolved.map((doc) => doc.ref.parent.parent.id))]
+  const studentSnapshots = await Promise.all(studentIds.map((id) => db.collection("students").doc(id).get()))
+  const studentById = new Map(studentSnapshots.map((snap) => [snap.id, snap.exists ? snap.data() : null]))
+
+  const teacherIds = [...new Set([...studentById.values()].map((s) => s?.teacherId).filter(Boolean))]
+  const teacherSnapshots = await Promise.all(teacherIds.map((id) => db.collection("teachers").doc(id).get()))
+  const teacherById = new Map(teacherSnapshots.map((snap) => [snap.id, snap.exists ? snap.data() : null]))
+
+  const rows = unresolved.map((doc) => {
+    const data = doc.data()
+    const studentId = doc.ref.parent.parent.id
+    const student = studentById.get(studentId)
+    const teacher = student?.teacherId ? teacherById.get(student.teacherId) : null
+    return {
+      studentId,
+      studentName: student?.name ?? "(student doc missing)",
+      teacherEmail: teacher?.email ?? "(unknown)",
+      programId: doc.id,
+      subject: data.subject ?? null,
+      templateId: data.templateId ?? null,
+      assignedAt: data.assignedAt?.toDate?.()?.toISOString() ?? null,
+    }
+  })
+
+  res.json({ count: rows.length, rows })
 })
-
-

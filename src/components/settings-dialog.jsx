@@ -34,6 +34,32 @@ function timeZoneOptionsWith(value) {
   return [{ value, label: value }, ...TIME_ZONE_OPTIONS]
 }
 
+function formatRuDate(date) {
+  const day = String(date.getDate()).padStart(2, "0")
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  return `${day}.${month}.${date.getFullYear()}`
+}
+
+// Read-only status, teacher-only — mirrors AdminDashboard.jsx's own
+// SubscriptionStatus wording so a teacher and the admin panel never
+// describe the same state two different ways. No self-serve upgrade/pay
+// action here by design: plan changes are admin-only (see
+// AdminDashboard.jsx's PlanToggle) — this is purely "where do I stand."
+function SubscriptionStatus({ plan, paidUntil }) {
+  if (plan !== "subscription") {
+    return <span className="font-medium text-sky-600">Пробный период</span>
+  }
+  if (!paidUntil) {
+    return <span className="font-medium text-muted-foreground">Не оплачено</span>
+  }
+  const isActive = paidUntil.getTime() > Date.now()
+  return isActive ? (
+    <span className="font-medium text-emerald-600">Активна до {formatRuDate(paidUntil)}</span>
+  ) : (
+    <span className="font-medium text-destructive">Истекла {formatRuDate(paidUntil)}</span>
+  )
+}
+
 // Its own field + "Изменить" button, saved independently of the timezone/
 // colorTheme form below — a name change is a single, immediate write, not
 // part of the "adjust a few fields then Сохранить" flow the rest of this
@@ -92,7 +118,17 @@ function NameEditor({ name, onSave }) {
 // each dashboard's own gear-icon button supplies the role-specific data
 // (current timezone/colorTheme, save callback) rather than two independent
 // dialogs duplicating this logic.
-export function SettingsDialog({ variant, open, onOpenChange, name, onSaveName, timezone, colorTheme, onSave }) {
+export function SettingsDialog({
+  variant,
+  open,
+  onOpenChange,
+  name,
+  onSaveName,
+  timezone,
+  colorTheme,
+  onSave,
+  subscription,
+}) {
   const [timezoneValue, setTimezoneValue] = useState(timezone || getDeviceTimeZone())
   const [colorThemeValue, setColorThemeValue] = useState(colorTheme)
   const [saving, setSaving] = useState(false)
@@ -134,6 +170,14 @@ export function SettingsDialog({ variant, open, onOpenChange, name, onSaveName, 
 
           <div className="mt-5 flex flex-col gap-4">
             {onSaveName ? <NameEditor name={name ?? ""} onSave={onSaveName} /> : null}
+
+            {subscription ? (
+              <Field label="Подписка">
+                <p className="text-sm">
+                  <SubscriptionStatus plan={subscription.plan} paidUntil={subscription.paidUntil} />
+                </p>
+              </Field>
+            ) : null}
 
             <Field label="Часовой пояс">
               <TeacherSelect

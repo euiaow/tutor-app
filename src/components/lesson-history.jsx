@@ -51,11 +51,18 @@ function Badge({ children, tone = "neutral" }) {
   )
 }
 
+// Trims a trailing ".0" (whole coin counts) but keeps a genuine ".5" —
+// avoids "+3.0" for a whole-number reward while "+2.5" still reads exactly.
+function formatCoins(value) {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/\.0$/, "")
+}
+
 function LessonCard({ lesson }) {
   const { t } = useTranslation("student")
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
   const isCancelled = lesson.status === "cancelled"
+  const hasCoins = typeof lesson.coinsEarned === "number"
 
   return (
     <li className="glass-soft flex flex-col gap-3 rounded-4xl p-5 sm:p-6">
@@ -66,10 +73,14 @@ function LessonCard({ lesson }) {
         </div>
         {isCancelled ? (
           <Badge tone="cancelled">{t("history.cancelled")}</Badge>
-        ) : ATTENDANCE_KEYS.includes(lesson.attendance) ? (
-          <Badge tone={lesson.attendance === "on_time" ? "warm" : "muted"}>
-            {t(`history.attendance.${lesson.attendance}`)}
-          </Badge>
+        ) : hasCoins ? (
+          // Same pill the sticker-workshop balance badge uses
+          // (StickerWorkshopButton) — number then the coin emoji, so a
+          // lesson's earned coins read as the same "currency" as the
+          // balance the student sees there, not a separate visual system.
+          <span className="glass-tile-light inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold text-foreground">
+            +{formatCoins(lesson.coinsEarned)} 🪙
+          </span>
         ) : null}
       </div>
 
@@ -82,6 +93,11 @@ function LessonCard({ lesson }) {
           badge above instead. */}
       {!isCancelled ? (
         <div className="flex flex-wrap items-center gap-2">
+          {ATTENDANCE_KEYS.includes(lesson.attendance) ? (
+            <Badge tone={lesson.attendance === "on_time" ? "warm" : "muted"}>
+              {t(`history.attendance.${lesson.attendance}`)}
+            </Badge>
+          ) : null}
           <Badge tone={lesson.homeworkDone ? "neutral" : "muted"}>
             {lesson.homeworkDone ? (
               <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />

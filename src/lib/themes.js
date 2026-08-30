@@ -47,8 +47,16 @@ export const THEME_REGISTRY = [
     id: "amber",
     label: "Оранжевая",
     cssClassName: "amber-scope",
-    radius: "1.75rem",
-    backgroundImage: "/bg/gr21.jpg",
+    // Radius/backgroundImage brought in line with "pink" (radius 1.5rem, no
+    // background photo) as a live experiment against a hard-to-diagnose
+    // report of this theme's headings sometimes rendering invisible on one
+    // teacher's machine — every DOM/CSS diagnostic came back correct
+    // (see session notes), so this isn't a confirmed fix, just the one
+    // remaining structural difference from the theme that's confirmed to
+    // always work. Revert to `backgroundImage: "/bg/gr21.jpg"` if this
+    // doesn't help.
+    radius: "1.5rem",
+    backgroundImage: null,
     accent: "oklch(0.72 0.19 47)",
     heading: "oklch(0.26 0.02 60)",
     subheading: "oklch(0.52 0.02 60)",
@@ -59,7 +67,12 @@ export const THEME_REGISTRY = [
     label: "Синяя",
     cssClassName: "blue-theme",
     radius: "1.75rem",
-    backgroundImage: "/bg/gr13.jpg",
+    // Was ".jpg" — the actual file on disk is a .png (confirmed via
+    // `public/bg/`), so this was 404ing silently for every student on the
+    // blue theme (no visible break, since a failed background-image layer
+    // just paints nothing and the gradient fallback underneath still
+    // shows).
+    backgroundImage: "/bg/gr13.png",
     accent: "oklch(0.572 0.2062 262.76)",
     heading: "oklch(0.26 0.02 60)",
     subheading: "oklch(0.52 0.02 60)",

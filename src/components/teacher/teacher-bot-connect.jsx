@@ -147,7 +147,7 @@ function TelegramConnectBody({ open, onDone }) {
           className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-primary-foreground transition hover:brightness-105 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
           style={{ background: "var(--gradient-orb)", boxShadow: "var(--shadow-soft)" }}
         >
-          {deepLink ? "Открыть Telegram" : "Открываем..."}
+          {deepLink ? "Открыть Telegram" : "Готовим ссылку..."}
         </a>
       )}
     </div>
@@ -198,7 +198,7 @@ function VkConnectBody({ open }) {
         </button>
       </p>
       <div className="glass-tile flex items-center justify-between gap-2 rounded-full px-4 py-2.5">
-        <span className="min-w-0 break-all font-mono text-sm text-ink">{code ?? "…"}</span>
+        <span className="min-w-0 break-all font-mono text-sm text-ink">{code ?? "Готовим код..."}</span>
         <button
           type="button"
           onClick={handleCopy}

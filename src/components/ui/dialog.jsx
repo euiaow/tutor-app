@@ -13,7 +13,7 @@ function DialogClose(props) {
   return <DialogPrimitive.Close {...props} />
 }
 
-function DialogContent({ className, children, ...props }) {
+function DialogContent({ className, children, zIndex = 50, ...props }) {
   // Multi-tenancy Phase 4a: "" (no class, plain root tokens) unless the
   // student picked the pink theme, in which case "teacher-theme" needs to
   // be applied directly here too — this Popup is portaled straight to
@@ -30,13 +30,17 @@ function DialogContent({ className, children, ...props }) {
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Backdrop className={cn(themeClass, "fixed inset-0 z-50 bg-foreground/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0")} />
+      <DialogPrimitive.Backdrop
+        style={{ zIndex }}
+        className={cn(themeClass, "fixed inset-0 bg-foreground/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0")}
+      />
       <DialogPrimitive.Popup
         ref={popupRef}
         initialFocus={popupRef}
+        style={{ zIndex }}
         className={cn(
           themeClass,
-          "fixed top-1/2 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-border bg-card p-6 shadow-xl shadow-primary/5 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:p-8",
+          "fixed top-1/2 left-1/2 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-border bg-card p-6 shadow-xl shadow-primary/5 outline-none transition-all data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0 sm:p-8",
           className,
         )}
         {...props}

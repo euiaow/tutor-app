@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronRight, Lock, Paperclip } from "lucide-react"
+import { ChevronRight, Paperclip } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Spinner } from "@/components/ui/spinner"
 import { MaterialLink } from "@/components/material-link"
@@ -43,19 +43,6 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
             {visibleMaterials.map((material, index) => {
               const key = material.id ?? material.url ?? index
 
-              if (material.isLocked) {
-                return (
-                  <li
-                    key={key}
-                    aria-disabled="true"
-                    className="flex items-center gap-2.5 rounded-xl border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground opacity-60"
-                  >
-                    <Lock className="size-4 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{material.title}</span>
-                  </li>
-                )
-              }
-
               return (
                 <li key={key}>
                   <MaterialLink material={material} />
@@ -85,19 +72,6 @@ export function MaterialsLibrary({ materials, loading = false, error = null }) {
           <ul className="mt-6 flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
             {materials.map((material, index) => {
               const key = material.id ?? material.url ?? index
-
-              if (material.isLocked) {
-                return (
-                  <li
-                    key={key}
-                    aria-disabled="true"
-                    className="flex items-center gap-2.5 rounded-2xl border border-white/45 bg-white/25 px-3 py-2.5 text-sm text-muted-foreground opacity-60"
-                  >
-                    <Lock className="size-4 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{material.title}</span>
-                  </li>
-                )
-              }
 
               return (
                 <li key={key} className="glass-inset flex flex-col gap-0.5 rounded-2xl px-3 py-2.5">

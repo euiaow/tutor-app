@@ -35,12 +35,17 @@ these files are for full verbatim narrative detail only, rarely needed.
   session 24 (group lessons 11-item follow-up pass), session 26 (sticker
   positions corrected again after real device testing, stacking-order bug
   root-caused, Sticker Workshop mobile layout), session 27 (small
-  follow-up polish: zone1 nudge, placement picker enlarged). Archived
-  2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19 (×3), 2026-08-20,
-  2026-08-23 (sessions 16-23, in one batch), and 2026-08-24 (sessions 24,
-  26, 27, in one batch — session 25 had already been archived here
-  separately, earlier) respectively.
+  follow-up polish: zone1 nudge, placement picker enlarged), sessions
+  28-33 (group-program cascade-delete root-caused, group lessons
+  rearchitected onto real per-student lesson mirrors, 5-item group-lessons
+  follow-up round, color-theme system rearchitected as a real registry
+  with 5 real bugs found along the way, sticker-workshop button/case-reel
+  polish rounds). Archived 2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19
+  (×3), 2026-08-20, 2026-08-23 (sessions 16-23, in one batch), 2026-08-24
+  (sessions 24, 26, 27, in one batch — session 25 had already been
+  archived here separately, earlier), and 2026-08-27 (sessions 28-33, in
+  one batch) respectively.
 
 `activeContext.md` itself keeps only the most recent sessions inline (as of
-2026-08-24: sessions 28-31) — check there first for anything recent; come
+2026-08-27: sessions 34-38) — check there first for anything recent; come
 here only for older detail.

@@ -64,6 +64,11 @@ async function assignCurriculumTemplate(studentId, templateId) {
   const programRefNew = programsRef(studentId).doc()
   await programRefNew.set({
     subject: template.subject ?? null,
+    // Denormalized from the template at assignment time, same reasoning as
+    // examTypeId below — the student-facing radar/progress card titles show
+    // the program's own name, not the raw subject, so they need this even
+    // if the template is later renamed or deleted.
+    name: template.name ?? "",
     templateId,
     // Denormalized from the template at assignment time, not a live
     // reference — if the template is later deleted/changed, this program's
@@ -121,6 +126,7 @@ async function reassignProgram(studentId, programId, newTemplateId) {
 
   await ref.update({
     subject: template.subject ?? null,
+    name: template.name ?? "",
     templateId: newTemplateId,
     examTypeId: template.examTypeId ?? null,
     topics: withProgressDefaults(template.topics),
@@ -165,11 +171,38 @@ async function setStudentGoal(studentId, programId, targetScore, examDate) {
   if (!snapshot.exists) {
     throw new HttpsError("not-found", "Программа не найдена")
   }
+  const program = snapshot.data()
+
+  // Clamp against this program's own exam type scale, not a hardcoded
+  // 0-100 — a custom exam type with e.g. scaleMax 50 must not accept a
+  // goal of 90 just because 90 <= 100. Falls back to the old 0-100 range
+  // only if the exam type can't be resolved (deleted, or a "language_level"
+  // type, whose targetScore is a scaleLabels index rather than a raw score).
+  let scaleMin = 0
+  let scaleMax = 100
+  if (program.teacherId && program.examTypeId) {
+    const examTypeSnapshot = await db
+      .collection("teachers")
+      .doc(program.teacherId)
+      .collection("examTypes")
+      .doc(program.examTypeId)
+      .get()
+    if (examTypeSnapshot.exists) {
+      const examType = examTypeSnapshot.data()
+      if (examType.scaleType === "language_level") {
+        scaleMin = 0
+        scaleMax = Array.isArray(examType.scaleLabels) ? examType.scaleLabels.length - 1 : 5
+      } else {
+        if (typeof examType.scaleMin === "number") scaleMin = examType.scaleMin
+        if (typeof examType.scaleMax === "number") scaleMax = examType.scaleMax
+      }
+    }
+  }
 
   const normalizedScore =
     targetScore === null || targetScore === undefined || targetScore === ""
       ? null
-      : Math.max(0, Math.min(100, Number(targetScore)))
+      : Math.max(scaleMin, Math.min(scaleMax, Number(targetScore)))
   const normalizedExamDate = examDate ? Timestamp.fromDate(new Date(examDate)) : null
 
   await ref.update({ targetScore: normalizedScore, examDate: normalizedExamDate })
@@ -312,13 +345,18 @@ async function markTopicsCovered(studentId, lessonId, programId, { topicIds, pro
     const nextTopics = (Array.isArray(data.topics) ? data.topics : []).map((topic) => {
       if (!topicIdSet.has(topic.id)) return topic
       coveredTopics.push({ id: topic.id, title: topic.title })
-      return { ...topic, covered: true, coveredAt: Timestamp.now(), needsReview }
+      // "lesson" (vs. setCurriculumItemCovered's "manual") is what
+      // computeRadarMetrics (src/lib/examRadar.js) uses to decide whether a
+      // covered item can count toward pace — see its own comment for why a
+      // teacher's initial "student already knows this" baseline setup must
+      // not read as real per-week progress.
+      return { ...topic, covered: true, coveredAt: Timestamp.now(), coveredVia: "lesson", needsReview }
     })
 
     const nextPrototypes = (Array.isArray(data.prototypes) ? data.prototypes : []).map((prototype) => {
       if (!prototypeIdSet.has(prototype.id)) return prototype
       coveredPrototypes.push({ id: prototype.id, title: prototype.title })
-      return { ...prototype, covered: true, coveredAt: Timestamp.now(), needsReview }
+      return { ...prototype, covered: true, coveredAt: Timestamp.now(), coveredVia: "lesson", needsReview }
     })
 
     transaction.update(progRef, { topics: nextTopics, prototypes: nextPrototypes })

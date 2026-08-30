@@ -437,7 +437,9 @@ async function checkExpiringSubscriptions() {
               daysUntilBlock === 0
                 ? "доступ будет заблокирован сегодня"
                 : `иначе через ${daysUntilBlock} ${pluralDays(daysUntilBlock)} доступ будет заблокирован`
-            const text = `⚠️ Подписка на платформу истекла ${formatRuDate(paidUntil, timeZone)}. Свяжись с администратором, ${blockPhrase}.`
+            // formatRuDate's ru-RU output already ends in "г." (e.g. "27
+            // августа 2026 г.") — no extra "." after it, or it doubles up.
+            const text = `⚠️ Подписка на платформу истекла ${formatRuDate(paidUntil, timeZone)} Свяжись с администратором, ${blockPhrase}.`
             await createNotification({ target: "teacher", teacherId, type: "subscription_expired_warning", text })
             await doc.ref.update({ expiredWarningSentFor: guardKey })
             logger.info("checkExpiringSubscriptions: expired warning sent", { teacherId, daysSinceExpiry })

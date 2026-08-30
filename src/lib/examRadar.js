@@ -44,7 +44,7 @@ export function daysSinceLastUpdate(topics, prototypes) {
   return Math.floor((Date.now() - mostRecent.getTime()) / MS_PER_DAY)
 }
 
-export function computeRadarMetrics({ examDate, targetScore, topics, prototypes, assignedAt }) {
+export function computeRadarMetrics({ examDate, targetScore, topics, prototypes, assignedAt, completedLessonsCount = 0 }) {
   const now = new Date()
   const exam = toJsDate(examDate)
   const score = targetScore ?? 0
@@ -87,9 +87,24 @@ export function computeRadarMetrics({ examDate, targetScore, topics, prototypes,
   const weeksSinceStart = assigned ? Math.max(1, (now.getTime() - assigned.getTime()) / MS_PER_WEEK) : 1
   const paceCappedWeeks = Math.min(weeksSinceStart, PACE_WINDOW_CAP_WEEKS)
 
+  // Pace must reflect real per-lesson work, not a teacher's initial "this
+  // student already knows this" baseline setup (a bare checkbox toggle in
+  // the student's detail view, coveredVia "manual") — only an item marked
+  // covered as part of completing a lesson (coveredVia "lesson", the
+  // markTopicsCovered flow) counts toward pace by default. Once the student
+  // has actually had 2+ real lessons, there's enough of a track record that
+  // a manual toggle from then on is trusted too (a teacher correcting/
+  // backfilling progress mid-course, not front-loading a fake pace) — see
+  // functions/core/curriculum.js's markTopicsCovered / firebase/
+  // curriculum.js's setCurriculumItemCovered for where coveredVia is set.
+  // A legacy item with no coveredVia at all (covered before this field
+  // existed) is treated as "manual" — indistinguishable from a baseline
+  // setup at the time, so the conservative default.
   const windowStart = new Date(now.getTime() - paceCappedWeeks * MS_PER_WEEK)
   const recentCompleted = [...requiredTopics, ...requiredPrototypes].filter((item) => {
     if (!item.covered) return false
+    const countsTowardPace = item.coveredVia === "lesson" || completedLessonsCount >= 2
+    if (!countsTowardPace) return false
     const coveredAt = toJsDate(item.coveredAt)
     return coveredAt && coveredAt.getTime() >= windowStart.getTime()
   }).length

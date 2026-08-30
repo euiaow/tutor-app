@@ -226,6 +226,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
   const [newTypeMax, setNewTypeMax] = useState(100)
   const [topics, setTopics] = useState([])
   const [prototypes, setPrototypes] = useState([])
+  const [defaultTargetScore, setDefaultTargetScore] = useState(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -250,6 +251,17 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
     setNewTypeMax(100)
     setTopics(template?.topics?.length ? template.topics : [])
     setPrototypes(template?.prototypes?.length ? template.prototypes : [])
+
+    // Resolved independently of `fieldConfig` above (which still reflects
+    // the *previous* render's examTypeId here, since the setExamTypeId call
+    // above hasn't re-rendered yet) — the same exam type this effect just
+    // resolved examTypeId to, so the initial default always matches what
+    // the dialog is actually about to show (never the NEW_EXAM_TYPE_VALUE
+    // case — a saved template's own examTypeId is never that sentinel).
+    const resolvedExamType = examTypes.find((t) => t.id === (template?.examTypeId ?? examTypes[0]?.id ?? "")) ?? null
+    const resolvedConfig = fieldConfigForExamType(resolvedExamType)
+    setDefaultTargetScore(template?.defaultTargetScore ?? resolvedConfig.scoreDefault ?? 0)
+
     setError("")
   }, [open, template, examTypes])
 
@@ -299,6 +311,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
         subject,
         topics: topics.filter((row) => row.title.trim() !== "").map(normalizeRow),
         prototypes: prototypes.filter((row) => row.title.trim() !== "").map(normalizeRow),
+        defaultTargetScore: fieldConfig.showScore ? defaultTargetScore : null,
       }
 
       if (template) {
@@ -406,6 +419,41 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
             </div>
           ) : null}
 
+          {fieldConfig.showScore ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  Значение целевых баллов по умолчанию
+                </span>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Применяется только к новым темам и прототипам, добавленным после изменения — уже добавленные не
+                  меняются.
+                </p>
+              </div>
+              <div className="shrink-0">
+                {fieldConfig.levelMode ? (
+                  <LevelStepper
+                    value={defaultTargetScore}
+                    min={fieldConfig.scoreMin}
+                    max={fieldConfig.scoreMax}
+                    onChange={setDefaultTargetScore}
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    min={fieldConfig.scoreMin}
+                    max={fieldConfig.scoreMax}
+                    step={fieldConfig.scoreStep}
+                    value={defaultTargetScore}
+                    onChange={(e) => setDefaultTargetScore(Number(e.target.value) || 0)}
+                    disabled={saving}
+                    className={`${teacherInputCls} spinner-visible w-24!`}
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
+
           <RowList
             label={fieldConfig.topicsLabel}
             rows={topics}
@@ -416,7 +464,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
             scoreStep={fieldConfig.scoreStep}
-            scoreDefault={fieldConfig.scoreDefault}
+            scoreDefault={defaultTargetScore}
             scorePlaceholder={fieldConfig.scorePlaceholder}
             scoreTitle={fieldConfig.scoreTitle}
           />
@@ -430,7 +478,7 @@ function CurriculumEditorDialog({ template, examTypes, teacherId, open, onOpenCh
             scoreMin={fieldConfig.scoreMin}
             scoreMax={fieldConfig.scoreMax}
             scoreStep={fieldConfig.scoreStep}
-            scoreDefault={fieldConfig.scoreDefault}
+            scoreDefault={defaultTargetScore}
             scorePlaceholder={fieldConfig.scorePlaceholder}
             scoreTitle={fieldConfig.scoreTitle}
           />

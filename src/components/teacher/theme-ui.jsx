@@ -300,13 +300,16 @@ export function TeacherSelect({ value, onChange, options, placeholder = "Выб�
             <button
               key={option.value}
               type="button"
+              disabled={option.disabled}
               onClick={() => {
+                if (option.disabled) return
                 onChange(option.value)
                 setOpen(false)
               }}
               className={cn(
                 "truncate rounded-[0.75rem] px-2.5 py-1.5 text-left text-sm transition hover:bg-glass-strong/60",
                 option.value === value ? "font-semibold text-rose-deep" : "text-ink",
+                option.disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : "",
               )}
             >
               {option.label}
