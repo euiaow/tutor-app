@@ -5,6 +5,7 @@ const { getZonedParts, zonedTimeToUtc, normalizeScheduleSlots } = require("./cor
 const { ensureUpcomingLesson } = require("./core/lessons")
 const { ensureUpcomingGroupLessons } = require("./core/groups")
 const { createNotification } = require("./core/notifier")
+const { ensureStudentCalendarEvents, ensureGroupCalendarEvents } = require("./core/googleCalendar")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -51,6 +52,17 @@ async function ensureUpcomingDraftsForAllStudents() {
     } catch (error) {
       logger.error("reminders: failed to ensure upcoming lesson draft", { studentId: doc.id, error })
     }
+
+    // Calendar counterpart of the draft self-heal just above — a slot can
+    // lose its recurring Calendar event without any schedule change at all
+    // (see ensureSlotEventsExist's own comment), so syncStudentScheduleTo-
+    // GoogleCalendar's "did scheduleSlots change" trigger alone can never
+    // recover it. No-ops instantly when Calendar isn't connected.
+    try {
+      await ensureStudentCalendarEvents(student.teacherId, doc.id, student, doc.ref)
+    } catch (error) {
+      logger.error("reminders: failed to ensure calendar events", { studentId: doc.id, error })
+    }
   }
 }
 
@@ -89,6 +101,12 @@ async function ensureUpcomingDraftsForAllGroups() {
       await ensureUpcomingGroupLessons(group.teacherId, doc.id)
     } catch (error) {
       logger.error("reminders: failed to ensure upcoming group lesson draft", { groupId: doc.id, error })
+    }
+
+    try {
+      await ensureGroupCalendarEvents(group.teacherId, doc.id, group, doc.ref)
+    } catch (error) {
+      logger.error("reminders: failed to ensure group calendar events", { groupId: doc.id, error })
     }
   }
 }

@@ -432,7 +432,7 @@ exports.deleteGroup = onCall(async (request) => {
 // though the code looks completely correct (see systemPatterns.md's own
 // documented gotcha, hit twice already for createExtraLesson/
 // completeLesson before this).
-exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
+exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
@@ -453,7 +453,7 @@ exports.rescheduleGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_
   }
 })
 
-exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
+exports.cancelGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
@@ -558,7 +558,7 @@ exports.deleteGroupProgram = onCall(async (request) => {
 
 // Transitively calls createNotification — secrets required, see the same
 // note on rescheduleGroupLesson/cancelGroupLesson/completeGroupLesson.
-exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] }, async (request) => {
+exports.createExtraGroupLesson = onCall({ secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Требуется авторизация")
   }
@@ -1174,7 +1174,18 @@ exports.getTeacherBySlug = onCall(async (request) => {
 // UTC cron expression, so the fire time stays correct even if Moscow's
 // offset rules ever change.
 exports.dailyReminderMidday = onSchedule(
-  { schedule: "0 9 * * *", timeZone: "Europe/Moscow", secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_SHARED_BOT_TOKEN, VK_GROUP_TOKEN, VK_SHARED_GROUP_TOKEN] },
+  {
+    schedule: "0 9 * * *",
+    timeZone: "Europe/Moscow",
+    secrets: [
+      TELEGRAM_BOT_TOKEN,
+      TELEGRAM_SHARED_BOT_TOKEN,
+      VK_GROUP_TOKEN,
+      VK_SHARED_GROUP_TOKEN,
+      GOOGLE_OAUTH_CLIENT_ID,
+      GOOGLE_OAUTH_CLIENT_SECRET,
+    ],
+  },
   async () => {
     await dailyReminderMidday()
   },

@@ -6,7 +6,7 @@ const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
 const botMessages = require("./botMessages")
-const { rescheduleLessonEvent, deleteLessonEvent, createExtraLessonEvent } = require("./googleCalendar")
+const { rescheduleLessonEvent, deleteLessonEvent, deleteLessonEventInstance, createExtraLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
 const { deductLessonFromBalance } = require("./finance")
 
@@ -953,14 +953,21 @@ async function confirmCancellation(studentId, lessonId, confirmedBy) {
 
   const eventId = resolveLessonEventId(lesson, student)
   const teacherId = student?.teacherId ?? null
+  const cancelledLessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
 
-  // Calendar delete and cleaning up the bot proposal messages are
+  // Calendar cleanup and cleaning up the bot proposal messages are
   // independent of each other and of the status write above (already
   // committed by the transaction) — run them together instead of one after
   // another. Calendar is guarded so its failure can't take the cleanup down
-  // with it, same as every other Calendar call site in this file.
+  // with it, same as every other Calendar call site in this file. Same
+  // extra-lesson-vs-recurring-occurrence branch as cancelLessonDirectly — see
+  // its own comment for why deleting the master eventId is wrong here for a
+  // recurring slot.
   const calendarPromise = eventId
-    ? deleteLessonEvent(teacherId, eventId).catch((error) => {
+    ? (lesson.isExtraLesson
+        ? deleteLessonEvent(teacherId, eventId)
+        : deleteLessonEventInstance(teacherId, eventId, cancelledLessonDate)
+      ).catch((error) => {
         logger.error("confirmCancellation: failed to delete Google Calendar event", {
           studentId,
           lessonId,
@@ -1020,26 +1027,32 @@ async function cancelLessonDirectly(studentId, lessonId) {
 
   const eventId = resolveLessonEventId(lesson, student)
   const teacherId = student?.teacherId ?? null
+  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
 
-  // Calendar delete and the "cancelled" status write don't depend on each
+  // Calendar cleanup and the "cancelled" status write don't depend on each
   // other — run them together (see confirmCancellation for the same
   // pattern). Status write stays inside the await, so it's still fully
-  // resolved before this function returns.
+  // resolved before this function returns. An extra (unscheduled) lesson's
+  // event is a genuine one-off with no series to preserve, so it's deleted
+  // outright; a recurring slot's occurrence must only remove that one
+  // instance (deleteLessonEventInstance) — deleting the master eventId here
+  // would cancel every future week of that slot too, not just this one.
   const calendarPromise = eventId
-    ? deleteLessonEvent(teacherId, eventId).catch((error) => {
-        logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
-          studentId,
-          lessonId,
-          error,
-        })
-      })
+    ? (lesson.isExtraLesson ? deleteLessonEvent(teacherId, eventId) : deleteLessonEventInstance(teacherId, eventId, lessonDate)).catch(
+        (error) => {
+          logger.error("cancelLessonDirectly: failed to delete Google Calendar event", {
+            studentId,
+            lessonId,
+            error,
+          })
+        },
+      )
     : Promise.resolve()
 
   await Promise.all([calendarPromise, lessonRef.update({ status: "cancelled" })])
 
   logger.info("cancelLessonDirectly: lesson cancelled directly by teacher", { studentId, lessonId })
 
-  const lessonDate = lesson.rescheduledDate?.toDate?.() ?? lesson.date?.toDate?.() ?? null
   await createNotification({
     target: "student",
     studentId,

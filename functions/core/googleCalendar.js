@@ -84,8 +84,17 @@ function buildEventResourceForSlot(student, slot) {
   return resource
 }
 
+// Google Calendar returns 410 (not 404) for a resource that used to exist
+// but was already deleted — e.g. a second delete attempt against the same
+// event id. Operationally identical to a 404 for every caller here
+// ("nothing to do, it's already gone"), so both are treated the same way.
 function isNotFoundError(error) {
-  return error?.code === 404 || error?.response?.status === 404
+  return (
+    error?.code === 404 ||
+    error?.code === 410 ||
+    error?.response?.status === 404 ||
+    error?.response?.status === 410
+  )
 }
 
 async function getCalendarOrNull(teacherId) {
@@ -259,6 +268,130 @@ async function syncSlotEvents(teacherId, logContext, scheduleSlots, existingEven
   return nextEventIds
 }
 
+// Self-healing counterpart to syncSlotEvents: verifies every currently
+// scheduled slot's recorded event id still actually resolves to a live
+// Calendar event, and (re)creates whatever's missing — without touching or
+// resyncing an event that's still there (no update-in-place refresh, unlike
+// syncSlotEvents, which is unconditionally called on every genuine schedule
+// edit). A slot can lose its event without any scheduleSlots change at all
+// (the very bug this was added for: cancelling one occurrence used to delete
+// the whole recurring series instead of just that instance), so relying on
+// syncStudentScheduleToGoogleCalendar's "did scheduleSlots change" trigger
+// alone can never recover from that — this is the lazy-repair pass, run
+// once a day from dailyReminderMidday, mirroring how ensureUpcomingLesson
+// lazily repairs a missing Firestore draft. Returns { eventIds, changed } so
+// a caller only has to write back to Firestore when something was actually
+// recreated.
+async function ensureSlotEventsExist(teacherId, logContext, scheduleSlots, existingEventIds, buildResource) {
+  const calendar = await getCalendarOrNull(teacherId)
+  if (!calendar) {
+    return { eventIds: existingEventIds, changed: false }
+  }
+
+  const nextEventIds = { ...existingEventIds }
+  let changed = false
+
+  for (let index = 0; index < scheduleSlots.length; index += 1) {
+    const key = String(index)
+    const slot = scheduleSlots[index]
+    const existingEventId = existingEventIds[key] ?? null
+
+    if (existingEventId) {
+      try {
+        // A deleted event doesn't necessarily 404/410 on get() — Calendar
+        // keeps a "tombstone" around for a while and returns it successfully
+        // with status: "cancelled" instead of throwing. Both cases mean the
+        // same thing here: nothing left for this slot, needs recreating.
+        const response = await calendar.events.get({ calendarId: CALENDAR_ID, eventId: existingEventId })
+        if (response.data.status !== "cancelled") {
+          continue
+        }
+        logger.warn("ensureSlotEventsExist: recorded event is cancelled/deleted, recreating", {
+          ...logContext,
+          slotIndex: index,
+          eventId: existingEventId,
+        })
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          logger.warn("ensureSlotEventsExist: failed to verify event, leaving as-is", {
+            ...logContext,
+            slotIndex: index,
+            eventId: existingEventId,
+            error,
+          })
+          continue
+        }
+        logger.warn("ensureSlotEventsExist: recorded event is gone, recreating", {
+          ...logContext,
+          slotIndex: index,
+          eventId: existingEventId,
+        })
+      }
+    }
+
+    const resource = buildResource(slot)
+    if (!resource) {
+      continue
+    }
+
+    try {
+      const eventId = await createEventFromResource(teacherId, resource)
+      if (eventId) {
+        nextEventIds[key] = eventId
+        changed = true
+        logger.info("ensureSlotEventsExist: created missing event", { ...logContext, slotIndex: index, eventId })
+      }
+    } catch (error) {
+      logger.error("ensureSlotEventsExist: failed to create missing event", { ...logContext, slotIndex: index, error })
+    }
+  }
+
+  return { eventIds: nextEventIds, changed }
+}
+
+// dailyReminderMidday's per-student counterpart to ensureUpcomingLesson: call
+// once a day for every scheduled student regardless of whether anything
+// changed — cheap (one Calendar GET per existing slot event, nothing at all
+// when Calendar isn't connected) and idempotent.
+async function ensureStudentCalendarEvents(teacherId, studentId, student, studentRef) {
+  const scheduleSlots = normalizeScheduleSlots(student)
+  if (scheduleSlots.length === 0) {
+    return
+  }
+
+  const { eventIds, changed } = await ensureSlotEventsExist(
+    teacherId,
+    { studentId },
+    scheduleSlots,
+    student.googleEventIds ?? {},
+    (slot) => buildEventResourceForSlot(student, slot),
+  )
+
+  if (changed) {
+    await studentRef.update({ googleEventIds: eventIds })
+  }
+}
+
+// Group counterpart of ensureStudentCalendarEvents above.
+async function ensureGroupCalendarEvents(teacherId, groupId, group, groupRef) {
+  const scheduleSlots = normalizeScheduleSlots(group)
+  if (scheduleSlots.length === 0) {
+    return
+  }
+
+  const { eventIds, changed } = await ensureSlotEventsExist(
+    teacherId,
+    { groupId },
+    scheduleSlots,
+    group.googleEventIds ?? {},
+    (slot) => buildGroupEventResourceForSlot(group, slot),
+  )
+
+  if (changed) {
+    await groupRef.update({ googleEventIds: eventIds })
+  }
+}
+
 async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
   const scheduleSlots = normalizeScheduleSlots(student)
   const nextEventIds = await syncSlotEvents(
@@ -358,6 +491,61 @@ async function rescheduleLessonEvent(teacherId, eventId, originalDate, newDate, 
   }
 }
 
+// Cancels a single occurrence of a recurring lesson's Calendar event without
+// touching the recurring series itself — same instance-lookup approach as
+// rescheduleLessonEvent above (calendar.events.instances(), scoped to a
+// +/-1h window around the occurrence's own date), except the matched
+// instance is deleted instead of patched. Deleting the *master* event id
+// directly (what deleteLessonEvent does) removes the entire weekly series —
+// correct when the whole slot/lesson is genuinely going away (an extra
+// lesson's own one-off event, or a deleted schedule slot/student/group), but
+// wrong for cancelling just one week's occurrence of an ongoing recurring
+// slot, which should leave every other occurrence (past and future) alone.
+async function deleteLessonEventInstance(teacherId, eventId, originalDate) {
+  if (!eventId || !originalDate) {
+    return
+  }
+
+  const calendar = await getCalendarOrNull(teacherId)
+  if (!calendar) {
+    return
+  }
+
+  try {
+    const instancesResponse = await calendar.events.instances({
+      calendarId: CALENDAR_ID,
+      eventId,
+      timeMin: new Date(originalDate.getTime() - 60 * 60 * 1000).toISOString(),
+      timeMax: new Date(originalDate.getTime() + 60 * 60 * 1000).toISOString(),
+    })
+
+    const instance = instancesResponse.data.items?.[0]
+    if (!instance) {
+      logger.warn("deleteLessonEventInstance: no matching instance found near original date", {
+        eventId,
+        originalDate: originalDate.toISOString(),
+      })
+      return
+    }
+
+    await calendar.events.delete({
+      calendarId: CALENDAR_ID,
+      eventId: instance.id,
+    })
+
+    logger.info("deleteLessonEventInstance: instance deleted, series left intact", {
+      eventId,
+      instanceId: instance.id,
+    })
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      logger.warn("deleteLessonEventInstance: event or instance not found, skipping", { eventId })
+      return
+    }
+    throw error
+  }
+}
+
 async function deleteLessonEvent(teacherId, eventId) {
   const calendar = await getCalendarOrNull(teacherId)
   if (!calendar) {
@@ -382,10 +570,13 @@ module.exports = {
   syncScheduleSlots,
   syncGroupScheduleSlots,
   deleteLessonEvent,
+  deleteLessonEventInstance,
   rescheduleLessonEvent,
   createExtraLessonEvent,
   createExtraGroupLessonEvent,
   createEventFromResource,
   updateEventFromResource,
+  ensureStudentCalendarEvents,
+  ensureGroupCalendarEvents,
   colorIdForSubject,
 }

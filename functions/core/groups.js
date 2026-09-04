@@ -5,7 +5,7 @@ const logger = require("firebase-functions/logger")
 const { db } = require("./firestore")
 const { assertOwnsStudent, assertOwnsGroup } = require("./tenancy")
 const { normalizeScheduleSlots, getUpcomingLessonDates } = require("./schedule")
-const { deleteLessonEvent, rescheduleLessonEvent, createExtraGroupLessonEvent } = require("./googleCalendar")
+const { deleteLessonEvent, deleteLessonEventInstance, rescheduleLessonEvent, createExtraGroupLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
 const { markTopicsCovered, assignCurriculumTemplate } = require("./curriculum")
 const { createUpcomingDraft, completeLesson } = require("./lessons")
@@ -523,8 +523,16 @@ async function cancelGroupLesson(teacherId, groupId, groupLessonKey) {
   const eventId = firstLesson.googleEventId ?? null
   const lessonDate = firstLesson.rescheduledDate?.toDate?.() ?? firstLesson.date?.toDate?.() ?? null
 
+  // Same extra-lesson-vs-recurring-occurrence branch as the individual-lesson
+  // cancel paths (core/lessons.js) — an extra group lesson's event is a
+  // genuine one-off (no series to preserve), but a regular slot's occurrence
+  // shares one recurring master event across every week, so deleting it
+  // outright would remove every future occurrence of that slot too.
   const calendarPromise = eventId
-    ? deleteLessonEvent(teacherId, eventId).catch((error) => {
+    ? (firstLesson.isExtraLesson
+        ? deleteLessonEvent(teacherId, eventId)
+        : deleteLessonEventInstance(teacherId, eventId, lessonDate)
+      ).catch((error) => {
         logger.error("cancelGroupLesson: failed to delete Google Calendar event", { teacherId, groupId, groupLessonKey, error })
       })
     : Promise.resolve()
