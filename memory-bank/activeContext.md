@@ -1,8 +1,130 @@
 # Active Context
 
-_Last updated: 2026-08-27 (session 38)_
+_Last updated: 2026-09-04 (session 39)_
 
 ## Current work focus
+
+### Session 39 — new-device migration audit, a leaked-secrets/PII scare that turned out mostly benign except one real leftover diagnostic, and a real Google Calendar recurring-series deletion bug root-caused via production logs
+
+**Part 1 — new-device migration.** User's first session on a new machine.
+`npm run dev` initially failed with `ERR_CONNECTION_REFUSED` — root-caused to
+two independent things, not one: (1) `node_modules` was a stale partial copy
+from the old device, missing Rolldown's native Windows binary (Vite 8 replaced
+esbuild with Rolldown as its dependency-bundler — this session's own first
+guess that it was esbuild was wrong and had to be corrected once
+`node_modules/vite/package.json`'s actual `dependencies` were checked), fixed
+by `rm -rf node_modules && npm install` (441 → 644 packages); (2) even after
+that, Vite 8 was binding its dev server only to `[::1]` (IPv6 loopback), not
+`127.0.0.1` — confirmed via `netstat`/`curl` from the user's own terminal
+(this session's own sandboxed shell tools could not reach the user's real
+localhost, a real environment gap worth remembering), fixed with an explicit
+`server: { host: "127.0.0.1" }` in `vite.config.js`.
+
+**Part 2 — secrets/GitHub audit.** User had found and deleted `.env` and
+`secrets-backup.zip` from the public `euiaow/tutor-app` repo's git history,
+worried real secrets had leaked. Checked the actual history rather than
+guessing: `.env` only ever held the public Firebase client config (not a
+real secret by Google's own model); `secrets-backup.zip` (extracted from
+history) contained only `scheduled_tasks.lock`, a harmless local lock file.
+Real secrets (bot tokens, OAuth secret) never touched git — always via
+`defineSecret()`/Secret Manager. User chose not to rewrite history
+(`filter-repo`/force-push) since nothing sensitive was actually exposed.
+**Found one real issue while checking**: `.gitignore` had literal unresolved
+git-merge-conflict markers committed into it since `e07e9f3` (worked by
+accident — the `*.env` rule survived in the second half) — cleaned up.
+**Found a second, more serious real issue**: a temporary diagnostic function
+(`inspectUnresolvedProgramsTmp`, added in the Aug 30 commit `185f828`) had
+never been deleted after use, contrary to this project's own standing
+convention — it was still live in production, unauthenticated beyond a
+trivial query-param key now sitting in the public repo's history, and
+returned student names + teacher emails. Deleted from both the codebase and
+the live deployment, confirmed both ways. **Lesson for future sessions**:
+after any git-history/security audit, explicitly grep for `TEMPORARY
+diagnostic` in `functions/index.js` and cross-check against
+`firebase functions:list` — this class of leftover is easy to introduce
+(the pattern is used often, per `techContext.md`) and easy to miss if only
+skimming the latest commit's diff stat.
+
+**Part 3 — the actual bug report: old unattended lessons piling up, then a
+mass-cancel leaving "Ближайшие уроки" empty and Google Calendar blank for a
+long time.** Root-caused via **real production `firebase functions:log`
+evidence** (2026-09-03 ~19:28 incident), not synthetic tests — this turned
+out to be more revealing and less risky than spinning up throwaway live
+data would have been:
+
+- `cancelLessonDirectly`/`confirmCancellation`/`cancelGroupLesson` resolved
+  a recurring slot's *shared* per-slot `googleEventIds[slotIndex]` (the one
+  master `RRULE:FREQ=WEEKLY` Calendar event standing in for every future
+  occurrence of that slot — see `systemPatterns.md`) and called
+  `deleteLessonEvent` directly on it — deleting the **entire recurring
+  series**, not just the occurrence being cancelled. Confirmed from real
+  logs: a first cancel per slot succeeded (series gone), a second cancel
+  later referencing the same now-gone event got Calendar's `410 "Resource
+  has been deleted"`. This is a general bug (reproducible on any single
+  cancellation of a recurring lesson), not something specific to a long
+  absence — the long-absence scenario is just what surfaced it, since it's
+  the first time several slots got cancelled in one sitting.
+- Fixed with a new `deleteLessonEventInstance` (`core/googleCalendar.js`,
+  same `calendar.events.instances()` lookup `rescheduleLessonEvent` already
+  used) — removes only the one matched instance, leaves the master series
+  and every other occurrence alone. Wired into all three cancel paths,
+  branching on `isExtraLesson` (a genuine one-off event still gets deleted
+  outright via `deleteLessonEvent` — no series to preserve there).
+- **Separate bug found in the same area**: `cancelGroupLesson`/
+  `rescheduleGroupLesson`/`createExtraGroupLesson` were missing
+  `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` in their `onCall`
+  `secrets` config — `getAuthorizedClient()`'s `.value()` calls need those
+  declared per-function (the exact secrets-array gotcha class
+  `techContext.md` already documents), so Calendar sync for these three
+  group actions was silently a no-op the whole time, swallowed by
+  `getCalendarOrNull`'s own try/catch. Added the two secrets to all three.
+- **Systemic gap this incident exposed**: `ensureUpcomingLesson` already
+  lazily self-heals a missing Firestore "upcoming" draft (called daily from
+  `dailyReminderMidday` — this is why the drafts eventually reappeared on
+  their own, up to ~24h later), but nothing analogous existed for a missing
+  Calendar event — `syncStudentScheduleToGoogleCalendar`/
+  `syncGroupScheduleToGoogleCalendar` only fire on a genuine `scheduleSlots`
+  diff, so once an event was gone (this bug, or any other cause) it stayed
+  gone forever unless the teacher happened to make a real schedule edit.
+  New `ensureStudentCalendarEvents`/`ensureGroupCalendarEvents`
+  (`core/googleCalendar.js`) verify every slot's recorded event id still
+  resolves to a live (non-tombstoned) event and recreate whatever's
+  missing; wired into the same `dailyReminderMidday` cron next to the
+  existing draft self-heal. **Non-obvious API behavior found while testing
+  this**: a deleted Calendar event doesn't necessarily 404/410 on `get()` —
+  it can come back successfully with `status: "cancelled"` (a tombstone),
+  confirmed empirically (a first version of the repair diagnostic saw zero
+  changes against two events already confirmed dead via the 410 logs,
+  because it only checked for a thrown error) — `ensureSlotEventsExist` now
+  checks the response body's `status` too, not just catch blocks.
+  `isNotFoundError` also extended to treat `410` the same as `404`
+  (previously a second delete attempt logged as a scary unhandled error
+  instead of a graceful no-op).
+- **One-off repair, done and verified**: the two real students
+  (`maks-gru-07dc`, `kirill-ko-3a88`) already broken by the pre-fix bug were
+  repaired via a temporary scoped diagnostic (deploy → curl → delete
+  immediately after, per project convention — and actually deleted this
+  time) — both got fresh recurring events, confirmed via before/after
+  `googleEventIds` in the response. The one real group checked
+  (`UCZUHZLAoUn16Cj4u7sT`) turned out never to have lost its event at all —
+  ironically protected by the missing-secrets bug above (its delete call
+  never actually fired).
+- **Also confirmed non-obvious but correct**: `functions:shell` runs
+  locally against production data but its output never reaches
+  `firebase functions:log` (it's not a real Cloud Function invocation) and
+  the shell can exit before an async handler like `dailyReminderMidday`
+  actually finishes if you pipe input and close stdin immediately — not a
+  reliable way to trigger-and-verify a production repair. The
+  deploy-a-scoped-diagnostic-then-curl-then-delete pattern remains the
+  right tool for anything that needs guaranteed-awaited completion plus a
+  visible result.
+
+Deployed: `functions:cancelLessonDirectly`, `confirmCancellation`,
+`cancelGroupLesson`, `rescheduleGroupLesson`, `createExtraGroupLesson`,
+`dailyReminderMidday`. Committed (`fe400cb` and the earlier migration-fix
+commit `3211610`), not yet pushed.
+
+---
 
 ### Session 38 — cascade-delete built for every tenancy level (teacher/student/group), plus a real production cleanup of 23 orphaned students left by a deleted test teacher account
 
@@ -63,204 +185,6 @@ git — the user hasn't asked for a commit this session.
 
 ---
 
-### Session 37 — real infrastructure bug found: `index.html` was being served from an hours-stale CDN cache, explaining why sessions 34-36's fixes "weren't visible" even after successful deploys
-
-The user reported (across 3 separate messages) that the zone5 offset,
-zone2's placement-picker fix, and the button image nudges all "weren't
-showing up" despite session 36 having deployed them. Before touching any
-more offsets, verified the actual deployed code first: `curl`-ed the live
-site and found it was serving `index-Ed0mk9t-.css` (a session-33-era
-bundle hash) while the local `dist/index.html` correctly referenced the
-latest `index-Bi8jW42_.css` — the deploys were genuinely landing on
-Firebase's origin, they just weren't reaching users.
-
-**Root cause, confirmed via response headers, not guessed**:
-`Cache-Control: max-age=3600` plus `X-Cache: HIT` on `index.html`, with a
-`Last-Modified` over 7 hours stale — Firebase Hosting's platform default
-caches HTML at the CDN edge for up to an hour, and in this case the edge
-node was serving a copy well past even that stated max-age. Every code
-fix since roughly session 33 had been correctly built and deployed; none
-of it could reach a browser loading the page fresh until that cache
-happened to expire or get evicted.
-
-**Fix**: added an explicit `headers` block to `firebase.json` —
-`Cache-Control: no-cache, max-age=0, must-revalidate` on `**` (forces
-revalidation on every load, so a new deploy is visible immediately), with
-`/assets/**` overridden back to `public, max-age=31536000, immutable`
-(Vite's own content-hashed filenames make this genuinely safe to cache
-forever — a changed file always gets a new hash/URL, so nothing stale can
-ever be served from this specific path). First attempt at the header rule
-only targeted `source: "/index.html"` literally and didn't apply to `/`
-itself (Firebase matches headers against the *original requested path*,
-and the SPA rewrite `"**" → "/index.html"` doesn't carry the header rule
-through to the path being rewritten *from*) — broadened to `source: "**"`
-plus the asset override, then verified both cases directly with `curl -I`
-(root `/` → `no-cache`, an actual `/assets/*.css` file → the immutable
-long-cache header) before declaring it fixed, not just assuming the
-config was right.
-
-**This should mean every deploy from now on is visible immediately** —
-worth remembering if a future report ever again says "I deployed this,
-why doesn't it show up," since this exact class of bug produces that
-precise symptom and is very easy to misattribute to "the code fix must be
-wrong" (which happened here — 3 rounds of user reports treated as
-"still-wrong offsets" before checking whether the deploy was even
-reaching browsers at all).
-
----
-
-## Current work focus
-
-### Session 36 — placement-picker zone2 was rendering off the mockup's own edge (real bug, not an offset tweak), zone5/button offsets nudged again, case-opening reel simplified to one continuous deceleration
-
-**Real bug found and fixed: the placement picker's zone2 marker
-rendered outside `MiniDashboard`'s own bounding box.** `ZONE_DEFS`' zone2
-entry was `{ x: 222→was 250, w: 34 }` against a `MINI_DASHBOARD_WIDTH` of
-260 — `250 + 34 = 284`, 24px past the mockup's own right edge, so the
-marker visibly hung off the edge of the interactive preview (worse once
-session 27's `MINI_DASHBOARD_SCALE` 1.6× made the whole thing bigger,
-scaling that overflow right along with everything else). Every other
-zone's `x + w` already fit inside 260 — this was the one arithmetic slip.
-Moved to `x: 222` (`222 + 34 = 256`, fits with a small margin).
-
-**zone5 (`ExamRadar`) desktop offset**: `sm:right-[68px]` →
-`sm:right-[88px]` (another 20px left).
-
-**Sticker-workshop button**: `Group 70` (mobile) shrunk another 1px
-(`GROUP_70_HEIGHT_DELTA` -9→-10) and its own right offset moved 1px right
-(`GROUP_70_RIGHT_OFFSET` -3→-4, independent from desktop's `Group 69`
-offset since session 35).
-
-**Case-opening reel simplified to a single continuous deceleration —
-dropped the medium-speed plateau entirely, per an explicit new spec.**
-Three straight sessions (29, 34, 35) each tried a fast→medium→stop shape
-and each attempt introduced a fresh timing or curve bug — the user's
-corrected spec this time has no plateau at all: start fast, decelerate
-smoothly straight down to a stop, over (at least) 12 seconds. Rebuilt
-`confirmOpen`'s spin logic from a 3-phase chained-`setTimeout`
-choreography (3 different `setSpinTransition` calls, one per phase) down
-to **one** `setSpinTransition` call and **one** CSS transition covering
-the entire `SPIN_DURATION_MS` (still 12000) with a single easing curve,
-`SPIN_EASE` = easeOutQuint (`cubic-bezier(0.22,1,0.36,1)`, a strong,
-continuous fast-start deceleration across the whole duration, not just a
-short final snap). No more phase ratios, no more per-phase curves, no
-seam between phases for a bad curve to hide inside — genuinely simpler
-code, not just a different set of numbers. The "must not come in under
-12s" requirement was already handled correctly (the `setPhase("result")`
-timer already padded `SPIN_DURATION_MS + 250` to land after the CSS
-transition visually finishes, accounting for the double
-`requestAnimationFrame` delay before the transition even starts) — kept
-as `SPIN_DONE_DELAY_MS`, now a named constant instead of an inline
-`+ 250`, specifically so this doesn't need re-deriving if it's ever
-questioned again.
-
-**No live browser/animation-frame verification possible in this
-environment** — same standing gap. If the reel still looks wrong after
-this, the *shape* is now trivial to eyeball from the single curve
-(`SPIN_EASE`) alone, since there's no multi-phase math left to hide a bug
-in.
-
----
-
-## Current work focus
-
-### Session 35 — zone5/button offsets diverged further, case-opening reel rebuilt from scratch to an explicit 12s timing spec
-
-**zone5 (green square, `ExamRadar`) desktop offset**: `sm:right-[53px]` →
-`sm:right-[68px]` (15px further left, mobile's `right-12` untouched).
-
-**Sticker-workshop button image offsets diverged into two independent
-constants** (`GROUP_69_RIGHT_OFFSET`/`GROUP_70_RIGHT_OFFSET`, were one
-shared constant since session 32) — desktop's `Group 69` moved 2px right
-(-2→-4), mobile's `Group 70` moved 1px right (-2→-3, its own new
-constant) and shrunk another 3px (`GROUP_70_HEIGHT_DELTA` -6→-9 total
-against the Group 69 baseline height — the user reported the session 34
-shrink hadn't visibly landed, so this stacks a further reduction on top
-rather than assuming the prior change was wrong and reverting it).
-
-**Case-opening reel rebuilt from scratch, not patched again — the user
-gave an explicit new timing spec after sessions 29/34's fixes still
-didn't land right.** New spec: **12000ms total** (was 9000ms): starts at
-fast speed; over the first 3s, speed falls smoothly fast→medium; holds
-medium (constant) for the next 3s; over the final 6s, speed falls
-smoothly medium→0, landing on the server result. Time ratios are exact
-from that spec (0.25/0.25/0.5). Distance ratios (0.42/0.29/~0.29) are
-**derived, not guessed**: phase 2's rate defines "medium" (its own
-distance÷time, since it's linear); phase 1's average rate is approximated
-as the mean of fast-and-medium (a smooth deceleration's average sits
-roughly halfway between its endpoints); phase 3's average rate is
-approximated as half of medium (decelerating from medium to a dead stop).
-Converting those three average rates × each phase's own duration into a
-proportion gives the distance split — a documented derivation this time,
-specifically so a future correction can see *why* these numbers were
-chosen instead of re-guessing from scratch again. Phase 1 keeps
-`SPIN_PHASE1_EASE` (easeOutQuad) from session 34 — that curve wasn't the
-problem. Phase 3 switched from easeOutQuart to **easeOutCubic**
-(`cubic-bezier(0.215,0.61,0.355,1)`) — gentler/more gradual, chosen
-because phase 3 is now a much longer single span (6s, half the total
-spin) than before, and a "final snap" curve like easeOutQuart is tuned for
-a short decisive stop, not a long, evenly-paced decline across 6 full
-seconds.
-
-**No live browser/animation-frame verification possible in this
-environment** for any of these three fixes — particularly the reel, which
-has now been tuned twice on reasoning alone without ever being watched
-render. If the next report still says the motion looks wrong, the
-distance-ratio *derivation* above (not just the numbers) is the first
-thing to re-examine, since it rests on approximations ("average rate ≈
-mean of endpoints") that a real easing curve won't match exactly.
-
----
-
-## Current work focus
-
-### Session 34 — button art nudged again, zone5 split desktop-only, and the real root cause of the spin's wrong motion found (bad easing curves, not bad ratios)
-
-Three small, independent follow-ups.
-
-**Sticker-workshop button**: `Group 70` (mobile) shrunk another 3px
-(`GROUP_70_HEIGHT_DELTA` -3→-6 total against the Group 69 baseline
-height), and `GROUP_69_RIGHT_OFFSET` -1→-2 (both images share this one
-constant, so both desktop's `Group 69` and mobile's `Group 70` shifted
-right together, as asked).
-
-**zone5 (green square, `ExamRadar`) split desktop/mobile again** — the
-first time any zone has needed a breakpoint split since session 26
-unified everything. `right-12` (48px) stayed the mobile value untouched
-per explicit instruction; desktop gets `sm:right-[53px]` (5px further
-left) on top of it.
-
-**Case-opening reel: root-caused for real this time — the phase
-time/distance ratios from session 32 were already correct, the two
-*easing curves* were badly chosen.** The user's report ("fast → decelerates
-almost to zero → medium → sudden fast burst → stop") was a precise
-description of what `cubic-bezier(0.16,0.84,0.36,1)` (phase 1) and the
-original `cubic-bezier(.12,.85,.18,1)` (phase 3, unchanged since session
-18) actually do: both have a control point with y very close to 1 reached
-very early in x — e.g. phase 1 hits 84% of its own distance within just
-16% of its own time. That's not "smoothly decelerate to a medium/zero
-speed," it's "sprint almost to the finish line immediately, then crawl
-through what's left" — which for phase 1 reads as "decelerates almost to
-a dead stop" (matching the report exactly) and for phase 3 reads as a
-late speed burst once its own crawl phase catches up to the visually
-larger remaining distance. **Fix: swapped both bespoke curves for
-well-known, much gentler named easing functions from easings.net**
-instead of guessing another bespoke one — `SPIN_PHASE1_EASE` = easeOutQuad
-(`cubic-bezier(0.25,0.46,0.45,0.94)`, mild/roughly-proportional
-deceleration) and `SPIN_PHASE3_EASE` = easeOutQuart
-(`cubic-bezier(0.165,0.84,0.44,1)`, a confident final snap to a stop but
-nowhere near as front-loaded as the original). Phase 2 stays linear,
-untouched. The lesson for next time a spin/motion complaint comes in:
-check the actual *shape* of any bezier curve in use (where does it cross
-50%/80%/90% of x) before assuming the phase time/distance split is what's
-wrong — a curve can make a perfectly reasonable ratio *look* completely
-different from what it should.
-
-**No live browser/animation-frame verification possible in this
-environment** for any of the three fixes.
-
----
-
 ## Older sessions archived
 
 Sessions 16-27's full write-ups (i18n rollout, gamification MVP + Sticker
@@ -269,8 +193,10 @@ session 27, group lessons v1 through the 11-item follow-up round) moved to
 `changelog/2026-08-august.md` (sessions 16-23 archived 2026-08-23; sessions
 24/26/27 archived 2026-08-24 — session 25 was already archived there
 separately). Sessions 28-33 (group lessons follow-up round, color-theme
-registry rearchitecture) archived there too, 2026-08-27, to keep this file
-focused on current work (sessions 34-38 now kept inline) — durable patterns
+registry rearchitecture) archived there too, 2026-08-27; sessions 34-37
+(sticker/case-reel visual-polish rounds, the stale-CDN-cache infrastructure
+bug) archived there too, 2026-09-04, to keep this file
+focused on current work (sessions 38-39 now kept inline) — durable patterns
 from all of these already live in `systemPatterns.md`/`progress.md`/
 `techContext.md`. See `progress.md`'s own session-by-session summary for
 what shipped in each.

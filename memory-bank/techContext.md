@@ -277,3 +277,59 @@
   live Auth uids for orphan detection. No secrets/config needed for either
   — the Admin SDK's default credentials already cover Auth, same as
   Firestore.
+- **New-device migration gotcha (session 39): a `node_modules` copied/synced
+  from another machine instead of produced by a real `npm install` on this
+  one can look complete (hundreds of packages present) while still being
+  silently missing platform-specific native binaries.** Symptom here: `npm
+  run dev` printed `VITE ready`, then died silently the instant it reached
+  "[optimizer] bundling dependencies..." — killing the port and producing
+  `ERR_CONNECTION_REFUSED` in the browser, which reads exactly like a
+  network/firewall problem, not a dependency problem. Vite 8 replaced esbuild
+  with **Rolldown** as its dependency-bundler (`node_modules/vite/package.
+  json`'s own `dependencies` — check this directly rather than assuming
+  esbuild, an outdated assumption from earlier Vite majors); the missing
+  piece was `@rolldown/binding-win32-x64-msvc`. Fix: `rm -rf node_modules &&
+  npm install` on the new machine — never trust a copied `node_modules`,
+  always reinstall fresh after a device move.
+- **Separately, this same session: even after a clean install, Vite 8's dev
+  server bound only to `[::1]` (IPv6 loopback) on this Windows machine, not
+  `127.0.0.1`** — confirmed via `netstat -ano | findstr :5173` (showed only
+  an IPv6 listener) and `curl.exe http://127.0.0.1:5173/ -v` (connection
+  refused) run in the *user's own terminal*, since this environment's own
+  Bash/PowerShell tools run sandboxed and cannot reach the user's real
+  localhost at all (confirmed separately — `curl`/`netstat` from inside this
+  environment showed misleading results that didn't match the user's actual
+  browser). Fixed with an explicit `server: { host: "127.0.0.1" }` in
+  `vite.config.js`. **Lesson: never diagnose a "browser can't reach
+  localhost" report using this environment's own shell tools — get the
+  user to run the diagnostic commands themselves (`! <command>` in the
+  prompt) and read their real output.**
+- **The per-function secrets-array gotcha (already documented above for
+  deploy-time symptoms) recurred as a real, live bug in session 39, this
+  time silent rather than a deploy failure**: `cancelGroupLesson`/
+  `rescheduleGroupLesson`/`createExtraGroupLesson`'s `onCall` configs never
+  listed `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`, even though
+  they call Calendar-touching code (`deleteLessonEvent`/`rescheduleLessonEvent`/
+  `createExtraGroupLessonEvent`) that needs `getAuthorizedClient()`, which
+  calls `GOOGLE_OAUTH_CLIENT_ID.value()` directly. Missing the secret
+  doesn't throw a loud error here — `getCalendarOrNull`'s own try/catch
+  swallows it and logs the exact same "Google Calendar not connected,
+  skipping sync" warning a genuinely-disconnected teacher would produce, so
+  it reads as a config/connection issue, not a missing-secrets one. **Any
+  new (or newly Calendar-touching) `onCall`/`onSchedule` export needs its
+  own explicit secrets list — inheriting from another export, or "it calls
+  a function that already has the secret," is not how Firebase Functions v2
+  secret binding works.**
+- **`firebase functions:shell` is not a reliable way to trigger-and-verify a
+  production action (session 39)**: it runs the function code *locally*
+  against real production Firestore/APIs (per its own printed warning), but
+  the invocation never appears in `firebase functions:log` (it's not a real
+  Cloud Functions invocation), and piping a command via heredoc and closing
+  stdin immediately can exit the shell before an async handler actually
+  finishes awaiting its own internal work — so "Successfully invoked
+  function" is not proof of completion. For anything that needs guaranteed-
+  awaited completion plus a visible, verifiable result against production
+  data, use this project's established temp-diagnostic pattern instead
+  (`onRequest`, deploy, `curl` — the HTTP response only returns once the
+  handler's promise chain actually resolves — then delete immediately after,
+  same as any other temporary diagnostic).

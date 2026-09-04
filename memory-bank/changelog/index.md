@@ -40,12 +40,17 @@ these files are for full verbatim narrative detail only, rarely needed.
   rearchitected onto real per-student lesson mirrors, 5-item group-lessons
   follow-up round, color-theme system rearchitected as a real registry
   with 5 real bugs found along the way, sticker-workshop button/case-reel
-  polish rounds). Archived 2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19
+  polish rounds), sessions 34-37 (sticker-workshop button/zone offset nudges
+  and case-opening reel timing corrected across 3 rounds, ending in the
+  reel being simplified to one continuous easeOutQuint deceleration; a real
+  stale-CDN-cache infrastructure bug found and fixed in `firebase.json`,
+  explaining why several of those visual fixes "weren't showing up").
+  Archived 2026-08-02, 2026-08-16, 2026-08-18, 2026-08-19
   (×3), 2026-08-20, 2026-08-23 (sessions 16-23, in one batch), 2026-08-24
   (sessions 24, 26, 27, in one batch — session 25 had already been
-  archived here separately, earlier), and 2026-08-27 (sessions 28-33, in
-  one batch) respectively.
+  archived here separately, earlier), 2026-08-27 (sessions 28-33, in
+  one batch), and 2026-09-04 (sessions 34-37, in one batch) respectively.
 
 `activeContext.md` itself keeps only the most recent sessions inline (as of
-2026-08-27: sessions 34-38) — check there first for anything recent; come
+2026-09-04: sessions 38-39) — check there first for anything recent; come
 here only for older detail.

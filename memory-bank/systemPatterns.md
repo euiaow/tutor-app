@@ -145,6 +145,56 @@ src/
   `googleEventId` lives directly on the lesson doc — the student's
   `googleEventIds` map is keyed by slot index and has no slot to key an
   extra lesson under.
+- **A recurring slot's Calendar event is one real `RRULE:FREQ=WEEKLY`
+  master event (`buildEventResourceForSlot`/`buildGroupEventResourceForSlot`,
+  `core/googleCalendar.js`) — `student.googleEventIds[slotIndex]`/
+  `group.googleEventIds[slotIndex]` always point at that one master id,
+  never a specific occurrence.** Calling `deleteLessonEvent` (a plain
+  `calendar.events.delete` on the master id) removes the *entire* series —
+  every past and future occurrence — correct only when the whole
+  student/group/slot is genuinely going away (`deleteStudent`, `deleteGroup`,
+  a schedule slot actually removed, `syncStudentScheduleToGoogleCalendar`'s
+  own "slots cleared" branch). **Cancelling a single occurrence of an
+  ongoing recurring lesson must never call `deleteLessonEvent` on this id**
+  — use `deleteLessonEventInstance` instead (same
+  `calendar.events.instances()` lookup `rescheduleLessonEvent` already uses
+  to find the one instance nearest a given date, then deletes just that
+  instance). `cancelLessonDirectly`/`confirmCancellation`/`cancelGroupLesson`
+  all branch on `lesson.isExtraLesson`: true → `deleteLessonEvent` (an extra
+  lesson's own event has no series to preserve), false →
+  `deleteLessonEventInstance`. This was a real, live bug (session 39,
+  confirmed via production `410 "Resource has been deleted"` errors) before
+  this branch existed — every cancel call site touching a recurring slot's
+  `googleEventId` needs this same branch; a new one added later that
+  doesn't will silently kill that slot's calendar series on its first use.
+- **Google Calendar's `events.get()` on a deleted event does not reliably
+  throw 404/410 — it can return successfully with a "tombstone" body,
+  `status: "cancelled"`** (confirmed empirically in session 39: a first
+  existence-check implementation that only caught thrown errors reported
+  zero missing events against two ids already proven dead via `410`s in the
+  logs). Any code that checks "does this Calendar event still exist" must
+  check `response.data.status !== "cancelled"` in the success path, not just
+  catch a not-found error — see `ensureSlotEventsExist`. Also, Calendar
+  returns `410`, not `404`, for a resource that already used to exist and
+  was deleted (a second delete/get against the same id) — `isNotFoundError`
+  treats both the same way.
+- **Self-healing exists for a missing Firestore "upcoming" draft
+  (`ensureUpcomingLesson`, called from `dailyReminderMidday` once a day —
+  see `getUpcomingLessonDates`) but, before session 39, nothing analogous
+  existed for a missing Calendar event** — `syncStudentScheduleToGoogleCalendar`/
+  `syncGroupScheduleToGoogleCalendar` only ever fire on a genuine
+  `scheduleSlots` diff, so a Calendar event lost for any reason (a bug, a
+  manual delete in Google Calendar's own UI, Calendar not connected yet at
+  the moment a slot was first created) stayed lost forever unless the
+  teacher happened to make a real schedule edit afterward. New
+  `ensureStudentCalendarEvents`/`ensureGroupCalendarEvents`
+  (`core/googleCalendar.js`) are the Calendar-side counterpart, wired into
+  the same daily cron: for every current slot, verify its recorded event id
+  still resolves to a live (non-tombstoned) event and recreate whatever's
+  missing, without touching or refreshing an event that's still there. Any
+  future "X can go missing but nothing brings it back" report in this
+  codebase should look for whether a matching self-heal exists in
+  `dailyReminderMidday` before assuming a one-off manual fix is enough.
 - **`mapStudentDoc` (`src/firebase/students.js`) now exposes
   `platform`/`telegramChatId`/`vkPeerId`/`contactUrl`/`accessCode`** —
   previously the client-side student object silently dropped these

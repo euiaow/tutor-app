@@ -2,6 +2,32 @@
 
 ## What works (per commit history + code present)
 
+- **Session 39 — fixed a real Google Calendar bug: cancelling one recurring
+  lesson deleted the entire weekly series, not just that occurrence** —
+  root-caused via real production logs (2026-09-03 incident: a `410
+  "Resource has been deleted"` on a second cancel of the same slot), not
+  synthetic tests. `cancelLessonDirectly`/`confirmCancellation`/
+  `cancelGroupLesson` were calling `deleteLessonEvent` on a recurring slot's
+  shared master `RRULE` event id — new `deleteLessonEventInstance`
+  (`core/googleCalendar.js`, reusing `rescheduleLessonEvent`'s
+  `calendar.events.instances()` lookup) now removes only the cancelled
+  occurrence. Also fixed: `cancelGroupLesson`/`rescheduleGroupLesson`/
+  `createExtraGroupLesson` were missing `GOOGLE_OAUTH_CLIENT_ID/SECRET` in
+  their `onCall` secrets, silently no-opping every Calendar call they made.
+  Added the systemic fix — new `ensureStudentCalendarEvents`/
+  `ensureGroupCalendarEvents`, a Calendar-side self-heal analogous to the
+  existing `ensureUpcomingLesson` Firestore self-heal, wired into the same
+  daily `dailyReminderMidday` cron — since previously a lost Calendar event
+  stayed lost forever unless the teacher happened to edit the schedule.
+  Repaired the two real students already broken by the pre-fix bug via a
+  temporary scoped diagnostic (deployed, invoked, deleted immediately after).
+  Also this session: fixed a real new-device `npm run dev` failure (stale
+  `node_modules` missing Rolldown's native binary, then Vite 8 binding only
+  to IPv6 loopback), audited a public-repo secrets scare (nothing sensitive
+  had actually leaked, but found and removed one genuinely leftover
+  diagnostic function that was live and PII-exposed), and fixed `.gitignore`'s
+  literal unresolved merge-conflict markers. Deployed (6 functions);
+  committed (`3211610`, `fe400cb`). Full detail: `activeContext.md`.
 - **Session 38 — full cascade-delete built for teacher/student/group
   tenancy levels (none existed for teachers before), plus a real production
   cleanup of 23 orphaned students** — `deleteTeacher` didn't exist at all
@@ -23,121 +49,13 @@
   Deployed (`functions:deleteTeacherAccount`, `functions:deleteStudent`,
   hosting); code not yet committed. Full detail: `activeContext.md`,
   `systemPatterns.md`'s new cascade-delete entry.
-- **Session 37 — real infrastructure bug found: `firebase deploy --only
-  hosting` was succeeding but not reaching users for hours** — the user
-  reported 3 separate rounds of "your fix isn't showing up" for changes
-  that were, in fact, correctly deployed; `curl`-ing the live site's
-  response headers confirmed `index.html` was being served from a stale
-  CDN cache (`Cache-Control: max-age=3600`, `X-Cache: HIT`, `Last-Modified`
-  hours old) — Firebase Hosting's platform default for HTML. Fixed with an
-  explicit `headers` block in `firebase.json` (`no-cache` on `**`,
-  `immutable` long-cache kept only on the content-hashed `/assets/**`
-  bundle, which is genuinely safe to cache forever). Verified with `curl
-  -I` against both a bare route and an actual asset URL, not just assumed
-  from the config. **Every deploy from now on should be visible
-  immediately** — see `techContext.md` for the general diagnostic
-  (`curl -sI .../ | grep cache-control`) if a future "I deployed this, why
-  doesn't it show up" report ever recurs. Full detail: `activeContext.md`.
-- **Session 36 — placement-picker zone2 was rendering off the mockup's
-  own edge (real bug), zone5/button offsets nudged again, case-opening
-  reel simplified to one continuous deceleration** — **real bug found**:
-  `ZONE_DEFS`' zone2 marker (`x:250,w:34`) extended 24px past
-  `MiniDashboard`'s own 260px width, hanging off the interactive preview's
-  edge (worse once session 27's 1.6× scale enlarged everything) — moved to
-  `x:222`, now fits. zone5 nudged another 20px left (desktop only);
-  sticker-workshop button's `Group 70` (mobile) shrunk 1px more and moved
-  1px right. **Case-opening reel simplified to a single continuous
-  deceleration** — dropped the medium-speed plateau entirely per an
-  explicit new spec (three straight sessions had each introduced a fresh
-  bug trying to get a fast→medium→stop shape right); now one CSS
-  transition, one easing curve (easeOutQuint) for the whole 12s spin, no
-  phase seams left for a bug to hide in. Full detail: `activeContext.md`.
-- **Session 35 — zone5/button offsets diverged further, case-opening reel
-  rebuilt from scratch to an explicit 12s spec** — zone5 desktop offset
-  moved another 15px left; the sticker-workshop button's two image offsets
-  (desktop `Group 69`, mobile `Group 70`) split into independent constants
-  and nudged 2px/1px right respectively, `Group 70` shrunk a further 3px.
-  **Case-opening reel rebuilt from scratch** (not patched again) to a new
-  explicit spec: 12s total (was 9s) — fast start, smooth fast→medium over
-  the first 3s, constant medium for the next 3s, smooth medium→0 over the
-  final 6s. Distance ratios (0.42/0.29/~0.29) are derived from that speed
-  story (documented in the code, not another guess) rather than picked to
-  "look about right." Full detail: `activeContext.md`.
-- **Session 34 — sticker-workshop button art nudged again, zone5 split
-  desktop-only, and the case-opening reel's wrong motion root-caused for
-  real (bad easing curves, not bad ratios)** — `Group 70` (mobile button
-  art) shrunk another 3px, both button images shifted 1px further right
-  together. `zone5` (`ExamRadar`) is the first zone to need a breakpoint
-  split since session 26 unified everything — desktop moved 5px further
-  left, mobile untouched. **Real bug found**: the case-opening reel's
-  reported motion ("fast → decelerates almost to zero → medium → sudden
-  fast burst → stop") traced to the two bespoke bezier curves themselves,
-  not the phase time/distance ratios (already correct since session 32) —
-  both curves had a control point reaching ~85% of their own distance
-  within ~15% of their own time, which reads as "sprint to the finish
-  immediately, then crawl," not smooth deceleration. Replaced with named,
-  well-known easing curves (easeOutQuad / easeOutQuart) instead of another
-  hand-picked guess. Full detail: `activeContext.md`.
-- **Session 33 — corrections to 2 of session 32's changes** — greeting
-  emoji (✌️) moved out of the `header.greeting` translation string
-  entirely (both locales) and into its own `hidden sm:inline` span, so it
-  no longer costs line-height on mobile while staying byte-identical on
-  desktop. Sticker-workshop button's desktop art reverted to `Group 69`
-  (session 32 shouldn't have touched desktop at all — the user only ever
-  wanted a mobile fix) — the button now renders both `Group 69`
-  (`hidden sm:block`) and `Group 70` (`block sm:hidden`) instead of one
-  globally-swapped image. Mobile-only layout fixes: title shortened to
-  "Стикеры" (new `portalTitleShort` key, desktop keeps the full title),
-  balance badge moved to its own line under the title instead of squeezed
-  onto it, `Group 70` nudged another 3px shorter. Full detail:
-  `activeContext.md`.
-- **Session 32 — sticker zone1 restructured for mobile (real-device
-  feedback), zone5 nudged, workshop button art swapped + mobile text
-  shortened, case-opening reel timing corrected** — zone1 needed a real
-  mobile-specific layout, not just a different offset: new
-  `DashboardHeader` component (`useGamification()` can't see its own
-  `<GamificationProvider>`'s value from the same render call, needs a real
-  descendant) hides "Добро пожаловать" and lets the greeting wrap onto 2
-  lines (natural word-wrap, no i18n changes) when zone1 is occupied, on
-  mobile only; zone1 now renders twice — desktop-only inside
-  `NextLessonPlate` (unchanged since session 26) and a new mobile-only
-  instance anchored to the header itself, clearing the gear+avatar
-  cluster. zone5 nudged left/up. `StickerWorkshopButton`'s art swapped
-  from `Group 69.png` to a user-supplied ~20-30%-narrower `Group 70.png`
-  (same height/offset fit) instead of algorithmically capping width, paired
-  with hiding the hint line on mobile and `truncate`-protecting the title.
-  **Real animation-shape bug fixed**: the case-opening reel's "3-phase
-  spin" (session 18) had phase 1 as an *accelerating* curve so brief it
-  read as "starts at a flat medium speed" instead of the intended
-  fast-start — flipped to a genuine ease-out (fast→medium) and rebalanced
-  all 3 phases' time/distance shares to match the explicit spec (fast
-  start → medium plateau for ~half the total time → decelerate to a hard
-  stop). All frontend-only, hosting redeployed each round. Full detail:
-  `activeContext.md`.
-- **Session 31 — color-theme system rearchitected as a real registry
-  (background image + accent + 3 fixed text colors), 5 real bugs found and
-  fixed** — replaced two fully hand-tuned ~30-variable CSS palettes
-  (`.teacher-theme`/`.amber-scope`) with `src/lib/themes.js`'s
-  `THEME_REGISTRY`: each theme is just 5 fields (`backgroundImage`,
-  `accent`, `heading`, `subheading`, `text`, `radius`); everything else
-  (`--card`, `--border`, `--shadow-*`, `--gradient-*`, decorative blobs) is
-  derived from those via CSS relative-color syntax in one shared
-  `index.css` block (`.themed`) — adding a theme is now a pure data change
-  (confirmed live: user added a third theme, "blue", with zero CSS edits).
-  Teacher's theme picker (previously `disabled`, dead code) is now live;
-  teacher and student share one registry. Found and fixed 5 real bugs
-  along the way: an invalid `oklch(... h)` reference outside `oklch(from
-  ...)` silently broke white button text to black; `--gradient-warm` was
-  never per-theme (student accent buttons/icons/tags stayed orange under
-  any theme); `StudentGrainBackground` hardcoded one background image
-  regardless of theme; `GroupLessonDialog`/`HomeworkLessonDialog` (both
-  portaled to `document.body`) had a literal hardcoded pink theme class
-  instead of `useThemeClass()` like every other portaled dialog; stale
-  locale entries shadowed the registry's own theme labels, causing a
-  name mismatch between the teacher and student pickers. Also added a
-  `TeacherSelect` for "Тип шкалы" (was a native `<select>`). Deployed
-  hosting + `functions:updateStudentSettings` (new theme id needs
-  server-side validation too). Full detail: `activeContext.md`.
+- Sessions 31-37 (color-theme system rearchitected as a real registry with
+  5 real bugs found along the way; sticker-workshop button/zone-offset
+  nudges and case-opening reel timing corrected across several rounds,
+  ending in one continuous easeOutQuint deceleration; a real stale-CDN-cache
+  infrastructure bug found and fixed in `firebase.json`, explaining why
+  several of those visual fixes "weren't showing up" for the user) — full
+  detail archived in `changelog/2026-08-august.md` (2026-09-04 batch).
 - **Session 30 — quick polish on session 29's group work** — group hourly
   rate now sums member rates (was a min–max range); student's own subject
   row is now a tag pill matching the group's; group program's name/percent/
@@ -355,17 +273,17 @@
   next session whether it's live and mark-as-read actually sticks now.
   See [[activeContext]].
 - No automated test suite in the repo.
-- **Git commit hygiene — recurred as of session 38, reversing session 16's
-  "clean" note.** A large uncommitted diff has accumulated again: most of
-  `functions/`, most of `src/`, and 3 fully untracked files
-  (`functions/core/admin.js`, `src/firebase/admin.js`,
-  `src/pages/AdminDashboard.jsx` — the admin panel built across sessions
-  not yet captured in this changelog, plus session 38's cascade-delete
-  work on top). Last real commit on record is `1be152b` ("отов бэкенд под
-  темы, осталось задизайнить добавить"). Not committed per this project's
-  standing rule (only commit when the user explicitly asks) — flagging
-  this so a future session doesn't assume recent work is safely saved
-  just because it's deployed; deployed and committed are independent here.
+- **Git commit hygiene — clean again as of session 39.** Session 38's work
+  (admin panel, cascade-delete) did get committed after all (`3f7be21`,
+  `185f828`), reversing the "recurred" note from an earlier draft of this
+  file; session 39 committed its own fixes too (`3211610`, `fe400cb`).
+  Working tree was clean at last check. **New session-39 finding, unrelated
+  to hygiene**: the repo (`euiaow/tutor-app`) is public on GitHub — `.env`
+  and `secrets-backup.zip` were briefly in its history (deleted by the user
+  in `9b45b7e`/`cb75b51`) but contained nothing actually sensitive (public
+  Firebase client config; a harmless lock file) — see `activeContext.md`
+  session 39 for the full audit. Don't assume "public repo" was already
+  known/flagged before this session; it wasn't documented here previously.
 - **Migration run (session 13)**: `migrateToPrograms.js` ran — 2
   programs migrated, 2 flagged for manual review (unresolved
   `examTypeId`, disposable test data, not fixed further per user
