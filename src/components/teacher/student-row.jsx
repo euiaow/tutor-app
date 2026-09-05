@@ -12,6 +12,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RotateCcw,
   Trash2,
   X,
 } from "lucide-react"
@@ -748,6 +749,9 @@ export function CurriculumTile({ label, icon: Icon, items, studentId, programId,
                   {item.covered ? <Check className="size-3" /> : <X className="size-2.5" />}
                 </span>
               )}
+              {item.covered && item.needsReview ? (
+                <RotateCcw className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+              ) : null}
               <span className={item.covered ? "text-ink line-through" : "text-muted-foreground"}>{item.title}</span>
               {item.covered && item.coveredAt ? (
                 <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">

@@ -167,6 +167,21 @@
   stage, after upload has already started) — same remedy either way
   (retry), but worth telling the two apart by which stage of the deploy
   log they fail at.
+- **Two Claude Code sessions can end up editing the same working tree at the
+  same time (discovered session 39, 2026-09-05)** — the user ran a second
+  session concurrently with the one doing the group-lesson/theme work
+  documented in `activeContext.md`, both saving to the same files on disk.
+  Surfaced as a stale-file edit error mid-session (a memory-bank file had
+  changed on disk between reading and writing it). **Consequence worth
+  checking for**: a `git status` full of changes at session start doesn't
+  mean they're all *this* session's own prior work, and a hosting/functions
+  deploy run from either session ships *whatever's on disk at that moment*
+  — not just that session's own diff. If a deploy's timing matters (e.g.
+  deciding whether some unrelated feature "is live yet"), check the
+  relevant files' actual mtimes against when the deploy command ran, don't
+  assume from which session's context you're reasoning in. Neither session
+  noticed the other was running until this collision — there's no built-in
+  cross-session lock on the working tree.
 
 ## Dependencies worth knowing about
 
@@ -333,3 +348,13 @@
   (`onRequest`, deploy, `curl` — the HTTP response only returns once the
   handler's promise chain actually resolves — then delete immediately after,
   same as any other temporary diagnostic).
+- **`functions/scripts/wipeDatabase.js` (session 39 part 7)** — a new
+  one-off script alongside `migrateToPrograms.js`/`migrateSchedule.js`, same
+  "no local ADC in this environment" limitation applies (must be run by the
+  user locally, or the temp-diagnostic-function pattern used instead).
+  Unlike the migration scripts, this one wipes every Firestore collection
+  (except `stickerSets`), all Storage files under `materials/**`, and every
+  Firebase Auth user — dry-run (`--mode=report`) by default, real deletion
+  needs both `--mode=execute` and `--confirm=WIPE_EVERYTHING`. Not run as of
+  this writing. See `systemPatterns.md` for the report/execute/confirm-phrase
+  pattern this establishes for future destructive one-off scripts.

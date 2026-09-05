@@ -242,6 +242,12 @@ export async function getGroupProgramView(subject, memberStudentIds) {
       title: item.title,
       minScoreRequired: item.minScoreRequired,
       covered: linked.every(({ program }) => program[kind].find((i) => i.id === item.id)?.covered),
+      // "some", not "every" — one struggling member is enough to surface the
+      // warning at the group level, same "a single weak link is worth
+      // flagging" reasoning as needsReview itself. Doesn't affect `covered`
+      // above at all — a topic can be fully covered by the whole group and
+      // still carry this flag.
+      needsReview: linked.some(({ program }) => program[kind].find((i) => i.id === item.id)?.needsReview),
     }))
   }
 
@@ -254,14 +260,27 @@ export async function getGroupProgramView(subject, memberStudentIds) {
   }
 }
 
-// Fans a manual "covered" toggle out to every member's own program at once
-// — reuses setCurriculumItemCovered (firebase/curriculum.js) verbatim, once
-// per member, instead of a separate group-specific write path. `memberPrograms`
+// Fans a "covered" write out to every member's own program at once — reuses
+// setCurriculumItemCovered (firebase/curriculum.js) verbatim, once per
+// member, instead of a separate group-specific write path. `memberPrograms`
 // is the same array getGroupProgramView returned (each entry already knows
-// its own studentId + program.id).
-export async function setGroupCurriculumItemCovered(memberPrograms, kind, itemId, covered) {
+// its own studentId + program.id). `needsReviewByStudentId` (studentId ->
+// boolean) lets group-lesson completion carry each attendee's own rating
+// through per-student — same "excellent"/"good"/needs_work" rating already
+// captured in the "Участники" panel, same needsReview field
+// markTopicsCovered already sets for an individual lesson's rating — a
+// member whose own rating this lesson was needs_work gets `needsReview:
+// true` on their own copy while everyone else's stays a normal covered
+// item, tagged `coveredVia: "lesson"` (a real lesson happened, not a manual
+// correction) exactly like the individual path.
+export async function setGroupCurriculumItemCovered(memberPrograms, kind, itemId, covered, needsReviewByStudentId = {}) {
   await Promise.all(
-    memberPrograms.map(({ studentId, program }) => setCurriculumItemCovered(studentId, program.id, kind, itemId, covered)),
+    memberPrograms.map(({ studentId, program }) =>
+      setCurriculumItemCovered(studentId, program.id, kind, itemId, covered, {
+        needsReview: Boolean(needsReviewByStudentId[studentId]),
+        coveredVia: "lesson",
+      }),
+    ),
   )
 }
 

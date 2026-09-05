@@ -40,9 +40,13 @@ export function subscribeToTeacherProfile(uid, onData, onError) {
 // write, no callable, same pattern as updateStudentSchedule (see
 // systemPatterns.md): the signed-in teacher is always allowed to write
 // their own teachers/{uid} doc, no server-side validation needed.
-export async function updateTeacherSettings(uid, { timezone, colorTheme }) {
+// `muteFinanceNotifications` gates functions/core/notifier.js's
+// FINANCE_NOTIFICATION_TYPES — mutes only the teacher's own low-balance
+// bell/bot notifications, unrelated to the student-side autoRemindLowBalance
+// toggle on the student doc.
+export async function updateTeacherSettings(uid, { timezone, colorTheme, muteFinanceNotifications }) {
   const ref = doc(db, TEACHERS_COLLECTION, uid)
-  await updateDoc(ref, { timezone, colorTheme })
+  await updateDoc(ref, { timezone, colorTheme, muteFinanceNotifications })
 }
 
 // A callable, not a direct client write like updateTeacherSettings above —

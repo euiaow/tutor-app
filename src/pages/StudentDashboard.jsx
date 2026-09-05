@@ -2072,7 +2072,7 @@ function StudentDashboardContent({ studentId }) {
           is a real descendant of `.themed`/the theme's own cssClassName, so
           its --theme-bg-image var resolves to the student's actually-chosen
           theme's photo instead of the fallback. */}
-      <StudentGrainBackground />
+      <StudentGrainBackground themeId={student.colorTheme ?? "amber"} />
       <DashboardHeader
         t={t}
         firstName={firstName}

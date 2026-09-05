@@ -191,24 +191,35 @@ function selectClusteredUpcomingLessons(lessons) {
 // clustering/rendering, so the dashboard shows one card per session, not
 // one per member — the same "это один урок, не несколько" a group lesson
 // already gets everywhere else (reminders, income, etc).
+// Builds the result in a single pass, inserting each entry (individual, or
+// a group lesson's first-seen mirror) at the position it's first
+// encountered — not "every individual lesson, then every group lesson"
+// (a real bug found in session 39's group-completion testing: that shape
+// silently threw away the caller's own date ordering, since every group
+// entry always landed after every individual one regardless of date).
+// selectClusteredUpcomingLessons happens to re-sort its own input
+// afterward, which is why this never surfaced there — "Прошедшие уроки"
+// renders this output directly, so the bug was fully visible there.
 function collapseGroupLessons(lessons) {
-  const individual = []
-  const byGroupKey = new Map()
+  const result = []
+  const groupEntries = new Map()
 
   for (const lesson of lessons) {
     if (!lesson.isGroupLesson || !lesson.groupLessonKey) {
-      individual.push(lesson)
+      result.push(lesson)
       continue
     }
-    const existing = byGroupKey.get(lesson.groupLessonKey)
+    const existing = groupEntries.get(lesson.groupLessonKey)
     if (existing) {
       existing.memberIds.push(lesson.studentId)
     } else {
-      byGroupKey.set(lesson.groupLessonKey, { ...lesson, id: lesson.groupLessonKey, memberIds: [lesson.studentId] })
+      const entry = { ...lesson, id: lesson.groupLessonKey, memberIds: [lesson.studentId] }
+      groupEntries.set(lesson.groupLessonKey, entry)
+      result.push(entry)
     }
   }
 
-  return [...individual, ...byGroupKey.values()]
+  return result
 }
 
 function PastLessonCard({ lesson, studentName, student, students = [] }) {
@@ -795,6 +806,7 @@ export function TeacherDashboard() {
           onSaveName={(nextName) => updateTeacherName(nextName)}
           timezone={teacherProfile?.timezone ?? ""}
           colorTheme={teacherProfile?.colorTheme ?? "pink"}
+          muteFinanceNotifications={teacherProfile?.muteFinanceNotifications ?? false}
           onSave={(values) => updateTeacherSettings(auth.currentUser.uid, values)}
           subscription={
             teacherProfile

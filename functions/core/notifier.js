@@ -6,6 +6,12 @@ const { buildNotificationText } = require("./notificationMessages")
 const NOTIFICATIONS_COLLECTION = "notifications"
 const DEFAULT_TIME_ZONE = "Europe/Moscow"
 
+// Notification `type`s about a student's paid-lessons balance — gated by
+// the teacher's own `muteFinanceNotifications` toggle (Settings dialog).
+// Only ever affects target: "teacher"; the student's own low-balance
+// opt-in (`autoRemindLowBalance`) is a separate, pre-existing setting.
+const FINANCE_NOTIFICATION_TYPES = new Set(["low_balance"])
+
 // Every user-facing time in the app is meant to read in the *viewer's* own
 // timezone — for a bot notification, the viewer is whoever receives it, not
 // the tutor. Resolves the recipient's saved timezone here, once, so the
@@ -14,13 +20,12 @@ const DEFAULT_TIME_ZONE = "Europe/Moscow"
 // Falls back to DEFAULT_TIME_ZONE only when the recipient genuinely has no
 // timezone saved yet (never as a "this is schedule/reminder data so use
 // Moscow" special case — there is no such case anymore).
-async function resolveRecipientTimeZone(target, studentData, teacherId) {
+function resolveRecipientTimeZone(target, studentData, teacherData) {
   if (target === "student") {
     return studentData?.timezone || DEFAULT_TIME_ZONE
   }
-  if (target === "teacher" && teacherId) {
-    const teacherSnapshot = await db.collection("teachers").doc(teacherId).get()
-    return teacherSnapshot.exists ? teacherSnapshot.data().timezone || DEFAULT_TIME_ZONE : DEFAULT_TIME_ZONE
+  if (target === "teacher" && teacherData) {
+    return teacherData.timezone || DEFAULT_TIME_ZONE
   }
   return DEFAULT_TIME_ZONE
 }
@@ -87,7 +92,18 @@ async function createNotification({
     teacherId = teacherId ?? (studentData?.teacherId ?? null)
   }
 
-  const timeZone = await resolveRecipientTimeZone(target, studentData, teacherId)
+  let teacherData = null
+  if (target === "teacher" && teacherId) {
+    const teacherSnapshot = await db.collection("teachers").doc(teacherId).get()
+    teacherData = teacherSnapshot.exists ? teacherSnapshot.data() : null
+  }
+
+  if (target === "teacher" && FINANCE_NOTIFICATION_TYPES.has(type) && teacherData?.muteFinanceNotifications === true) {
+    logger.info("createNotification: skipped, teacher muted finance notifications", { teacherId, type })
+    return { id: null, delivered: false, sentMessage: null, sentMessages: null }
+  }
+
+  const timeZone = resolveRecipientTimeZone(target, studentData, teacherData)
 
   // `fullParams`/`language` only matter for target === "student"; computed
   // unconditionally here anyway since it's cheap and keeps the branching

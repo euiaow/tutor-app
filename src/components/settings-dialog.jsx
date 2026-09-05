@@ -126,11 +126,13 @@ export function SettingsDialog({
   onSaveName,
   timezone,
   colorTheme,
+  muteFinanceNotifications,
   onSave,
   subscription,
 }) {
   const [timezoneValue, setTimezoneValue] = useState(timezone || getDeviceTimeZone())
   const [colorThemeValue, setColorThemeValue] = useState(colorTheme)
+  const [muteFinanceNotificationsValue, setMuteFinanceNotificationsValue] = useState(Boolean(muteFinanceNotifications))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -142,16 +144,21 @@ export function SettingsDialog({
     if (open) {
       setTimezoneValue(timezone || getDeviceTimeZone())
       setColorThemeValue(colorTheme)
+      setMuteFinanceNotificationsValue(Boolean(muteFinanceNotifications))
       setError("")
     }
-  }, [open, timezone, colorTheme])
+  }, [open, timezone, colorTheme, muteFinanceNotifications])
 
   async function handleSave() {
     if (saving) return
     setSaving(true)
     setError("")
     try {
-      await onSave({ timezone: timezoneValue, colorTheme: colorThemeValue })
+      await onSave({
+        timezone: timezoneValue,
+        colorTheme: colorThemeValue,
+        muteFinanceNotifications: muteFinanceNotificationsValue,
+      })
       onOpenChange(false)
     } catch (err) {
       console.error("Failed to save settings:", err)
@@ -215,6 +222,29 @@ export function SettingsDialog({
               <div className="mt-2">
                 <TeacherBotConnectStatus />
               </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-sm text-ink">Не уведомлять о финансах</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={muteFinanceNotificationsValue}
+                  onClick={() => setMuteFinanceNotificationsValue((v) => !v)}
+                  disabled={saving}
+                  className="relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50"
+                  style={{ background: muteFinanceNotificationsValue ? "var(--gradient-orb)" : "var(--glass-strong)" }}
+                >
+                  <span
+                    className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition-all ${
+                      muteFinanceNotificationsValue ? "right-0.5" : "left-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Отключает уведомления об окончании оплаченных занятий у учеников. Остальные уведомления (домашки,
+                переносы, отмены) продолжат приходить как раньше.
+              </p>
             </div>
 
             {error ? <p className="text-sm font-semibold text-destructive">{error}</p> : null}

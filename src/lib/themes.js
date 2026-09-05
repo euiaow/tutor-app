@@ -67,12 +67,14 @@ export const THEME_REGISTRY = [
     label: "Синяя",
     cssClassName: "blue-theme",
     radius: "1.75rem",
-    // Was ".jpg" — the actual file on disk is a .png (confirmed via
-    // `public/bg/`), so this was 404ing silently for every student on the
-    // blue theme (no visible break, since a failed background-image layer
-    // just paints nothing and the gradient fallback underneath still
-    // shows).
-    backgroundImage: "/bg/gr13.png",
+    // Was "/bg/gr13.png" — that photo layer only ever painted on the
+    // student page (StudentGrainBackground is student-only; the teacher
+    // panel has no equivalent component, so a teacher on this theme always
+    // saw just the accent-derived gradient wash, same as pink/amber). Set
+    // to null so both dashboards render identically for this theme, same
+    // as pink/amber already do — the gradient is derived from `accent`
+    // below regardless of this field, nothing else to define.
+    backgroundImage: null,
     accent: "oklch(0.572 0.2062 262.76)",
     heading: "oklch(0.26 0.02 60)",
     subheading: "oklch(0.52 0.02 60)",

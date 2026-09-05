@@ -27,7 +27,41 @@
   had actually leaked, but found and removed one genuinely leftover
   diagnostic function that was live and PII-exposed), and fixed `.gitignore`'s
   literal unresolved merge-conflict markers. Deployed (6 functions);
-  committed (`3211610`, `fe400cb`). Full detail: `activeContext.md`.
+  committed (`3211610`, `fe400cb`). **Same session, parts 4-6 (2026-09-05)**:
+  fixed a group-lesson dialog bug (materials section showing before the
+  lesson was ever opened for completion — just needed the same gate the
+  individual dialog already had); gave group-lesson completion a real
+  `needsReview` mastery-flag (reused the field that already existed for
+  individual lessons but was invisible to the teacher and disconnected from
+  group completion — now derived per-attendee from their own rating in
+  "Участники," surfaced as the same `RotateCcw` icon on both student-row's
+  individual and group progress views, verified 7/7 via a temporary
+  Admin-SDK diagnostic); found and fixed a real ordering bug in
+  `collapseGroupLessons` (`TeacherDashboard.jsx`) that always sorted every
+  individual lesson before every group lesson, discarding Firestore's own
+  date order — invisible on "Ближайшие уроки" only because a downstream
+  function happens to re-sort, fully exposed on "Прошедшие уроки"; and
+  reworked the blue theme's student-side background (dropped the leftover
+  photo, reused the teacher panel's blob-glow look, fixed a z-index bug
+  between two simultaneously-mounted background instances, settled on an
+  opaque white base per the user's own final spec after three iterations).
+  Deployed to hosting twice; not yet committed. Full detail:
+  `activeContext.md`.
+- **Session 39, part 7 (concurrent with parts 1-6 above, in the same
+  working tree) — new teacher Settings toggle "Не уведомлять о финансах"**
+  (`muteFinanceNotifications` on `teachers/{uid}`) mutes only the teacher's
+  own low-balance notification (bell + bot, not just the bot mirror) —
+  first-ever per-teacher-preference gate in `functions/core/notifier.js`'s
+  shared `createNotification` funnel (`FINANCE_NOTIFICATION_TYPES`),
+  separate from the pre-existing per-student `autoRemindLowBalance`.
+  Deployed (hosting + all Cloud Functions, clean first attempt). Two other
+  topics discussed the same session produced a plan but no code: a
+  "positive framing" redesign for the student dashboard's stats (parent
+  psychology — make effort visible even when outcomes plateau; flagged the
+  existing binary `covered` topic flag as the actual cause of a stalled-
+  topic red flag), and a full Firestore/Storage/Auth reset + teacher-clone
+  plan for building 10 demo accounts (`functions/scripts/wipeDatabase.js`
+  written, dry-run only, not run). Full detail: `activeContext.md` (Part 7).
 - **Session 38 — full cascade-delete built for teacher/student/group
   tenancy levels (none existed for teachers before), plus a real production
   cleanup of 23 orphaned students** — `deleteTeacher` didn't exist at all
@@ -273,17 +307,45 @@
   next session whether it's live and mark-as-read actually sticks now.
   See [[activeContext]].
 - No automated test suite in the repo.
-- **Git commit hygiene — clean again as of session 39.** Session 38's work
-  (admin panel, cascade-delete) did get committed after all (`3f7be21`,
-  `185f828`), reversing the "recurred" note from an earlier draft of this
-  file; session 39 committed its own fixes too (`3211610`, `fe400cb`).
-  Working tree was clean at last check. **New session-39 finding, unrelated
+- **Git commit hygiene — clean again as of session 39, then diverged again
+  by session 39's own parts 4-6.** Session 38's work (admin panel,
+  cascade-delete) did get committed after all (`3f7be21`, `185f828`),
+  reversing the "recurred" note from an earlier draft of this file; session
+  39's parts 1-3 committed too (`3211610`, `fe400cb`). **Parts 4-6 (group
+  dialog fix, needsReview, collapseGroupLessons fix, blue theme background)
+  are deployed to hosting but not committed as of this writing** — mixed in
+  the same working tree with the user's own separate, also-uncommitted
+  `muteFinanceNotifications` feature (`functions/core/notifier.js`/
+  `settings-dialog.jsx`/`firebase/teachers.js`, already documented in
+  `systemPatterns.md`) and an untracked `functions/scripts/wipeDatabase.js`
+  — both explicitly hands-off this session, not reviewed. **New session-39
+  finding, unrelated
   to hygiene**: the repo (`euiaow/tutor-app`) is public on GitHub — `.env`
   and `secrets-backup.zip` were briefly in its history (deleted by the user
   in `9b45b7e`/`cb75b51`) but contained nothing actually sensitive (public
   Firebase client config; a harmless lock file) — see `activeContext.md`
   session 39 for the full audit. Don't assume "public repo" was already
   known/flagged before this session; it wasn't documented here previously.
+- **Student-dashboard stats "positive framing" — design discussed session
+  39 part 7, no decision made, nothing coded.** The only existing "result"
+  signal on the student dashboard is a binary `covered` flag per curriculum
+  topic (`functions/core/curriculum.js`) — a student stuck on one topic for
+  several lessons makes the displayed percentage stall visibly, reading as
+  a red flag rather than "needs more attention." 5 options were discussed
+  (effort counters, multi-state topic status with partial credit, recency
+  framing, narrative status text, gamification badges) — see
+  `activeContext.md` Part 7 for the full breakdown and recommendation.
+  Needs the user to pick a direction before any code changes here.
+- **Full Firestore/Storage/Auth reset planned, not executed (session 39
+  part 7)** — `functions/scripts/wipeDatabase.js` written (dry-run
+  `--mode=report` by default, real deletion needs `--mode=execute
+  --confirm=WIPE_EVERYTHING`), covers every Firestore collection except the
+  global `stickerSets` catalog, `materials/**` in Storage, and every Auth
+  user. Purpose: reset to 2 real teacher accounts + 10 cloned demo accounts
+  (3 students + 1 group + curriculum templates each, no schedule/calendar/
+  bot data). Next step is the user running `--mode=report` and sharing the
+  counts — this sandbox has no ADC to run it. The teacher-clone script
+  (showcase account → 10 accounts) isn't written yet.
 - **Migration run (session 13)**: `migrateToPrograms.js` ran — 2
   programs migrated, 2 flagged for manual review (unresolved
   `examTypeId`, disposable test data, not fixed further per user

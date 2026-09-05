@@ -180,8 +180,12 @@ export async function getAllProgramsByStudent(teacherId) {
 // Manual correction path, separate from the normal completeLesson ->
 // markTopicsCovered flow — reads the whole array and writes it back since
 // Firestore doesn't support indexing into an array by element id via a dot
-// path in updateDoc.
-export async function setCurriculumItemCovered(studentId, programId, kind, itemId, covered) {
+// path in updateDoc. `needsReview`/`coveredVia` let a caller that DOES know
+// it's recording a real lesson (group-lesson completion — see
+// setGroupCurriculumItemCovered below) tag the write the same way
+// markTopicsCovered already does for an individual lesson's rating, instead
+// of always landing as an untagged "manual" correction.
+export async function setCurriculumItemCovered(studentId, programId, kind, itemId, covered, { needsReview = false, coveredVia } = {}) {
   const ref = doc(db, "students", studentId, PROGRAMS_SUBCOLLECTION, programId)
   const snapshot = await getDoc(ref)
   if (!snapshot.exists()) return
@@ -189,7 +193,13 @@ export async function setCurriculumItemCovered(studentId, programId, kind, itemI
   const items = Array.isArray(snapshot.data()[kind]) ? snapshot.data()[kind] : []
   const next = items.map((item) =>
     item.id === itemId
-      ? { ...item, covered, coveredAt: covered ? new Date() : null, coveredVia: covered ? "manual" : null }
+      ? {
+          ...item,
+          covered,
+          coveredAt: covered ? new Date() : null,
+          coveredVia: covered ? (coveredVia ?? "manual") : null,
+          needsReview: covered ? needsReview : false,
+        }
       : item,
   )
   await updateDoc(ref, { [kind]: next })

@@ -238,14 +238,21 @@ export function GroupLessonDialog({ teacherId, group, students, groupLessonKey, 
       // is a plain client toggle, not part of completeGroupLesson itself,
       // same "select what was covered, apply on complete" shape
       // HomeworkLessonDialog uses for a student's own program via
-      // markTopicsCovered.
+      // markTopicsCovered. Each attendee's own rating (already collected
+      // above, in "Участники") decides their own needsReview flag — a
+      // member rated "Старайся лучше" this lesson gets it on their copy of
+      // whatever was covered, everyone else covers normally, same rule
+      // markTopicsCovered already applies to a single student's lesson.
       if (groupProgram) {
+        const needsReviewByStudentId = Object.fromEntries(
+          Object.entries(attendeeState).map(([studentId, state]) => [studentId, state.rating === "needs_work"]),
+        )
         await Promise.all([
           ...topicSelections.map((itemId) =>
-            setGroupCurriculumItemCovered(groupProgram.memberPrograms, "topics", itemId, true),
+            setGroupCurriculumItemCovered(groupProgram.memberPrograms, "topics", itemId, true, needsReviewByStudentId),
           ),
           ...prototypeSelections.map((itemId) =>
-            setGroupCurriculumItemCovered(groupProgram.memberPrograms, "prototypes", itemId, true),
+            setGroupCurriculumItemCovered(groupProgram.memberPrograms, "prototypes", itemId, true, needsReviewByStudentId),
           ),
         ])
       }
@@ -409,24 +416,24 @@ export function GroupLessonDialog({ teacherId, group, students, groupLessonKey, 
                 </div>
               </Section>
 
-              <Section icon={Paperclip} label="Дополнительные материалы">
-                <div className="flex flex-col gap-2">
-                  {materials.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Материалов пока нет</p>
-                  ) : (
-                    <ul className="flex flex-col gap-1.5">
-                      {materials.map((material, index) => (
-                        <li key={`${material.url}-${index}`} className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm">
-                          <a
-                            href={material.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-rose-deep hover:underline"
-                          >
-                            <span className="min-w-0 truncate">{material.title}</span>
-                            <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
-                          </a>
-                          {isEditable ? (
+              {mode === "completing" || isCompleted || isCancelled ? (
+                <Section icon={Paperclip} label="Дополнительные материалы">
+                  <div className="flex flex-col gap-2">
+                    {materials.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Материалов пока нет</p>
+                    ) : (
+                      <ul className="flex flex-col gap-1.5">
+                        {materials.map((material, index) => (
+                          <li key={`${material.url}-${index}`} className="glass-tile flex items-center gap-2 rounded-[1rem] px-3 py-2 text-sm">
+                            <a
+                              href={material.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-rose-deep hover:underline"
+                            >
+                              <span className="min-w-0 truncate">{material.title}</span>
+                              <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
+                            </a>
                             <button
                               type="button"
                               onClick={() => handleRemoveMaterial(material)}
@@ -435,31 +442,27 @@ export function GroupLessonDialog({ teacherId, group, students, groupLessonKey, 
                             >
                               <Trash2 className="size-3.5" aria-hidden="true" />
                             </button>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {isEditable ? (
-                    <>
-                      <input
-                        ref={materialInputRef}
-                        type="file"
-                        onChange={handleMaterialUpload}
-                        disabled={uploadingMaterial}
-                        className="text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-glass-strong file:px-3 file:py-2 file:text-sm file:font-semibold file:text-foreground/80 file:transition hover:file:text-rose-deep disabled:opacity-50"
-                      />
-                      {uploadingMaterial ? (
-                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                          Загрузка...
-                        </span>
-                      ) : null}
-                      {materialError ? <span className="text-sm font-semibold text-destructive">{materialError}</span> : null}
-                    </>
-                  ) : null}
-                </div>
-              </Section>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <input
+                      ref={materialInputRef}
+                      type="file"
+                      onChange={handleMaterialUpload}
+                      disabled={uploadingMaterial}
+                      className="text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-glass-strong file:px-3 file:py-2 file:text-sm file:font-semibold file:text-foreground/80 file:transition hover:file:text-rose-deep disabled:opacity-50"
+                    />
+                    {uploadingMaterial ? (
+                      <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        Загрузка...
+                      </span>
+                    ) : null}
+                    {materialError ? <span className="text-sm font-semibold text-destructive">{materialError}</span> : null}
+                  </div>
+                </Section>
+              ) : null}
 
               {mode === "completing" && !isCompleted && !isCancelled ? (
                 <>

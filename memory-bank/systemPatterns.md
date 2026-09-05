@@ -730,6 +730,79 @@ src/
   independent copy of member data — tag the member's own doc instead
   (`sourceGroupId`/`createdByGroup`-style fields) and compute any
   group-level aggregate view at read time.
+- **`needsReview` (topic mastery flag) is deliberately orthogonal to
+  `covered` (pacing flag), not a substitute for unchecking it (session 39)**
+  — a program topic/prototype item can be `covered: true` (the material was
+  genuinely taught, on schedule, don't roll back the class's pace) while
+  also carrying `needsReview: true` (this specific student didn't fully
+  grasp it, flagged for follow-up), completely independently.
+  `markTopicsCovered` (`core/curriculum.js`) already set this for an
+  **individual** lesson from that lesson's own `rating` (`needs_work` →
+  `needsReview: true`) — session 39 extended it to **group** completion too:
+  `setCurriculumItemCovered`/`setGroupCurriculumItemCovered`
+  (`firebase/curriculum.js`/`firebase/groups.js`) now take an optional
+  `{needsReview, coveredVia}` (backward-compatible — the pre-existing
+  individual "manual toggle" call site in `student-row.jsx` passes neither
+  and behaves exactly as before), and `group-lesson-dialog.jsx`'s
+  `handleComplete` derives a per-student `needsReviewByStudentId` map
+  straight from each attendee's own rating already collected in
+  "Участники" — no new UI control needed, the rating already *is* the
+  signal. `getGroupProgramView`'s aggregate mirrors the same orthogonality
+  at the group level: `covered` stays `every(...)` (unchanged — pacing is
+  still "did everyone get there"), `needsReview` is `some(...)` (one
+  struggling member is enough to surface the flag, without dragging the
+  group's own displayed pace backwards). Rendered as the same `RotateCcw`/
+  `text-primary` icon everywhere it appears (`curriculum-item-groups.jsx`
+  on the student's own dashboard; `CurriculumTile` in `student-row.jsx`,
+  shared by the teacher's individual-student and group progress views) —
+  before this session the teacher could never see this flag anywhere, on
+  either kind of program, despite being the one who sets the rating that
+  produces it.
+- **Two instances of a full-viewport background component can be mounted at
+  once, and only their relative `z-index` decides which one the user
+  actually sees (session 39, `StudentGrainBackground`).**
+  `StudentDashboard.jsx` intentionally mounts this component twice: an
+  outer instance before `student.colorTheme` is known (a pre-knowledge
+  placeholder, meant to be "painted over" once the real theme loads) and an
+  inner one once it is. This was invisible for years because both instances
+  always rendered the *same* plain photo-or-`none` treatment — giving the
+  inner instance a structurally different rendering (this session's
+  blob-glow branch for the "blue" theme, via `.bg-grain-blobs`'s own
+  `z-index: -10`) immediately exposed that the outer instance had no
+  explicit `z-index` at all, so it kept winning (effectively `z-index: 0`
+  beats `-10`) regardless of what the correctly-themed inner instance
+  rendered. **Any component meant to be safely "mounted twice, later one
+  wins" needs every one of its rendering branches to agree on the exact
+  same z-index** — a branch added later that forgets this will silently
+  lose to whichever branch was already there, with no error or warning.
+  Ultimately settled with an even more defensive fix on top (an explicit
+  opaque `bg-white` base under the blobs) rather than fully chasing down
+  `body:has(.themed)`'s own separate layered `background-image` — this
+  environment has no live browser/DevTools to verify custom-property
+  inheritance behavior across the body/nested-div boundary (see
+  `techContext.md`), and an opaque occluding layer sidesteps needing to.
+- **"Partition into two lists, then concatenate" silently discards whatever
+  order the input arrived in (session 39, `collapseGroupLessons`,
+  `TeacherDashboard.jsx`).** The function collapsed N per-member group
+  mirrors into one synthetic card by pushing individual lessons into one
+  array and group lessons into a separate `Map`, then returning
+  `[...individual, ...groupMap.values()]` — every individual lesson always
+  sorted before every group lesson, no matter what order (by `date`, from
+  Firestore) the input actually arrived in. Invisible for a long time
+  because `selectClusteredUpcomingLessons` (the "Ближайшие уроки" consumer)
+  happens to re-sort its own input afterward — "Прошедшие уроки" renders
+  the collapsed result directly with no such safety net, so a group lesson
+  completed early (a genuinely future `date`, which should sort first in a
+  `desc` list) could show up buried in the middle instead. Fixed by
+  building the result in a single pass — push each lesson (individual, or a
+  group's first-seen mirror) at the position it's first encountered, mutate
+  the same object reference on later duplicate mirrors — so the caller's
+  own ordering survives untouched. **General lesson**: any "collapse/dedupe
+  N raw items into fewer synthetic ones" helper must build its result in
+  one pass over the input, not by sorting items into separate buckets and
+  concatenating — concatenation order is never the same guarantee as the
+  input's own order, even when each bucket individually stays internally
+  sorted.
 - **A shared-component circular import can hide behind two files that look
   unrelated (session 30).** `upcoming-lesson-card.jsx` needed
   `GroupRescheduleDialog`/`GroupCancelDialog` (defined in
@@ -1407,3 +1480,49 @@ src/
     an intersection of two independent sources of truth, dry-run first,
     execute by calling the real production cascade function, never a
     bespoke delete-everything-that-matches script.
+
+- **`createNotification`'s first per-recipient-preference gate (session 39)
+  — `FINANCE_NOTIFICATION_TYPES`.** Before this, every `target: "teacher"`
+  call unconditionally wrote the `notifications/` doc and dispatched via
+  `sendMessageToTeacher` (see the funnel's own entry above) — no per-teacher
+  opt-out existed anywhere in it. Added a `muteFinanceNotifications` boolean
+  on `teachers/{uid}` (Settings dialog toggle, "Не уведомлять о финансах")
+  that gates only notification `type`s in the `FINANCE_NOTIFICATION_TYPES`
+  set (currently just `"low_balance"`, `functions/core/finance.js`'s
+  `deductLessonFromBalance`) — skips both the Firestore write and the bot
+  dispatch entirely (an early return right after `teacherId` is resolved,
+  before the timezone lookup), so it's a real "stop notifying," not just a
+  bot-mute. Refactored `resolveRecipientTimeZone` from async (its own
+  `teachers/{id}` read) to a plain sync function taking an already-fetched
+  `teacherData` object, so the funnel now does exactly one `teachers/{id}`
+  read for a `target: "teacher"` call (reused for both the mute-gate check
+  and the timezone) instead of two. **This is a separate setting from the
+  pre-existing per-student `autoRemindLowBalance`** (`students/{id}`, gates
+  only the *student's* own bot nudge on the same low-balance event) — don't
+  conflate the two if a future low-balance-adjacent feature comes up; one is
+  "should the teacher be bothered," the other is "should the student be
+  bothered," and they're read from two different docs. Any future
+  notification `type` that's conceptually "about a student's payment/
+  balance" and should respect this same teacher preference just needs
+  adding to `FINANCE_NOTIFICATION_TYPES` — no other code changes needed.
+
+- **A destructive one-off admin script gets its own `--mode=report`/
+  `--mode=execute` split plus an explicit `--confirm=<PHRASE>` flag, not
+  just a code comment warning "be careful" (session 39,
+  `functions/scripts/wipeDatabase.js`).** This extends the project's
+  existing "temporary guarded `onRequest`, deploy-curl-delete" convention
+  (`techContext.md`) for a script whose blast radius (every Firestore
+  collection, every Storage file, every Auth user) is large enough that a
+  guarded-but-public HTTPS endpoint felt like the wrong shape even
+  temporarily — this one is meant to be run locally with real ADC instead,
+  never deployed. `--mode=report` (the default) only reads and prints counts
+  per collection/Storage prefix/Auth-user total, touching nothing; the
+  destructive path requires passing *both* `--mode=execute` and
+  `--confirm=WIPE_EVERYTHING` together, or the script refuses to run at all.
+  A hardcoded `EXCLUDED_COLLECTIONS` set (`stickerSets` — a global catalog,
+  not owned by any teacher) is checked in both the report and execute code
+  paths from the same constant, so the two can never drift apart on what
+  counts as "everything." **Reach for this same report/execute/confirm-
+  phrase shape for any future one-off script whose failure mode is
+  unrecoverable data loss**, rather than a single mode with a comment
+  telling the operator to be careful.
