@@ -1,4 +1,4 @@
-﻿import { useEffect, useLayoutEffect, useRef, useState } from "react"
+﻿import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   Bell,
   CalendarPlus,
@@ -7,7 +7,6 @@ import {
   GraduationCap,
   Loader2,
   LogOut,
-  Play,
   Plus,
   RefreshCw,
   Settings,
@@ -26,9 +25,9 @@ import { FinanceSection } from "@/components/teacher/finance-section"
 import { CurriculumSection } from "@/components/teacher/curriculum-section"
 import { getAllProgramsByStudent } from "@/firebase/curriculum"
 import { VideoCallSettings } from "@/components/teacher/video-call-settings"
+import { VideoCallStartButton } from "@/components/teacher/video-call-start-button"
 import { subscribeToVideoCallUrl } from "@/firebase/videoCall"
 import { auth } from "@/firebase/firebase"
-import { openExternalLink } from "@/lib/telegramWebApp"
 import { Spinner } from "@/components/ui/spinner"
 import {
   GhostBtn,
@@ -65,6 +64,7 @@ import {
   disconnectGoogleCalendar,
   getCalendarEmbedInfo,
   getGoogleCalendarStatus,
+  resyncGoogleCalendar,
   startGoogleOAuth,
 } from "@/firebase/google-calendar"
 import { subscribeToTeacherProfile, updateTeacherSettings, updateTeacherName } from "@/firebase/teachers"
@@ -480,6 +480,8 @@ export function TeacherDashboard() {
   const [error, setError] = useState(null)
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(null)
   const [connectingGoogleCalendar, setConnectingGoogleCalendar] = useState(false)
+  const [resyncingGoogleCalendar, setResyncingGoogleCalendar] = useState(false)
+  const [resyncMessage, setResyncMessage] = useState("")
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false)
   const [embedUrl, setEmbedUrl] = useState(null)
   const [embedError, setEmbedError] = useState(null)
@@ -552,6 +554,28 @@ export function TeacherDashboard() {
     }
   }
 
+  // "Сменили Google аккаунт? Синхронизировать данные" — every pre-existing
+  // scheduleSlots event was created against the *old* Google account, so
+  // reconnecting under a different one otherwise left them orphaned until
+  // the next day's cron self-heal got around to it (see
+  // resyncTeacherCalendar's own comment, core/googleCalendar.js). This just
+  // runs that same self-heal immediately.
+  async function handleResyncGoogleCalendar() {
+    if (resyncingGoogleCalendar) return
+
+    setResyncingGoogleCalendar(true)
+    setResyncMessage("")
+    try {
+      const { studentsSynced, groupsSynced } = await resyncGoogleCalendar()
+      setResyncMessage(`Готово: проверено ${studentsSynced} учеников и ${groupsSynced} групп`)
+    } catch (err) {
+      console.error("Failed to resync Google Calendar:", err)
+      setResyncMessage("Не удалось синхронизировать — попробуйте ещё раз")
+    } finally {
+      setResyncingGoogleCalendar(false)
+    }
+  }
+
   function handleGoogleCalendarDisconnected() {
     setGoogleCalendarConnected(false)
     setEmbedUrl(null)
@@ -599,19 +623,27 @@ export function TeacherDashboard() {
   // One-time batch read (not a subscription) — powers every collapsed row's
   // progress bar at once, cheaper than a live listener per student; the
   // currently-expanded row layers its own live subscription on top (see
-  // StudentRow). Re-fetched whenever the student count changes; doesn't
-  // otherwise react to a progress assignment made while this list is
-  // already loaded (that student's bar catches up next reload).
-  useEffect(() => {
-    if (students.length === 0) return
-
+  // StudentRow). Re-fetched whenever the student count changes. Also handed
+  // down to GroupsSection as onGroupProgramChanged — a group's program
+  // assign/reassign/delete fans out to member students' own `programs`
+  // subcollections through a callable, not any of the per-row live
+  // subscriptions above, so without this a member's own collapsed card kept
+  // showing "Программа не назначена"/a stale percent until the next full
+  // page reload even though the group's own program was already correctly
+  // assigned.
+  const refreshCurriculumProgress = useCallback(() => {
     const uid = auth.currentUser?.uid
     if (!uid) return
 
     getAllProgramsByStudent(uid)
       .then(setCurriculumProgressByStudent)
       .catch((error) => console.error("Failed to load curriculum progress summaries:", error))
-  }, [students.length])
+  }, [])
+
+  useEffect(() => {
+    if (students.length === 0) return
+    refreshCurriculumProgress()
+  }, [students.length, refreshCurriculumProgress])
 
   useEffect(() => {
     const uid = auth.currentUser?.uid
@@ -829,7 +861,7 @@ export function TeacherDashboard() {
             <div>
               <Title>Расписание</Title>
               {googleCalendarConnected === true ? (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="size-1.5 rounded-full bg-primary" /> Google Calendar подключён
                   <button
                     type="button"
@@ -838,6 +870,17 @@ export function TeacherDashboard() {
                   >
                     Отключить
                   </button>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span className="ml-2">Сменили Google аккаунт?</span>
+                  <button
+                    type="button"
+                    onClick={handleResyncGoogleCalendar}
+                    disabled={resyncingGoogleCalendar}
+                    className="ml-2 underline decoration-dotted underline-offset-2 hover:text-rose-deep disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {resyncingGoogleCalendar ? "Синхронизируем..." : "Синхронизировать данные"}
+                  </button>
+                  {resyncMessage ? <span className="w-full text-muted-foreground/80">{resyncMessage}</span> : null}
                 </p>
               ) : googleCalendarConnected === false ? (
                 <p className="mt-1 text-xs text-muted-foreground">Google Calendar не подключён</p>
@@ -853,7 +896,7 @@ export function TeacherDashboard() {
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
               </button>
-              <ExtraLessonDialog students={students} groups={groups} />
+              <ExtraLessonDialog students={students} groups={groups} programsByStudentId={curriculumProgressByStudent} />
             </div>
           </div>
 
@@ -905,13 +948,7 @@ export function TeacherDashboard() {
           <Panel>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <Title>Ближайшие уроки</Title>
-              <SolidBtn
-                onClick={() => videoCallUrl && openExternalLink(videoCallUrl)}
-                disabled={!videoCallUrl}
-                title={videoCallUrl ? "Начать видеозвонок" : "Ссылка на видеозвонок не настроена"}
-              >
-                <Play className="size-3.5" aria-hidden="true" /> Начать урок
-              </SolidBtn>
+              <VideoCallStartButton videoCallUrl={videoCallUrl} />
             </div>
             <ul className="mt-4 space-y-3">
               {/* A group lesson is a real per-student entry in this same
@@ -962,6 +999,7 @@ export function TeacherDashboard() {
                     key={student.id}
                     student={student}
                     progressSummary={curriculumProgressByStudent[student.id] ?? null}
+                    groups={groups}
                   />
                 ))}
               </div>
@@ -972,7 +1010,12 @@ export function TeacherDashboard() {
         {groups.length === 0 ? (
           <GroupFormDialog open={groupFormOpen} onOpenChange={setGroupFormOpen} students={students} group={null} />
         ) : (
-          <GroupsSection students={students} groups={groups} />
+          <GroupsSection
+            students={students}
+            groups={groups}
+            programsByStudentId={curriculumProgressByStudent}
+            onGroupProgramChanged={refreshCurriculumProgress}
+          />
         )}
 
         <div className={`grid items-start gap-5 ${collapsedCompletedLessons.length > 0 ? "lg:grid-cols-[2fr_3fr]" : ""}`}>
@@ -1009,7 +1052,7 @@ export function TeacherDashboard() {
 
           {students.length > 0 ? (
             <div ref={financeWrapperRef}>
-              <FinanceSection students={students} />
+              <FinanceSection students={students} programsByStudentId={curriculumProgressByStudent} />
             </div>
           ) : null}
         </div>

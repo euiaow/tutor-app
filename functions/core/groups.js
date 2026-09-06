@@ -79,6 +79,43 @@ async function findMemberProgramForSubject(studentId, subject) {
   return snapshot.empty ? null : snapshot.docs[0]
 }
 
+// Used to stamp programId onto each member's own lesson mirror (see
+// createUpcomingDraft's own comment, core/lessons.js) so finance-section.jsx
+// can bill a group lesson at that member's own program rate instead of
+// always falling back to their student-level hourlyRate. Looked up by
+// sourceGroupId specifically (not subject, unlike findMemberProgramForSubject
+// above) — a group has exactly one linked program per member by
+// construction (assignGroupProgram), so this is always unambiguous, unlike
+// an individual schedule slot's own subject-based resolution.
+async function findMemberProgramIdForGroup(studentId, groupId) {
+  const snapshot = await db
+    .collection("students")
+    .doc(studentId)
+    .collection("programs")
+    .where("sourceGroupId", "==", groupId)
+    .limit(1)
+    .get()
+  return snapshot.empty ? null : snapshot.docs[0].id
+}
+
+// One member's own half of assignGroupProgram's fan-out — pulled out so
+// updateGroup (below) can run the identical link for just a newly-added
+// member without duplicating the reuse-or-create logic.
+async function linkMemberToGroupProgram(studentId, groupId, templateId, subject) {
+  const existing = await findMemberProgramForSubject(studentId, subject)
+  if (existing) {
+    await existing.ref.update({ sourceGroupId: groupId, createdByGroup: false })
+    return
+  }
+  const { programId } = await assignCurriculumTemplate(studentId, templateId)
+  await db
+    .collection("students")
+    .doc(studentId)
+    .collection("programs")
+    .doc(programId)
+    .update({ sourceGroupId: groupId, createdByGroup: true })
+}
+
 async function assignGroupProgram(teacherId, groupId, templateId) {
   const group = await assertOwnsGroup(groupId, teacherId)
   if (!templateId || typeof templateId !== "string") {
@@ -93,20 +130,7 @@ async function assignGroupProgram(teacherId, groupId, templateId) {
 
   const members = Array.isArray(group.memberStudentIds) ? group.memberStudentIds : []
   const results = await Promise.allSettled(
-    members.map(async (studentId) => {
-      const existing = await findMemberProgramForSubject(studentId, subject)
-      if (existing) {
-        await existing.ref.update({ sourceGroupId: groupId, createdByGroup: false })
-        return
-      }
-      const { programId } = await assignCurriculumTemplate(studentId, templateId)
-      await db
-        .collection("students")
-        .doc(studentId)
-        .collection("programs")
-        .doc(programId)
-        .update({ sourceGroupId: groupId, createdByGroup: true })
-    }),
+    members.map((studentId) => linkMemberToGroupProgram(studentId, groupId, templateId, subject)),
   )
   results.forEach((result, index) => {
     if (result.status === "rejected") {
@@ -118,6 +142,14 @@ async function assignGroupProgram(teacherId, groupId, templateId) {
       })
     }
   })
+  // The exception to the student profile's own subject-gated program picker
+  // (student-row.jsx's AddProgramControl): assigning a program through the
+  // group is allowed even for a member whose profile doesn't have this
+  // subject tagged yet, but the tag then gets added automatically here — by
+  // the template's own subject (not necessarily group.subject, in case they
+  // ever diverge), same reasoning tagMembersWithSubject's own comment gives
+  // for createGroup/updateGroup.
+  await tagMembersWithSubject(members, subject)
 
   await groupsCollection(teacherId).doc(groupId).update({ programTemplateId: templateId })
 
@@ -182,6 +214,34 @@ async function reassignGroupProgram(teacherId, groupId, newTemplateId) {
   return assignGroupProgram(teacherId, groupId, newTemplateId)
 }
 
+// A group's subject never used to reach members' own students/{id}.subject
+// (the free-form tag list shown on the student's card, editable via
+// SubjectPicker) — creating/editing a group left every member's card
+// unchanged, so a student taught a subject only through a group never showed
+// that subject as a tag. Additive only (arrayUnion, never removes a
+// pre-existing tag) — same conservative reasoning as unlinkGroupPrograms
+// never deleting a program a student already owned independently: a
+// student's own subject list may include things unrelated to this group
+// (individual lessons, a subject they no longer study in the group), and
+// this app has no reliable way to tell "no longer relevant" apart from
+// "still relevant for another reason" from here. Best-effort per member —
+// one failed update must never block the group create/update itself.
+async function tagMembersWithSubject(members, subject) {
+  if (!subject) return
+  const results = await Promise.allSettled(
+    members.map((studentId) => db.collection("students").doc(studentId).update({ subject: FieldValue.arrayUnion(subject) })),
+  )
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      logger.error("tagMembersWithSubject: failed for member, continuing", {
+        studentId: members[index],
+        subject,
+        error: result.reason,
+      })
+    }
+  })
+}
+
 function validateGroupInput({ name, subject, memberStudentIds, scheduleSlots }) {
   if (!name || typeof name !== "string" || !name.trim()) {
     throw new HttpsError("invalid-argument", "Не указано название группы")
@@ -219,13 +279,14 @@ async function createGroup(teacherId, { name, subject, memberStudentIds, schedul
     teacherId,
     createdAt: FieldValue.serverTimestamp(),
   })
+  await tagMembersWithSubject(members, subject)
 
   logger.info("createGroup: created", { teacherId, groupId: ref.id, memberCount: members.length })
   return { id: ref.id }
 }
 
 async function updateGroup(teacherId, groupId, { name, subject, memberStudentIds, scheduleSlots }) {
-  await assertOwnsGroup(groupId, teacherId)
+  const existingGroup = await assertOwnsGroup(groupId, teacherId)
   validateGroupInput({ name, subject, memberStudentIds, scheduleSlots })
 
   const members = Array.isArray(memberStudentIds) ? [...new Set(memberStudentIds)] : []
@@ -241,6 +302,49 @@ async function updateGroup(teacherId, groupId, { name, subject, memberStudentIds
     memberStudentIds: members,
     scheduleSlots: slots,
   })
+  await tagMembersWithSubject(members, subject)
+
+  // A student added to a group *after* it already had a program assigned
+  // used to never get that program linked at all — assignGroupProgram only
+  // ever fans out to whoever is a member at the moment the teacher assigns
+  // it, and nothing re-ran that fan-out for someone who joined later. New
+  // members only (not the whole roster again — an existing member's program
+  // link/progress must never be touched just because someone else joined).
+  const previousMembers = Array.isArray(existingGroup.memberStudentIds) ? existingGroup.memberStudentIds : []
+  const newMembers = members.filter((studentId) => !previousMembers.includes(studentId))
+
+  if (existingGroup.programTemplateId && newMembers.length > 0) {
+    const templateSnapshot = await db.collection(CURRICULUM_TEMPLATES_COLLECTION).doc(existingGroup.programTemplateId).get()
+    if (templateSnapshot.exists) {
+      const templateSubject = templateSnapshot.data().subject ?? null
+      const results = await Promise.allSettled(
+        newMembers.map((studentId) =>
+          linkMemberToGroupProgram(studentId, groupId, existingGroup.programTemplateId, templateSubject),
+        ),
+      )
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
+          logger.error("updateGroup: failed to link new member to existing group program, continuing", {
+            teacherId,
+            groupId,
+            studentId: newMembers[index],
+            error: result.reason,
+          })
+        }
+      })
+      // Same exception as assignGroupProgram's own — a new member joining a
+      // group with an already-assigned program gets the program's own
+      // subject tagged automatically too, even if their profile didn't have
+      // it before.
+      await tagMembersWithSubject(newMembers, templateSubject)
+      logger.info("updateGroup: linked new members to existing group program", {
+        teacherId,
+        groupId,
+        templateId: existingGroup.programTemplateId,
+        newMemberCount: newMembers.length,
+      })
+    }
+  }
 
   logger.info("updateGroup: updated", { teacherId, groupId, memberCount: members.length })
   return { id: groupId }
@@ -333,7 +437,8 @@ async function ensureUpcomingGroupLessons(teacherId, groupId) {
 
     await Promise.all(
       members.map(async (studentId) => {
-        const ref = await createUpcomingDraft(studentId, teacherId, null, occurrence.date, durationMinutes)
+        const programId = await findMemberProgramIdForGroup(studentId, groupId)
+        const ref = await createUpcomingDraft(studentId, teacherId, null, occurrence.date, durationMinutes, programId)
         await ref.update({
           isGroupLesson: true,
           groupId,
@@ -376,7 +481,8 @@ async function createExtraGroupLesson(teacherId, groupId, date) {
 
   const mirrors = await Promise.all(
     members.map(async (studentId) => {
-      const ref = await createUpcomingDraft(studentId, teacherId, null, date, durationMinutes)
+      const programId = await findMemberProgramIdForGroup(studentId, groupId)
+      const ref = await createUpcomingDraft(studentId, teacherId, null, date, durationMinutes, programId)
       await ref.update({
         isGroupLesson: true,
         isExtraLesson: true,

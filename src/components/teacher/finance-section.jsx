@@ -46,17 +46,38 @@ function getMoscowWeekBounds(reference = new Date()) {
   return { weekStart, weekEnd }
 }
 
+// A lesson bills at its own program's rate when one is resolved
+// (lesson.programId, stamped at creation time — see core/lessons.js's
+// createUpcomingDraft/createExtraLesson and core/groups.js's group-mirror
+// fan-out) and that program has its own hourlyRate set; otherwise falls back
+// to the student's single hourlyRate, same as before per-program rates
+// existed — covers a student with 0-1 programs, a legacy lesson with no
+// programId, and a genuinely ambiguous slot (2+ programs sharing a subject,
+// no explicit override) alike.
+function resolveLessonRate(lesson, student, programsByStudentId) {
+  if (lesson.programId) {
+    const programs = programsByStudentId?.[lesson.studentId] ?? []
+    const program = programs.find((p) => p.id === lesson.programId)
+    if (typeof program?.hourlyRate === "number" && program.hourlyRate > 0) {
+      return program.hourlyRate
+    }
+  }
+  return student?.hourlyRate ?? 0
+}
+
 // income lessons already come pre-filtered to status upcoming/completed
 // (see subscribeToIncomeLessons) — this only has to narrow that down to the
 // current Moscow week (by *effective* date, since a reschedule can move a
-// lesson in or out of it) and skip students with no hourlyRate set.
-function computeWeeklyIncome(incomeLessons, students) {
+// lesson in or out of it) and skip students with no resolvable rate.
+function computeWeeklyIncome(incomeLessons, students, programsByStudentId) {
   const { weekStart, weekEnd } = getMoscowWeekBounds()
-  const rateByStudentId = new Map(students.map((student) => [student.id, student.hourlyRate]))
+  const studentById = new Map(students.map((student) => [student.id, student]))
 
   let total = 0
   for (const lesson of incomeLessons) {
-    const rate = rateByStudentId.get(lesson.studentId)
+    const student = studentById.get(lesson.studentId)
+    if (!student) continue
+    const rate = resolveLessonRate(lesson, student, programsByStudentId)
     if (!(rate > 0)) continue
 
     const effectiveDate = lesson.rescheduledDate ?? lesson.date
@@ -67,13 +88,28 @@ function computeWeeklyIncome(incomeLessons, students) {
   return total
 }
 
-function AddPaymentDialog({ studentId, open, onOpenChange }) {
+// Once a student has 2+ programs, students.paidLessonsBalance itself is
+// frozen at 0 (see assignCurriculumTemplate's 1-to-2 transfer,
+// core/curriculum.js) — sorting by it directly would clump every
+// multi-program student at the "zero" end regardless of their real
+// per-program balances. The minimum across their own programs is the
+// closest single number to "how urgently does this student need a
+// payment" for sort purposes; it's never displayed, just used to order
+// the list the same way the plain single balance already did before.
+function sortableBalance(student, programs) {
+  if (programs.length >= 2) {
+    return Math.min(...programs.map((program) => program.paidLessonsBalance ?? 0))
+  }
+  return student.paidLessonsBalance ?? 0
+}
+
+function AddPaymentDialog({ studentId, programs, open, onOpenChange }) {
   return (
     <TeacherDialog open={open} onOpenChange={onOpenChange}>
       <TeacherDialogContent>
         <TeacherDialogTitle>Внести оплату</TeacherDialogTitle>
         <div className="mt-5">
-          <AddPaymentForm studentId={studentId} onDone={() => onOpenChange(false)} />
+          <AddPaymentForm studentId={studentId} programs={programs} onDone={() => onOpenChange(false)} />
         </div>
       </TeacherDialogContent>
     </TeacherDialog>
@@ -100,6 +136,7 @@ function LedgerEntryRow({ entry }) {
       <div className="min-w-0">
         <p className={`font-semibold ${isPayment ? "text-rose-deep" : "text-ink"}`}>
           {isPayment ? `+${entry.amount} оплата` : `${entry.amount} списание за урок`}
+          {entry.programName ? <span className="ml-1.5 font-normal text-muted-foreground">· {entry.programName}</span> : null}
         </p>
         {entry.note ? <p className="truncate text-xs text-muted-foreground">{entry.note}</p> : null}
       </div>
@@ -108,7 +145,7 @@ function LedgerEntryRow({ entry }) {
   )
 }
 
-function StudentLedgerDialog({ student, open, onOpenChange }) {
+function StudentLedgerDialog({ student, programs, open, onOpenChange }) {
   const [entries, setEntries] = useState([])
   const [addingPayment, setAddingPayment] = useState(false)
 
@@ -139,7 +176,7 @@ function StudentLedgerDialog({ student, open, onOpenChange }) {
 
           {addingPayment ? (
             <div className="glass-tile rounded-[1.25rem] p-4">
-              <AddPaymentForm studentId={student.id} onDone={() => setAddingPayment(false)} />
+              <AddPaymentForm studentId={student.id} programs={programs} onDone={() => setAddingPayment(false)} />
             </div>
           ) : null}
 
@@ -160,7 +197,68 @@ function StudentLedgerDialog({ student, open, onOpenChange }) {
   )
 }
 
-export function FinanceSection({ students }) {
+// A student's own "Оплачено"/"Ставка" pair once they have 0-1 programs —
+// unchanged from before per-program balances/rates existed.
+function SingleProgramBalance({ student }) {
+  const balance = student.paidLessonsBalance ?? 0
+
+  return (
+    <>
+      <span className="flex items-center gap-1.5 sm:contents">
+        <span className="text-xs text-muted-foreground sm:hidden">Оплачено:</span>
+        <span
+          className="text-lg font-semibold sm:w-14 sm:shrink-0 sm:text-right"
+          style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
+        >
+          {balance}
+        </span>
+      </span>
+      <span className="flex items-center gap-1.5 sm:contents">
+        <span className="text-xs text-muted-foreground sm:hidden">Ставка:</span>
+        <span className="text-base text-muted-foreground sm:w-16 sm:shrink-0 sm:text-right">
+          {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
+        </span>
+      </span>
+    </>
+  )
+}
+
+// Once a student has 2+ programs, "Оплачено" and "Ставка" stop being single
+// values — each program bills and gets paid for independently (see
+// core/finance.js's resolveBalanceTarget). One row per program, built with
+// the exact same flex-1-name + gap-6-group(w-14, w-16, w-24) shape the
+// header row and SingleProgramBalance's own row already use — the name gets
+// whatever width the row doesn't need for the numbers (flex-1, so a long
+// template name like "Информатика — Олимпиадная подготовка (IOI)" still gets
+// real room before truncating), and the trailing w-14/w-16/w-24 slots land
+// in exactly the same x-position as the header's Оплачено/Ставка/action
+// columns — a fixed-width name column here would drift out of alignment
+// with those depending on how long the name happened to be.
+function MultiProgramBalanceRow({ student, program }) {
+  const balance = program.paidLessonsBalance ?? 0
+
+  return (
+    <div className="flex items-center gap-4">
+      <span className="min-w-0 flex-1 truncate pl-7 text-sm text-ink" title={program.name}>
+        {program.name}
+      </span>
+      <div className="flex items-center gap-6">
+        <span
+          className="w-14 shrink-0 text-right text-sm font-semibold"
+          style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
+        >
+          {balance}
+        </span>
+        <span className="w-16 shrink-0 text-right text-sm text-muted-foreground">
+          {typeof program.hourlyRate === "number" && program.hourlyRate > 0 ? `${program.hourlyRate} ₽` : "—"}
+        </span>
+        <span className="hidden w-24 shrink-0 sm:block" />
+      </div>
+    </div>
+  )
+}
+
+export function FinanceSection({ students, programsByStudentId }) {
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [payingStudentId, setPayingStudentId] = useState(null)
   const [incomeLessons, setIncomeLessons] = useState([])
@@ -182,13 +280,16 @@ export function FinanceSection({ students }) {
   }, [])
 
   const sortedStudents = [...students].sort(
-    (a, b) => (a.paidLessonsBalance ?? 0) - (b.paidLessonsBalance ?? 0),
+    (a, b) =>
+      sortableBalance(a, programsByStudentId?.[a.id] ?? []) - sortableBalance(b, programsByStudentId?.[b.id] ?? []),
   )
   // Group lessons Phase 5 — individual income + the sum across every
   // attendee of every group lesson this week, per the task's own explicit
   // "не только на одну" requirement (a 3-member group lesson adds 3
   // students' rates, not 1).
-  const weeklyIncome = computeWeeklyIncome(incomeLessons, students)
+  const weeklyIncome = computeWeeklyIncome(incomeLessons, students, programsByStudentId)
+  const selectedStudentPrograms = selectedStudent ? programsByStudentId?.[selectedStudent.id] ?? [] : []
+  const payingStudentPrograms = payingStudentId ? programsByStudentId?.[payingStudentId] ?? [] : []
 
   return (
     <Panel>
@@ -212,44 +313,66 @@ export function FinanceSection({ students }) {
 
           <ul className="mt-2 flex flex-col gap-1">
             {sortedStudents.map((student) => {
-              const balance = student.paidLessonsBalance ?? 0
+              const programs = programsByStudentId?.[student.id] ?? []
+              const hasMultiplePrograms = programs.length >= 2
 
               return (
-                <li key={student.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStudent(student)}
-                    className="flex w-full min-w-0 items-center gap-3 text-left sm:w-auto sm:flex-1"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <StudentDot />
-                        <span className="font-semibold text-ink sm:truncate">{student.name}</span>
-                        <StudentTags student={student} />
+                <li key={student.id} className="flex flex-col gap-2 py-3">
+                  {hasMultiplePrograms ? (
+                    <>
+                      <div className="flex items-center gap-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStudent(student)}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <StudentDot />
+                          <span className="truncate font-semibold text-ink">{student.name}</span>
+                          <StudentTags student={student} />
+                        </button>
+                        {/* Empty placeholders reserving the same w-14/w-16
+                            width the header's Оплачено/Ставка columns use —
+                            without them the Оплата button below would sit
+                            under Ставка instead of the header's own action
+                            column, and every MultiProgramBalanceRow's numbers
+                            (which assume this same gap-6 group width) would
+                            drift out of alignment with the header too. */}
+                        <div className="flex items-center sm:gap-6">
+                          <span className="hidden w-14 shrink-0 sm:block" />
+                          <span className="hidden w-16 shrink-0 sm:block" />
+                          <GhostBtn onClick={() => setPayingStudentId(student.id)} className="shrink-0 justify-center py-2 text-sm sm:w-24">
+                            Оплата
+                          </GhostBtn>
+                        </div>
+                      </div>
+                      {programs.map((program) => (
+                        <MultiProgramBalanceRow key={program.id} student={student} program={program} />
+                      ))}
+                    </>
+                  ) : (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStudent(student)}
+                        className="flex w-full min-w-0 items-center gap-3 text-left sm:w-auto sm:flex-1"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StudentDot />
+                            <span className="font-semibold text-ink sm:truncate">{student.name}</span>
+                            <StudentTags student={student} />
+                          </div>
+                        </div>
+                      </button>
+
+                      <div className="flex items-center justify-between gap-4 sm:justify-start sm:gap-6">
+                        <SingleProgramBalance student={student} />
+                        <GhostBtn onClick={() => setPayingStudentId(student.id)} className="shrink-0 justify-center py-2 text-sm sm:w-24">
+                          Оплата
+                        </GhostBtn>
                       </div>
                     </div>
-                  </button>
-
-                  <div className="flex items-center justify-between gap-4 sm:justify-start sm:gap-6">
-                    <span className="flex items-center gap-1.5 sm:contents">
-                      <span className="text-xs text-muted-foreground sm:hidden">Оплачено:</span>
-                      <span
-                        className="text-lg font-semibold sm:w-14 sm:shrink-0 sm:text-right"
-                        style={{ color: balanceColor(balance, student.lowBalanceThreshold ?? 1) }}
-                      >
-                        {balance}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-1.5 sm:contents">
-                      <span className="text-xs text-muted-foreground sm:hidden">Ставка:</span>
-                      <span className="text-base text-muted-foreground sm:w-16 sm:shrink-0 sm:text-right">
-                        {student.hourlyRate > 0 ? `${student.hourlyRate} ₽` : "—"}
-                      </span>
-                    </span>
-                    <GhostBtn onClick={() => setPayingStudentId(student.id)} className="shrink-0 justify-center py-2 text-sm sm:w-24">
-                      Оплата
-                    </GhostBtn>
-                  </div>
+                  )}
                 </li>
               )
             })}
@@ -266,12 +389,14 @@ export function FinanceSection({ students }) {
 
       <StudentLedgerDialog
         student={selectedStudent}
+        programs={selectedStudentPrograms}
         open={Boolean(selectedStudent)}
         onOpenChange={(open) => !open && setSelectedStudent(null)}
       />
 
       <AddPaymentDialog
         studentId={payingStudentId}
+        programs={payingStudentPrograms}
         open={Boolean(payingStudentId)}
         onOpenChange={(open) => !open && setPayingStudentId(null)}
       />

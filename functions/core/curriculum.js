@@ -20,6 +20,38 @@ function lessonRef(studentId, lessonId) {
   return db.collection(STUDENTS_COLLECTION).doc(studentId).collection(LESSONS_SUBCOLLECTION).doc(lessonId)
 }
 
+// Admin-SDK counterpart of the client-only getProgramsForStudent
+// (src/firebase/curriculum.js) — used server-side by core/lessons.js and
+// core/groups.js to resolve which program a lesson should bill against (see
+// resolveProgramIdForSlot below).
+async function getProgramsForStudentAdmin(studentId) {
+  const snapshot = await programsRef(studentId).get()
+  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+}
+
+// Resolves which program (if any) a schedule slot's lesson should bill
+// against, for finance-section.jsx's per-program income calculation. An
+// explicit per-slot override (slot.programId, set by the teacher when a
+// subject is genuinely ambiguous — see schedule-slots-editor.jsx) wins as
+// long as it still points at a real program; otherwise falls back to the
+// slot's (or student's default) subject, but ONLY when that subject
+// unambiguously matches exactly one of the student's programs. Two programs
+// sharing a subject (e.g. ЕГЭ prep vs. olympiad prep for the same subject)
+// can't be told apart from subject alone — this deliberately returns null
+// rather than guessing in that case, so income calculation falls back to the
+// student's own single hourlyRate for that lesson instead of silently
+// misattributing it to the wrong program's rate.
+function resolveProgramIdForSlot(programs, slot, studentSubjects) {
+  const list = Array.isArray(programs) ? programs : []
+  if (slot?.programId && list.some((program) => program.id === slot.programId)) {
+    return slot.programId
+  }
+  const effectiveSubject = slot?.subject || studentSubjects?.[0] || null
+  if (!effectiveSubject) return null
+  const matches = list.filter((program) => program.subject === effectiveSubject)
+  return matches.length === 1 ? matches[0].id : null
+}
+
 // Mirrors curriculum-section.jsx's own shortId() — only needs to be unique
 // within one program's own topics/prototypes array, not globally.
 function shortId() {
@@ -60,6 +92,22 @@ async function assignCurriculumTemplate(studentId, templateId) {
   if (!studentSnapshot.exists) {
     throw new HttpsError("not-found", "Ученик не найден")
   }
+  const student = studentSnapshot.data()
+  const studentHourlyRate = typeof student.hourlyRate === "number" ? student.hourlyRate : null
+  const studentPaidLessonsBalance = typeof student.paidLessonsBalance === "number" ? student.paidLessonsBalance : 0
+
+  const existingProgramsSnapshot = await programsRef(studentId).get()
+  const existingPrograms = existingProgramsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+  // Exactly the 1-to-2 transition (not 0-to-1, not 2-to-3+): before this
+  // moment the student's single hourlyRate was the one real rate in effect;
+  // the instant a second program appears, per-program rates become the
+  // source of truth instead (finance-section.jsx's own display switches the
+  // same way) and that old single value would otherwise silently vanish from
+  // both programs' effective rate. Seeding both with it here means the
+  // teacher sees "1500 ₽/ч" already filled in on both rows rather than two
+  // blank fields the moment they add a second program.
+  const isSecondProgram = existingPrograms.length === 1
+  const newProgramHourlyRate = isSecondProgram ? studentHourlyRate : null
 
   const programRefNew = programsRef(studentId).doc()
   await programRefNew.set({
@@ -78,13 +126,41 @@ async function assignCurriculumTemplate(studentId, templateId) {
     // for lessons/balanceLedger — needed for the collectionGroup("programs")
     // summary query (getAllProgramsByStudent) to filter by teacherId
     // without an extra join.
-    teacherId: studentSnapshot.data().teacherId ?? null,
+    teacherId: student.teacherId ?? null,
     topics: withProgressDefaults(template.topics),
     prototypes: withProgressDefaults(template.prototypes),
     targetScore: null,
     examDate: null,
+    hourlyRate: newProgramHourlyRate,
     assignedAt: FieldValue.serverTimestamp(),
   })
+
+  if (isSecondProgram) {
+    const onlyExisting = existingPrograms[0]
+    const transferUpdates = {}
+    if (studentHourlyRate != null && typeof onlyExisting.hourlyRate !== "number") {
+      transferUpdates.hourlyRate = studentHourlyRate
+    }
+    // Same 1-to-2 transition as hourlyRate above, but a balance is a
+    // consumable quantity, not a price — copying it onto BOTH programs would
+    // double the lessons on the books. Instead it's transferred wholesale to
+    // whichever program already existed (every lesson paid for so far really
+    // was for that one program); the new program starts at 0, same as any
+    // freshly-assigned program with no payment yet — the teacher adds a
+    // payment for it going forward via finance-section.jsx's per-program
+    // picker. student.paidLessonsBalance is reset to 0 in the same step so
+    // it can't be misread as still meaning something once per-program
+    // balances take over (deductLessonFromBalance/addPayment, core/finance.js).
+    if (typeof onlyExisting.paidLessonsBalance !== "number" && studentPaidLessonsBalance !== 0) {
+      transferUpdates.paidLessonsBalance = studentPaidLessonsBalance
+    }
+    if (Object.keys(transferUpdates).length > 0) {
+      await programsRef(studentId).doc(onlyExisting.id).update(transferUpdates)
+    }
+    if (transferUpdates.paidLessonsBalance !== undefined) {
+      await db.collection(STUDENTS_COLLECTION).doc(studentId).update({ paidLessonsBalance: 0 })
+    }
+  }
 
   logger.info("assignCurriculumTemplate: program added", { studentId, templateId, programId: programRefNew.id })
 
@@ -119,6 +195,20 @@ async function reassignProgram(studentId, programId, newTemplateId) {
   if (!programSnapshot.exists) {
     throw new HttpsError("not-found", "Программа не найдена")
   }
+  // A group-linked program (sourceGroupId set — see core/groups.js's
+  // assignGroupProgram) is shared with the rest of the group's members and
+  // computed into the group's own progress view; replacing it out from under
+  // the group here would desync it from what the group dialog still shows
+  // and from every other member's own copy. The only correct way to detach
+  // a student from a group's program is to remove them from the group
+  // (deleteGroupProgram/deleteGroup's own unlinkGroupPrograms already
+  // handles that cleanly) — this callable is not a backdoor around that.
+  if (programSnapshot.data().sourceGroupId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Эта программа закреплена за группой — сначала удалите ученика из группы",
+    )
+  }
   if (!templateSnapshot.exists) {
     throw new HttpsError("not-found", "Шаблон программы не найден")
   }
@@ -146,7 +236,20 @@ async function deleteProgram(studentId, programId) {
     throw new HttpsError("invalid-argument", "Не указан идентификатор программы")
   }
 
-  await programRef(studentId, programId).delete()
+  const ref = programRef(studentId, programId)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) {
+    throw new HttpsError("not-found", "Программа не найдена")
+  }
+  // Same reasoning as reassignProgram's own guard above.
+  if (snapshot.data().sourceGroupId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Эта программа закреплена за группой — сначала удалите ученика из группы",
+    )
+  }
+
+  await ref.delete()
   logger.info("deleteProgram: program deleted", { studentId, programId })
 
   return { success: true }
@@ -384,4 +487,6 @@ module.exports = {
   addPersonalTopic,
   removePersonalTopic,
   markTopicsCovered,
+  getProgramsForStudentAdmin,
+  resolveProgramIdForSlot,
 }

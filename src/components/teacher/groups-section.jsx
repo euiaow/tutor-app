@@ -411,7 +411,7 @@ function groupProgramPercent(program) {
 // most one currently-assigned program (matching its own single subject), so
 // there's no programId to target any more, just "replace whatever's
 // assigned now".
-function ReassignGroupProgramDialog({ groupId, templates, open, onOpenChange }) {
+function ReassignGroupProgramDialog({ groupId, templates, open, onOpenChange, onChanged }) {
   const [templateId, setTemplateId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -428,6 +428,7 @@ function ReassignGroupProgramDialog({ groupId, templates, open, onOpenChange }) 
     setError("")
     try {
       await reassignGroupProgram(groupId, templateId)
+      onChanged?.()
       handleOpenChange(false)
     } catch (err) {
       console.error("Failed to reassign group program:", err)
@@ -467,7 +468,7 @@ function ReassignGroupProgramDialog({ groupId, templates, open, onOpenChange }) 
   )
 }
 
-function DeleteGroupProgramDialog({ groupId, programLabel, open, onOpenChange }) {
+function DeleteGroupProgramDialog({ groupId, programLabel, open, onOpenChange, onChanged }) {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState("")
 
@@ -483,6 +484,7 @@ function DeleteGroupProgramDialog({ groupId, programLabel, open, onOpenChange })
     setError("")
     try {
       await deleteGroupProgram(groupId)
+      onChanged?.()
       handleOpenChange(false)
     } catch (err) {
       console.error("Failed to delete group program:", err)
@@ -523,7 +525,7 @@ function DeleteGroupProgramDialog({ groupId, programLabel, open, onOpenChange })
 // student-row.jsx) — assigning fans out to every current member, reusing
 // (not duplicating) a member's already-matching program where one exists —
 // see functions/core/groups.js's assignGroupProgram comment.
-function AddGroupProgramControl({ groupId, templates }) {
+function AddGroupProgramControl({ groupId, templates, onChanged }) {
   const [expanded, setExpanded] = useState(false)
   const [templateId, setTemplateId] = useState("")
   const [assigning, setAssigning] = useState(false)
@@ -535,6 +537,7 @@ function AddGroupProgramControl({ groupId, templates }) {
     setError("")
     try {
       await assignGroupProgram(groupId, templateId)
+      onChanged?.()
       setTemplateId("")
       setExpanded(false)
     } catch (err) {
@@ -596,7 +599,7 @@ function AddGroupProgramControl({ groupId, templates }) {
 // Header (template name, top, right of the info panel) then the two
 // CurriculumTile cells sit in the same grid as GroupInfoPanel — see
 // GroupRow's own comment on the row-span layout trick.
-function GroupProgramsSection({ group, groupProgram, loading, templates, onToggled }) {
+function GroupProgramsSection({ group, groupProgram, loading, templates, onToggled, onProgramChanged }) {
   const [reassignOpen, setReassignOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
@@ -610,7 +613,7 @@ function GroupProgramsSection({ group, groupProgram, loading, templates, onToggl
   }
 
   if (!group.programTemplateId || !groupProgram) {
-    return <AddGroupProgramControl groupId={group.id} templates={templates} />
+    return <AddGroupProgramControl groupId={group.id} templates={templates} onChanged={onProgramChanged} />
   }
 
   const templateName = templates.find((t) => t.id === groupProgram.templateId)?.name ?? "Без шаблона"
@@ -661,20 +664,52 @@ function GroupProgramsSection({ group, groupProgram, loading, templates, onToggl
         className="border border-glass-border"
       />
 
-      <ReassignGroupProgramDialog groupId={group.id} templates={templates} open={reassignOpen} onOpenChange={setReassignOpen} />
-      <DeleteGroupProgramDialog groupId={group.id} programLabel={templateName} open={deleteOpen} onOpenChange={setDeleteOpen} />
+      <ReassignGroupProgramDialog
+        groupId={group.id}
+        templates={templates}
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+        onChanged={onProgramChanged}
+      />
+      <DeleteGroupProgramDialog
+        groupId={group.id}
+        programLabel={templateName}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onChanged={onProgramChanged}
+      />
     </>
   )
 }
 
-// A group lesson bills every member their own hourlyRate for the same
-// session (see finance-section.jsx's computeWeeklyIncome, which already
-// sums per-attendee), so the group's own "hourly rate" for display purposes
-// is that same per-session total — the sum of every member's own rate, not
-// a single shared number.
-function rateSummary(group, students) {
+// A group lesson bills every member their own rate for the same session
+// (see finance-section.jsx's computeWeeklyIncome, which already sums
+// per-attendee), so the group's own "hourly rate" for display purposes is
+// that same per-session total — the sum of every member's own rate, not a
+// single shared number.
+//
+// A member's "own rate" is student.hourlyRate only while they have 0-1
+// programs — once they have 2+, that field is frozen (see
+// assignCurriculumTemplate's 1-to-2 transfer, core/curriculum.js) and the
+// rate that actually bills this group's own lessons is whichever program is
+// linked to *this* group (program.sourceGroupId === group.id, the same
+// resolution core/groups.js's findMemberProgramIdForGroup does server-side
+// when stamping programId onto each lesson mirror) — using the member's
+// first/any program, or their stale student-level field, would silently
+// show the wrong number for a student who's also individually enrolled in a
+// different subject.
+function memberRateForGroup(group, student, programs) {
+  if (!student) return null
+  if (programs.length >= 2) {
+    const linkedProgram = programs.find((program) => program.sourceGroupId === group.id)
+    return typeof linkedProgram?.hourlyRate === "number" ? linkedProgram.hourlyRate : null
+  }
+  return typeof student.hourlyRate === "number" ? student.hourlyRate : null
+}
+
+function rateSummary(group, students, programsByStudentId) {
   const rates = group.memberStudentIds
-    .map((id) => students.find((s) => s.id === id)?.hourlyRate)
+    .map((id) => memberRateForGroup(group, students.find((s) => s.id === id), programsByStudentId?.[id] ?? []))
     .filter((rate) => typeof rate === "number" && rate > 0)
   if (rates.length === 0) return "Не указана"
   const total = rates.reduce((sum, rate) => sum + rate, 0)
@@ -684,7 +719,7 @@ function rateSummary(group, students) {
 // 1/3 info column — same shape as the student row's own expanded info cell
 // (student-row.jsx): schedule, subject, roster, program, rate, with the
 // group's own edit action.
-function GroupInfoPanel({ group, students, onEdit }) {
+function GroupInfoPanel({ group, students, programsByStudentId, onEdit }) {
   const timeZone = useTimeZone()
   const memberNames = group.memberStudentIds.map((id) => students.find((s) => s.id === id)?.name ?? "Ученик")
 
@@ -729,7 +764,7 @@ function GroupInfoPanel({ group, students, onEdit }) {
 
       <div className="mt-3 flex justify-between border-t border-glass-border pt-3 text-sm">
         <span className="text-muted-foreground">Ставка (в час)</span>
-        <span className="text-ink">{rateSummary(group, students)}</span>
+        <span className="text-ink">{rateSummary(group, students, programsByStudentId)}</span>
       </div>
 
       <button type="button" onClick={onEdit} className="mt-3 flex items-center gap-1 text-xs font-semibold text-rose-deep">
@@ -740,7 +775,7 @@ function GroupInfoPanel({ group, students, onEdit }) {
   )
 }
 
-function GroupRow({ group, students, onEdit, onDelete }) {
+function GroupRow({ group, students, programsByStudentId, onEdit, onDelete, onGroupProgramChanged }) {
   const [expanded, setExpanded] = useState(false)
   const [upcomingOpen, setUpcomingOpen] = useState(false)
   const teacherId = auth.currentUser?.uid ?? null
@@ -866,7 +901,7 @@ function GroupRow({ group, students, onEdit, onDelete }) {
               separate flex children" and "one grid with row-span" produce
               the same bug by a different mechanism. */}
           <div className="flex flex-col gap-3 md:flex-row md:items-start">
-            <GroupInfoPanel group={group} students={students} onEdit={onEdit} />
+            <GroupInfoPanel group={group} students={students} programsByStudentId={programsByStudentId} onEdit={onEdit} />
             <div className="grid gap-3 sm:grid-cols-2 md:flex-1">
               <GroupProgramsSection
                 group={{ ...group, teacherId }}
@@ -874,6 +909,7 @@ function GroupRow({ group, students, onEdit, onDelete }) {
                 loading={programLoading}
                 templates={templates}
                 onToggled={handleProgramToggled}
+                onProgramChanged={onGroupProgramChanged}
               />
             </div>
           </div>
@@ -888,7 +924,7 @@ function GroupRow({ group, students, onEdit, onDelete }) {
 // whether this whole section (and its own "+ Создать группу" button) or a
 // button inside the "Ученики" panel is what's shown, so lifting the
 // subscription up avoids running it twice.
-export function GroupsSection({ students, groups }) {
+export function GroupsSection({ students, groups, programsByStudentId, onGroupProgramChanged }) {
   const [formOpen, setFormOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState(null)
   const [deletingGroup, setDeletingGroup] = useState(null)
@@ -920,8 +956,10 @@ export function GroupsSection({ students, groups }) {
               key={group.id}
               group={group}
               students={students}
+              programsByStudentId={programsByStudentId}
               onEdit={() => openEdit(group)}
               onDelete={() => setDeletingGroup(group)}
+              onGroupProgramChanged={onGroupProgramChanged}
             />
           ))}
         </div>

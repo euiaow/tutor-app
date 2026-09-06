@@ -1,21 +1,33 @@
 import { useState } from "react"
-import { Field, TeacherCancelBtn, TeacherModalFooter, TeacherSaveBtn, teacherInputCls } from "@/components/teacher/theme-ui"
+import { Field, TeacherCancelBtn, TeacherModalFooter, TeacherSaveBtn, TeacherSelect, teacherInputCls } from "@/components/teacher/theme-ui"
 import { addPayment } from "@/firebase/finance"
 
-export function AddPaymentForm({ studentId, onDone }) {
+// `programs` is optional (defaults to none) — the program picker only shows
+// once a student has 2+ programs (each can bill/be paid for independently,
+// see core/finance.js's resolveBalanceTarget); with 0-1 the payment still
+// credits the student's own single paidLessonsBalance, same as before
+// per-program balances existed.
+export function AddPaymentForm({ studentId, programs = [], onDone }) {
   const [count, setCount] = useState("")
   const [note, setNote] = useState("")
+  const [programId, setProgramId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+
+  const needsProgramChoice = programs.length >= 2
 
   async function handleSubmit() {
     const parsed = Number(count)
     if (!parsed || parsed <= 0 || saving) return
+    if (needsProgramChoice && !programId) {
+      setError("Выберите программу")
+      return
+    }
 
     setSaving(true)
     setError("")
     try {
-      await addPayment(studentId, parsed, note.trim())
+      await addPayment(studentId, parsed, note.trim(), needsProgramChoice ? programId : null)
       onDone?.()
     } catch (err) {
       console.error("Failed to add payment:", err)
@@ -27,6 +39,17 @@ export function AddPaymentForm({ studentId, onDone }) {
 
   return (
     <form className="flex flex-col gap-4" onSubmit={(e) => e.preventDefault()}>
+      {needsProgramChoice ? (
+        <Field label="За какую программу">
+          <TeacherSelect
+            value={programId}
+            onChange={setProgramId}
+            disabled={saving}
+            placeholder="Выбрать программу..."
+            options={programs.map((program) => ({ value: program.id, label: program.name }))}
+          />
+        </Field>
+      ) : null}
       <Field label="Сколько занятий оплачено">
         <input
           type="number"
@@ -56,7 +79,7 @@ export function AddPaymentForm({ studentId, onDone }) {
         <TeacherSaveBtn
           type="button"
           onClick={handleSubmit}
-          disabled={!count || Number(count) <= 0 || saving}
+          disabled={!count || Number(count) <= 0 || saving || (needsProgramChoice && !programId)}
         >
           {saving ? "Добавляем..." : "Добавить"}
         </TeacherSaveBtn>

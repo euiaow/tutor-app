@@ -47,7 +47,9 @@ import {
   assignCurriculumTemplate,
   reassignProgram,
   deleteProgram,
+  updateProgramHourlyRate,
 } from "@/firebase/curriculum"
+import { updateGroup } from "@/firebase/groups"
 import { formatLessonDateTime, formatNextLessonDate, getNextLessonDateForSlot } from "@/lib/schedule"
 import { useTimeZone } from "@/lib/user-prefs-context"
 import { auth } from "@/firebase/firebase"
@@ -84,6 +86,26 @@ function SlotSubjectTags({ subjects, value, onChange, disabled }) {
         )
       })}
     </div>
+  )
+}
+
+// Only shown (see StudentEditModal's renderExtra below) when the slot's
+// resolved subject matches 2+ of the student's own programs —
+// resolveProgramIdForSlot (functions/core/curriculum.js) already auto-
+// resolves an unambiguous single match on its own at draft-creation time, so
+// this picker only needs to exist for the genuinely ambiguous case (e.g. two
+// programs for the same subject — ЕГЭ prep vs. olympiad prep, different
+// rates). Sets the slot's own programId, which resolveProgramIdForSlot then
+// prefers over its own subject-based guess.
+function SlotProgramPicker({ programs, value, onChange, disabled }) {
+  return (
+    <TeacherSelect
+      value={value ?? ""}
+      onChange={(next) => onChange(next || null)}
+      disabled={disabled}
+      placeholder="Программа для оплаты..."
+      options={programs.map((program) => ({ value: program.id, label: program.name }))}
+    />
   )
 }
 
@@ -158,7 +180,7 @@ function programPercent(program) {
 // Confirms replacing one program's template-derived content — same shape
 // as DeleteStudentDialog's confirm-dialog pattern in this file, adapted for
 // a select instead of a delete button.
-function ReassignProgramDialog({ studentId, programId, templates, otherTemplateIds, open, onOpenChange }) {
+function ReassignProgramDialog({ studentId, programId, templates, otherTemplateIds, studentSubjects, open, onOpenChange }) {
   const [templateId, setTemplateId] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -200,11 +222,11 @@ function ReassignProgramDialog({ studentId, programId, templates, otherTemplateI
             placeholder="Выбрать шаблон..."
             options={templates.map((template) => {
               const alreadyAssigned = (otherTemplateIds ?? []).includes(template.id)
-              return {
-                value: template.id,
-                label: alreadyAssigned ? `${template.name} (уже назначена)` : template.name,
-                disabled: alreadyAssigned,
-              }
+              const subjectMismatch = !alreadyAssigned && !(studentSubjects ?? []).includes(template.subject)
+              let label = template.name
+              if (alreadyAssigned) label += " (уже назначена)"
+              else if (subjectMismatch) label += ` (нет предмета «${template.subject}» в профиле)`
+              return { value: template.id, label, disabled: alreadyAssigned || subjectMismatch }
             })}
           />
         </div>
@@ -280,27 +302,157 @@ function DeleteProgramDialog({ studentId, programId, programLabel, open, onOpenC
   )
 }
 
+// Per-program hourly rate — only rendered (see ProgramRow below) once a
+// student has 2+ programs, since with 0-1 the profile's own single "Оплата в
+// час" field (bound to student.hourlyRate) is still the one source of truth.
+// Saves on blur, direct client write — same "acts immediately, no separate
+// Save button" convention the rest of this Программы section already uses
+// (assign/reassign/delete all act immediately too, not gated behind the
+// modal's overall Save).
+function ProgramRateInput({ studentId, program }) {
+  const [value, setValue] = useState(program.hourlyRate ?? "")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setValue(program.hourlyRate ?? "")
+  }, [program.hourlyRate])
+
+  async function handleBlur() {
+    const next = value === "" ? null : Number(value) || 0
+    if (next === (program.hourlyRate ?? null)) return
+    setSaving(true)
+    try {
+      await updateProgramHourlyRate(studentId, program.id, next)
+    } catch (error) {
+      console.error("Failed to update program hourly rate:", error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <input
+        type="number"
+        min="0"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleBlur}
+        disabled={saving}
+        placeholder="—"
+        className="glass-tile w-16 rounded-full border border-glass-border px-2 py-1 text-right text-xs text-ink disabled:opacity-50"
+      />
+      {saving ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+      ) : (
+        <span className="shrink-0 text-[11px] text-muted-foreground">₽/ч</span>
+      )}
+    </span>
+  )
+}
+
 // One row per already-assigned program (Block 4 Phase 2) — subject +
-// template name + mini progress + "Заменить"/delete.
-function ProgramRow({ studentId, program, templates, programs, disabled }) {
+// template name + mini progress + "Заменить"/delete. Also the per-program
+// rate input once the student has 2+ programs — see ProgramRateInput above.
+// Shown instead of ReassignProgramDialog/DeleteProgramDialog when the
+// program is group-linked (program.sourceGroupId set) — reassignProgram/
+// deleteProgram already reject this server-side too (core/curriculum.js), so
+// this isn't just a UI nicety, it's explaining a real restriction and
+// offering the one actual way out: leaving the group. Removing the student
+// from the group's own memberStudentIds is enough — deleteGroupProgram's own
+// unlinkGroupPrograms logic doesn't run here (that's only for the group's
+// own "Удалить программу" action), but assignGroupProgram/updateGroup won't
+// re-link a program for a student who isn't a member any more, and the
+// program itself is left alone (still fully usable individually) rather than
+// deleted, matching "unlink, don't destroy" — the same rule the group side's
+// own removal already follows for a member who had the program before
+// joining.
+function GroupLinkedProgramDialog({ studentId, studentName, group, open, onOpenChange }) {
+  const [removing, setRemoving] = useState(false)
+  const [error, setError] = useState("")
+
+  function handleOpenChange(nextOpen) {
+    if (removing) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) setError("")
+  }
+
+  async function handleRemoveFromGroup() {
+    if (removing || !group) return
+    setRemoving(true)
+    setError("")
+    try {
+      await updateGroup(group.id, {
+        name: group.name,
+        subject: group.subject,
+        memberStudentIds: group.memberStudentIds.filter((id) => id !== studentId),
+        scheduleSlots: group.scheduleSlots,
+      })
+      handleOpenChange(false)
+    } catch (err) {
+      console.error("Failed to remove student from group:", err)
+      setError(err?.message || "Не удалось удалить ученика из группы")
+      setRemoving(false)
+    }
+  }
+
+  return (
+    <TeacherDialog open={open} onOpenChange={handleOpenChange}>
+      <TeacherDialogContent elevated>
+        <TeacherDialogTitle>Программа закреплена за группой</TeacherDialogTitle>
+        <TeacherDialogDescription>
+          {group ? `«${group.name}»` : "Эта группа"} использует программу совместно со всеми участниками — заменить
+          или удалить её здесь нельзя. Чтобы отвязать программу, удалите {studentName} из группы — сама программа
+          при этом останется у {studentName}, просто перестанет быть групповой.
+        </TeacherDialogDescription>
+
+        {error ? <p className="mt-2 text-sm font-semibold text-destructive">{error}</p> : null}
+
+        <TeacherModalFooter className="mt-5">
+          <TeacherCancelBtn onClick={() => handleOpenChange(false)} disabled={removing} />
+          <button
+            type="button"
+            onClick={handleRemoveFromGroup}
+            disabled={removing || !group}
+            className="rounded-full bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {removing ? "Удаляем..." : "Удалить из группы"}
+          </button>
+        </TeacherModalFooter>
+      </TeacherDialogContent>
+    </TeacherDialog>
+  )
+}
+
+function ProgramRow({ studentId, studentName, studentSubjects, program, templates, programs, groups, disabled }) {
   const [reassignOpen, setReassignOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const templateName = templates.find((t) => t.id === program.templateId)?.name ?? "Без шаблона"
   const percent = programPercent(program)
   const label = program.subject || "Без предмета"
+  const linkedGroup = program.sourceGroupId ? (groups ?? []).find((g) => g.id === program.sourceGroupId) : null
+  const isGroupLinked = Boolean(program.sourceGroupId)
 
   return (
     <div className="glass-tile flex flex-wrap items-center gap-3 rounded-[1.25rem] px-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-ink">{label}</p>
+        <p className="truncate text-sm font-semibold text-ink">
+          {label}
+          {linkedGroup ? (
+            <span className="ml-1.5 rounded-full bg-glass-strong px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+              {linkedGroup.name}
+            </span>
+          ) : null}
+        </p>
         <p className="truncate text-xs text-muted-foreground">{templateName}</p>
       </div>
       {percent != null ? (
         <span className="shrink-0 text-xs font-semibold text-muted-foreground">{percent}%</span>
       ) : null}
+      {(programs ?? []).length >= 2 ? <ProgramRateInput studentId={studentId} program={program} /> : null}
       <button
         type="button"
-        onClick={() => setReassignOpen(true)}
+        onClick={() => (isGroupLinked ? setDeleteOpen(true) : setReassignOpen(true))}
         disabled={disabled}
         className="shrink-0 rounded-full glass-tile px-3 py-1.5 text-xs font-semibold text-foreground/80 transition hover:text-rose-deep disabled:opacity-50"
       >
@@ -316,23 +468,36 @@ function ProgramRow({ studentId, program, templates, programs, disabled }) {
         <Trash2 className="size-4" aria-hidden="true" />
       </button>
 
-      <ReassignProgramDialog
-        studentId={studentId}
-        programId={program.id}
-        templates={templates}
-        otherTemplateIds={(programs ?? [])
-          .filter((p) => p.id !== program.id)
-          .map((p) => p.templateId)}
-        open={reassignOpen}
-        onOpenChange={setReassignOpen}
-      />
-      <DeleteProgramDialog
-        studentId={studentId}
-        programId={program.id}
-        programLabel={label}
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-      />
+      {isGroupLinked ? (
+        <GroupLinkedProgramDialog
+          studentId={studentId}
+          studentName={studentName}
+          group={linkedGroup}
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+        />
+      ) : (
+        <>
+          <ReassignProgramDialog
+            studentId={studentId}
+            programId={program.id}
+            templates={templates}
+            otherTemplateIds={(programs ?? [])
+              .filter((p) => p.id !== program.id)
+              .map((p) => p.templateId)}
+            studentSubjects={studentSubjects}
+            open={reassignOpen}
+            onOpenChange={setReassignOpen}
+          />
+          <DeleteProgramDialog
+            studentId={studentId}
+            programId={program.id}
+            programLabel={label}
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -340,7 +505,7 @@ function ProgramRow({ studentId, program, templates, programs, disabled }) {
 // Muted (not accent-colored, per spec) "+ Добавить программу" text link —
 // reveals a template select + "Назначить" on click, collapses back after a
 // successful assign.
-function AddProgramControl({ studentId, templates, programs, disabled }) {
+function AddProgramControl({ studentId, studentSubjects, templates, programs, disabled }) {
   const [expanded, setExpanded] = useState(false)
   const [templateId, setTemplateId] = useState("")
   const [assigning, setAssigning] = useState(false)
@@ -385,11 +550,11 @@ function AddProgramControl({ studentId, templates, programs, disabled }) {
         placeholder="Выбрать шаблон..."
         options={templates.map((template) => {
           const alreadyAssigned = (programs ?? []).some((program) => program.templateId === template.id)
-          return {
-            value: template.id,
-            label: alreadyAssigned ? `${template.name} (уже назначена)` : template.name,
-            disabled: alreadyAssigned,
-          }
+          const subjectMismatch = !alreadyAssigned && !(studentSubjects ?? []).includes(template.subject)
+          let label = template.name
+          if (alreadyAssigned) label += " (уже назначена)"
+          else if (subjectMismatch) label += ` (нет предмета «${template.subject}» в профиле)`
+          return { value: template.id, label, disabled: alreadyAssigned || subjectMismatch }
         })}
         className="min-w-0 flex-1"
       />
@@ -413,7 +578,7 @@ function AddProgramControl({ studentId, templates, programs, disabled }) {
 // ScheduleBlock per the requested layout change; profile fields (subject/
 // exam target/rate/auto-remind/curriculum plan) live in the same modal,
 // matching the mockup's own StudentEditModal which combines both.
-function StudentEditModal({ student, open, onOpenChange }) {
+function StudentEditModal({ student, groups, open, onOpenChange }) {
   const teacherTimeZone = useTimeZone()
   const [slots, setSlots] = useState([])
   const [subject, setSubject] = useState([])
@@ -512,16 +677,30 @@ function StudentEditModal({ student, open, onOpenChange }) {
                 onChange={setSlots}
                 disabled={saving}
                 makeDefaultSlot={() => defaultSlot(subject)}
-                renderExtra={(slot, index, updateSlot) =>
-                  subject.length >= 2 ? (
-                    <SlotSubjectTags
-                      subjects={subject}
-                      value={slot.subject ?? subject[0]}
-                      onChange={(name) => updateSlot(index, "subject", name)}
-                      disabled={saving}
-                    />
-                  ) : null
-                }
+                renderExtra={(slot, index, updateSlot) => {
+                  const effectiveSubject = slot.subject ?? subject[0] ?? null
+                  const matchingPrograms = programs.filter((program) => program.subject === effectiveSubject)
+                  return (
+                    <>
+                      {subject.length >= 2 ? (
+                        <SlotSubjectTags
+                          subjects={subject}
+                          value={effectiveSubject}
+                          onChange={(name) => updateSlot(index, "subject", name)}
+                          disabled={saving}
+                        />
+                      ) : null}
+                      {matchingPrograms.length >= 2 ? (
+                        <SlotProgramPicker
+                          programs={matchingPrograms}
+                          value={slot.programId}
+                          onChange={(id) => updateSlot(index, "programId", id)}
+                          disabled={saving}
+                        />
+                      ) : null}
+                    </>
+                  )
+                }}
               />
             </div>
           </div>
@@ -578,13 +757,22 @@ function StudentEditModal({ student, open, onOpenChange }) {
                   <ProgramRow
                     key={program.id}
                     studentId={student.id}
+                    studentName={student.name}
+                    studentSubjects={subject}
                     program={program}
                     templates={templates}
                     programs={programs}
+                    groups={groups}
                     disabled={saving}
                   />
                 ))}
-                <AddProgramControl studentId={student.id} templates={templates} programs={programs} disabled={saving} />
+                <AddProgramControl
+                  studentId={student.id}
+                  studentSubjects={subject}
+                  templates={templates}
+                  programs={programs}
+                  disabled={saving}
+                />
               </div>
             </div>
           </div>
@@ -766,31 +954,7 @@ export function CurriculumTile({ label, icon: Icon, items, studentId, programId,
   )
 }
 
-// One item ("Предмет"/"Программа") vs. several ("Предметы"/"Программы",
-// stacked one-per-line, top-aligned with the label instead of centered) —
-// same shape reused for both rows in the "Расписание" tile below.
-function SummaryListRow({ singularLabel, pluralLabel, items, emptyLabel }) {
-  const list = (items ?? []).filter(Boolean)
-
-  return (
-    <div className="flex items-start justify-between gap-3 text-muted-foreground">
-      <span className="shrink-0">{list.length > 1 ? pluralLabel : singularLabel}</span>
-      {list.length === 0 ? (
-        <span className="text-right text-ink">{emptyLabel}</span>
-      ) : list.length === 1 ? (
-        <span className="text-right text-ink">{list[0]}</span>
-      ) : (
-        <span className="flex flex-col items-end text-right text-ink">
-          {list.map((item, index) => (
-            <span key={index}>{item}</span>
-          ))}
-        </span>
-      )}
-    </div>
-  )
-}
-
-export function StudentRow({ student, progressSummary }) {
+export function StudentRow({ student, progressSummary, groups = [] }) {
   const timeZone = useTimeZone()
   const [expanded, setExpanded] = useState(false)
   const [isUpcomingListOpen, setIsUpcomingListOpen] = useState(false)
@@ -800,11 +964,18 @@ export function StudentRow({ student, progressSummary }) {
   const [livePrograms, setLivePrograms] = useState(null)
   const [templates, setTemplates] = useState([])
 
+  // Deliberately does NOT reset livePrograms to null on collapse — only
+  // unsubscribes. Resetting used to throw away the just-synced live data the
+  // instant the row collapsed, falling back to progressSummary (the parent's
+  // one-time batch fetch from page load), so the collapsed percent reverted
+  // to whatever it was before any topics were marked covered in this
+  // session — visibly wrong (e.g. "0%") right after marking something
+  // covered and collapsing. Keeping the last known livePrograms value means
+  // the collapsed percent stays accurate for the rest of the session; it can
+  // only go stale the same way progressSummary itself already can (an update
+  // from elsewhere, e.g. completing a lesson without ever expanding this row).
   useEffect(() => {
-    if (!expanded) {
-      setLivePrograms(null)
-      return
-    }
+    if (!expanded) return
     const unsubscribe = subscribeToPrograms(student.id, setLivePrograms, (error) =>
       console.error("Failed to subscribe to programs:", error),
     )
@@ -846,6 +1017,33 @@ export function StudentRow({ student, progressSummary }) {
     0,
   )
   const percent = totalProgressItems > 0 ? Math.round((coveredProgressItems / totalProgressItems) * 100) : null
+
+  // A group's own scheduleSlots (teachers/{uid}/groups/{groupId}.scheduleSlots)
+  // never lived on the student doc — this student's card used to only ever
+  // show their individual scheduleSlots, so a student who only (or also)
+  // attends a group's lessons looked like they had no schedule, or an
+  // incomplete one. Merged here at read time (not copied into the student
+  // doc — that would create a second, driftable copy of the group's own
+  // schedule and risk double-booking against ensureUpcomingGroupLessons'
+  // own lesson-mirror creation) so it also stays correct live: `groups` is
+  // the same subscribed list TeacherDashboard already passes everywhere
+  // else, so editing a group's schedule re-renders this the same way any
+  // other group-driven display already updates.
+  const studentGroups = groups.filter((group) => group.memberStudentIds?.includes(student.id))
+  const scheduleEntries = [
+    ...(student.scheduleSlots ?? []).map((slot, index) => ({
+      key: `slot-${index}`,
+      date: getNextLessonDateForSlot(slot),
+      groupName: null,
+    })),
+    ...studentGroups.flatMap((group) =>
+      (group.scheduleSlots ?? []).map((slot, index) => ({
+        key: `group-${group.id}-${index}`,
+        date: getNextLessonDateForSlot(slot),
+        groupName: group.name,
+      })),
+    ),
+  ].sort((a, b) => (a.date && b.date ? a.date - b.date : a.date ? -1 : 1))
 
   function stop(e) {
     e.stopPropagation()
@@ -908,8 +1106,8 @@ export function StudentRow({ student, progressSummary }) {
                 Расписание
               </p>
               <ul className="mt-3 space-y-1.5 text-sm">
-                {student.scheduleSlots?.length > 0 ? (
-                  student.scheduleSlots.map((slot, index) => (
+                {scheduleEntries.length > 0 ? (
+                  scheduleEntries.map((entry) => (
                     // Recomputed via getNextLessonDateForSlot, not the raw
                     // slot.time string — anchored on the slot's own stamped
                     // timeZone (or Europe/Moscow, getNextLessonDateForSlot's
@@ -921,8 +1119,13 @@ export function StudentRow({ student, progressSummary }) {
                     // the viewer's current pref — so a slot set for "16:00
                     // Europe/Moscow" reads correctly converted once the
                     // teacher switches their own timezone preference.
-                    <li key={index} className="font-semibold text-ink">
-                      {formatNextLessonDate(getNextLessonDateForSlot(slot), timeZone)}
+                    <li key={entry.key} className="flex flex-wrap items-center gap-1.5 font-semibold text-ink">
+                      {formatNextLessonDate(entry.date, timeZone)}
+                      {entry.groupName ? (
+                        <span className="rounded-full bg-glass-strong px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                          {entry.groupName}
+                        </span>
+                      ) : null}
                     </li>
                   ))
                 ) : (
@@ -946,24 +1149,52 @@ export function StudentRow({ student, progressSummary }) {
                 )}
               </div>
               <div className="mt-1 text-sm">
-                <SummaryListRow
-                  singularLabel="Программа"
-                  pluralLabel="Программы"
-                  items={(livePrograms ?? []).map(
-                    (program) => templates.find((template) => template.id === program.templateId)?.name ?? "Без шаблона",
+                <p className="text-muted-foreground">Программы и ставки</p>
+                <div className="mt-1 space-y-1">
+                  {(livePrograms ?? []).length === 0 ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-ink">Не назначены</span>
+                      <span className="shrink-0 text-right text-ink">
+                        {typeof student.hourlyRate === "number" && student.hourlyRate > 0
+                          ? `${student.hourlyRate} ₽/ч`
+                          : "Не указана"}
+                      </span>
+                    </div>
+                  ) : livePrograms.length === 1 ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="min-w-0 flex-1 break-words text-ink">
+                        {templates.find((template) => template.id === livePrograms[0].templateId)?.name ?? "Без шаблона"}
+                      </span>
+                      <span className="shrink-0 text-right text-ink">
+                        {typeof student.hourlyRate === "number" && student.hourlyRate > 0
+                          ? `${student.hourlyRate} ₽/ч`
+                          : "Не указана"}
+                      </span>
+                    </div>
+                  ) : (
+                    // Once a student has 2+ programs, the single student-level
+                    // hourlyRate no longer means "the" rate — each program
+                    // carries its own (set via FinanceSection's per-program
+                    // field). See src/firebase/curriculum.js's
+                    // updateProgramHourlyRate comment for why.
+                    livePrograms.map((program) => (
+                      <div key={program.id} className="flex items-start justify-between gap-3">
+                        <span className="min-w-0 flex-1 break-words text-ink">
+                          {templates.find((template) => template.id === program.templateId)?.name ?? "Без шаблона"}
+                        </span>
+                        <span className="shrink-0 text-right text-ink">
+                          {typeof program.hourlyRate === "number" && program.hourlyRate > 0
+                            ? `${program.hourlyRate} ₽/ч`
+                            : "Не указана"}
+                        </span>
+                      </div>
+                    ))
                   )}
-                  emptyLabel="Не назначены"
-                />
+                </div>
               </div>
               <div className="mt-1 flex justify-between text-sm">
                 <span className="text-muted-foreground">Пароль</span>
                 <span className="text-ink">{student.accessCode}</span>
-              </div>
-              <div className="mt-1 flex justify-between text-sm">
-                <span className="text-muted-foreground">Ставка</span>
-                <span className="text-ink">
-                  {typeof student.hourlyRate === "number" && student.hourlyRate > 0 ? `${student.hourlyRate} ₽/ч` : "Не указана"}
-                </span>
               </div>
               <button
                 type="button"
@@ -1064,6 +1295,7 @@ export function StudentRow({ student, progressSummary }) {
 
       <StudentEditModal
         student={student}
+        groups={groups}
         open={isEditModalOpen}
         onOpenChange={setIsEditModalOpen}
       />

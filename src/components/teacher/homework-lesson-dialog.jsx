@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
+import { TruncatedList } from "@/components/truncated-list"
 import {
   GhostBtn,
   SolidBtn,
@@ -119,8 +120,11 @@ export function CoveredMaterialChecklist({ label, items, selections, onChange, a
     <div className="flex flex-col gap-2">
       <span className="text-sm font-semibold text-ink">{label}</span>
 
-      <div className="flex flex-col gap-1.5">
-        {available.map((item) => (
+      <TruncatedList
+        items={available}
+        limit={5}
+        className="flex flex-col gap-1.5"
+        renderItem={(item) => (
           <label
             key={item.id}
             className="glass-tile flex items-center gap-2.5 rounded-[1rem] px-3 py-2 text-sm text-ink transition hover:bg-glass-strong/50"
@@ -133,8 +137,8 @@ export function CoveredMaterialChecklist({ label, items, selections, onChange, a
             />
             {item.title}
           </label>
-        ))}
-      </div>
+        )}
+      />
     </div>
   )
 }

@@ -120,6 +120,12 @@ function normalizeScheduleSlots(data) {
       // care resolve the effective subject via resolveSlotSubject in
       // googleCalendar.js, defaulting to student.subject[0] at read time.
       subject: typeof slot.subject === "string" && slot.subject ? slot.subject : null,
+      // Explicit per-slot program override — only meaningful (and only ever
+      // shown in the UI) when the slot's subject matches 2+ of the student's
+      // own programs, since resolveProgramIdForSlot (core/curriculum.js) can
+      // already resolve an unambiguous single match on its own. Null for
+      // every slot saved before this field existed, same as subject above.
+      programId: typeof slot.programId === "string" && slot.programId ? slot.programId : null,
       // Per-slot timezone anchor — null for slots saved before this field
       // existed; getNextLessonDateForSlot falls back to a passed-in
       // timezone (the teacher's current one) for those.

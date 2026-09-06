@@ -4,8 +4,8 @@ import { db, functions } from "./firebase"
 
 const addPaymentCallable = httpsCallable(functions, "addPayment")
 
-export async function addPayment(studentId, lessonsCount, note) {
-  const result = await addPaymentCallable({ studentId, lessonsCount, note: note || null })
+export async function addPayment(studentId, lessonsCount, note, programId = null) {
+  const result = await addPaymentCallable({ studentId, lessonsCount, note: note || null, programId })
   return result.data.newBalance
 }
 
@@ -24,6 +24,11 @@ export function subscribeToBalanceLedger(studentId, onData, onError) {
           amount: data.amount ?? 0,
           note: data.note ?? null,
           lessonId: data.lessonId ?? null,
+          // Only set once the student has 2+ programs (see
+          // core/finance.js's resolveBalanceTarget) — null for every entry
+          // recorded against the student's own single balance.
+          programId: data.programId ?? null,
+          programName: data.programName ?? null,
           createdAt: data.createdAt?.toDate?.() ?? null,
         }
       })

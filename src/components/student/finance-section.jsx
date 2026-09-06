@@ -40,6 +40,7 @@ function LedgerEntryRow({ entry }) {
       <div className="min-w-0">
         <p className={`font-semibold ${isPayment ? "text-primary" : "text-foreground"}`}>
           {isPayment ? t("finance.paymentEntry", { count: entry.amount }) : t("finance.deductionEntry", { count: entry.amount })}
+          {entry.programName ? <span className="ml-1.5 font-normal text-muted-foreground">· {entry.programName}</span> : null}
         </p>
         {entry.note ? <p className="truncate text-xs text-muted-foreground">{entry.note}</p> : null}
       </div>
@@ -72,7 +73,40 @@ function AllPaymentsDialog({ open, onOpenChange, entries }) {
   )
 }
 
-export function StudentFinanceSection({ studentId, paidLessonsBalance }) {
+// Mirrors the teacher-side split (finance-section.jsx's SingleProgramBalance/
+// MultiProgramBalanceRow, core/finance.js's resolveBalanceTarget): once a
+// student has 2+ programs, their own student.paidLessonsBalance is reset to
+// 0 for good and every real payment/deduction lands on that specific
+// program's own paidLessonsBalance instead (see core/curriculum.js's 1-to-2
+// transfer) — showing the single frozen field here made every payment look
+// like it "wasn't counted" for any student past their second program. A
+// student with 0-1 programs is unaffected; single balance badge as before.
+function BalanceBadges({ paidLessonsBalance, programs, t }) {
+  if (programs.length >= 2) {
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {programs.map((program) => (
+          <span
+            key={program.id}
+            className="glass-tile-light inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold text-foreground"
+            title={program.name}
+          >
+            <span className="max-w-24 truncate text-muted-foreground">{program.name}</span>
+            {t("finance.balance", { count: program.paidLessonsBalance ?? 0 })}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <span className="glass-tile-light inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold text-foreground">
+      {t("finance.balance", { count: paidLessonsBalance ?? 0 })}
+    </span>
+  )
+}
+
+export function StudentFinanceSection({ studentId, paidLessonsBalance, programs = [] }) {
   const { t } = useTranslation("student")
   const [entries, setEntries] = useState([])
   const [showAll, setShowAll] = useState(false)
@@ -93,9 +127,7 @@ export function StudentFinanceSection({ studentId, paidLessonsBalance }) {
           <Wallet className="size-5 text-primary" aria-hidden="true" />
           {t("finance.title")}
         </h2>
-        <span className="glass-tile-light inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold text-foreground">
-          {t("finance.balance", { count: paidLessonsBalance ?? 0 })}
-        </span>
+        <BalanceBadges paidLessonsBalance={paidLessonsBalance} programs={programs} t={t} />
       </div>
 
       <div className="mt-4 flex flex-col gap-2">

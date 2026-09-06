@@ -9,6 +9,7 @@ const botMessages = require("./botMessages")
 const { rescheduleLessonEvent, deleteLessonEvent, deleteLessonEventInstance, createExtraLessonEvent } = require("./googleCalendar")
 const { createNotification } = require("./notifier")
 const { deductLessonFromBalance } = require("./finance")
+const { getProgramsForStudentAdmin, resolveProgramIdForSlot } = require("./curriculum")
 
 const STUDENTS_COLLECTION = "students"
 const LESSONS_SUBCOLLECTION = "lessons"
@@ -27,14 +28,18 @@ function emptyHomework() {
 // durationMinutes is written directly onto the lesson doc (not just read
 // live off scheduleSlots at income-calculation time) so a later schedule
 // edit can't retroactively change what a past/current week's income
-// calculation sees for an already-created draft.
-function createUpcomingDraft(studentId, teacherId, slotIndex, date, durationMinutes) {
+// calculation sees for an already-created draft. programId follows the same
+// reasoning (finance-section.jsx's computeWeeklyIncome reads it straight off
+// the lesson to pick which program's own hourlyRate applies) — see
+// resolveProgramIdForSlot (core/curriculum.js) for how callers resolve it.
+function createUpcomingDraft(studentId, teacherId, slotIndex, date, durationMinutes, programId = null) {
   return lessonsRef(studentId).add({
     status: "upcoming",
     teacherId: teacherId ?? null,
     date: Timestamp.fromDate(date),
     slotIndex,
     durationMinutes: durationMinutes ?? 60,
+    programId: programId ?? null,
     topic: "",
     homework: emptyHomework(),
     rescheduled: false,
@@ -103,6 +108,8 @@ async function ensureUpcomingLesson(studentId) {
   )
 
   const teacherId = studentSnapshot.data().teacherId ?? null
+  const studentSubjects = studentSnapshot.data().subject
+  const programs = await getProgramsForStudentAdmin(studentId)
   // No teacher-profile-timezone fallback passed here on purpose — a slot's
   // own stamped `timeZone` (set client-side at save time) always wins
   // inside getNextLessonDateForSlot, and a legacy slot with none falls back
@@ -118,12 +125,14 @@ async function ensureUpcomingLesson(studentId) {
     if (idsBySlot.has(occurrence.slotIndex)) {
       continue
     }
+    const slot = scheduleSlots[occurrence.slotIndex]
     const draft = await createUpcomingDraft(
       studentId,
       teacherId,
       occurrence.slotIndex,
       occurrence.date,
-      scheduleSlots[occurrence.slotIndex]?.durationMinutes,
+      slot?.durationMinutes,
+      resolveProgramIdForSlot(programs, slot, studentSubjects),
     )
     idsBySlot.set(occurrence.slotIndex, draft.id)
     logger.info("ensureUpcomingLesson: created upcoming lesson draft", {
@@ -198,6 +207,8 @@ async function syncUpcomingLessonToSchedule(studentId) {
   const existingUpcoming = await lessonsRef(studentId).where("status", "==", "upcoming").get()
   const bySlot = bucketUpcomingBySlot(existingUpcoming)
   const teacherId = studentSnapshot.data().teacherId ?? null
+  const studentSubjects = studentSnapshot.data().subject
+  const programs = await getProgramsForStudentAdmin(studentId)
   // See the identical comment in ensureUpcomingLesson above — no
   // teacher-profile-timezone fallback on purpose.
   const occurrences = getUpcomingLessonDates(scheduleSlots, scheduleSlots.length)
@@ -205,15 +216,11 @@ async function syncUpcomingLessonToSchedule(studentId) {
 
   for (const occurrence of occurrences) {
     const existingDoc = bySlot.get(occurrence.slotIndex)
+    const slot = scheduleSlots[occurrence.slotIndex]
+    const programId = resolveProgramIdForSlot(programs, slot, studentSubjects)
 
     if (!existingDoc) {
-      const draft = await createUpcomingDraft(
-        studentId,
-        teacherId,
-        occurrence.slotIndex,
-        occurrence.date,
-        scheduleSlots[occurrence.slotIndex]?.durationMinutes,
-      )
+      const draft = await createUpcomingDraft(studentId, teacherId, occurrence.slotIndex, occurrence.date, slot?.durationMinutes, programId)
       idsBySlot.set(occurrence.slotIndex, draft.id)
       logger.info("syncUpcomingLessonToSchedule: created draft for new slot", {
         studentId,
@@ -236,7 +243,13 @@ async function syncUpcomingLessonToSchedule(studentId) {
       continue
     }
 
-    await existingDoc.ref.update({ date: Timestamp.fromDate(occurrence.date) })
+    // programId (unlike durationMinutes) is kept live-synced here, not just
+    // stamped once at creation — an upcoming (not yet completed) draft
+    // hasn't billed anyone yet, so there's no past income calculation to
+    // protect from retroactively changing, and a slot's program binding
+    // genuinely can change independently of its date (see
+    // schedule-slots-editor.jsx's per-slot program picker).
+    await existingDoc.ref.update({ date: Timestamp.fromDate(occurrence.date), programId })
     idsBySlot.set(occurrence.slotIndex, existingDoc.id)
     logger.info("syncUpcomingLessonToSchedule: updated draft date to match new schedule", {
       studentId,
@@ -359,7 +372,7 @@ async function addLessonMaterial(studentId, lessonId, material) {
 // it since it isn't bucketed by slot. Its own googleEventId lives on the
 // lesson doc itself, unlike slot-based lessons whose event id lives on the
 // student's googleEventIds map.
-async function createExtraLesson(studentId, date) {
+async function createExtraLesson(studentId, date, programId = null) {
   if (!studentId || typeof studentId !== "string") {
     throw new HttpsError("invalid-argument", "Не указан идентификатор ученика")
   }
@@ -377,6 +390,19 @@ async function createExtraLesson(studentId, date) {
   const student = studentSnapshot.data()
   const teacherId = student.teacherId ?? null
 
+  // No slot to resolve a subject/program from (this is a one-off, not tied
+  // to any recurring slot) — an explicit programId is trusted as-is once
+  // confirmed to actually belong to this student, same "verify ownership,
+  // don't just trust an id from the request body" reasoning as
+  // assertOwnsStudent/assertOwnsGroup elsewhere. Silently dropped (not an
+  // error) if it doesn't — this is billing metadata, not something worth
+  // failing an otherwise-valid lesson creation over.
+  let resolvedProgramId = null
+  if (programId && typeof programId === "string") {
+    const programSnapshot = await db.collection(STUDENTS_COLLECTION).doc(studentId).collection("programs").doc(programId).get()
+    resolvedProgramId = programSnapshot.exists ? programId : null
+  }
+
   const lessonRef = await lessonsRef(studentId).add({
     status: "upcoming",
     teacherId,
@@ -384,6 +410,7 @@ async function createExtraLesson(studentId, date) {
     isExtraLesson: true,
     slotIndex: null,
     durationMinutes: 60,
+    programId: resolvedProgramId,
     homework: emptyHomework(),
     remindersSent: { preLessonSent: false },
     createdAt: FieldValue.serverTimestamp(),
@@ -492,7 +519,7 @@ async function completeLesson(studentId, lessonId, { attendance, homeworkDone, r
 
   logger.info("completeLesson: lesson marked completed", { studentId, lessonId, coinsEarned })
 
-  await deductLessonFromBalance(studentId, lessonId)
+  await deductLessonFromBalance(studentId, lessonId, data.programId ?? null)
 
   // Generate the next lesson's draft right away rather than waiting for
   // the next reminders.js run — ensureUpcomingLesson's own query already

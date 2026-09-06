@@ -62,7 +62,9 @@ function LessonCard({ lesson }) {
   const timeZone = useTimeZone()
   const dateLocale = useDateLocale()
   const isCancelled = lesson.status === "cancelled"
-  const hasCoins = typeof lesson.coinsEarned === "number"
+  // Hidden on the deployed site until Sticker Workshop ships for real — see
+  // StickerWorkshopButton/DecorationZone for the matching gate.
+  const hasCoins = import.meta.env.DEV && typeof lesson.coinsEarned === "number"
 
   return (
     <li className="glass-soft flex flex-col gap-3 rounded-4xl p-5 sm:p-6">

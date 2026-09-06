@@ -4,6 +4,14 @@ import { Field, TeacherDialog, TeacherDialogContent, TeacherDialogDescription, T
 import { subscribeToVideoCallUrl, updateVideoCallUrl } from "@/firebase/videoCall"
 import { auth } from "@/firebase/firebase"
 
+// Matched by id (not a ref/prop) from video-call-start-button.jsx's own
+// "Настроить ссылку" tooltip action, which lives far away in the component
+// tree (the "Ближайшие уроки" panel) and has no other way to reach this
+// header icon — scrolling to and clicking this exact element opens the same
+// dialog a teacher gets by clicking the icon directly, rather than a second,
+// divergent entry point.
+export const VIDEO_CALL_SETTINGS_TRIGGER_ID = "video-call-settings-trigger"
+
 export function VideoCallSettings() {
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState("")
@@ -55,6 +63,7 @@ export function VideoCallSettings() {
   return (
     <TeacherDialog open={open} onOpenChange={handleOpenChange}>
       <button
+        id={VIDEO_CALL_SETTINGS_TRIGGER_ID}
         type="button"
         onClick={() => handleOpenChange(true)}
         title="Ссылка на видеозвонок"

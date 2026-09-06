@@ -35,6 +35,7 @@ const {
   syncScheduleSlots,
   syncGroupScheduleSlots,
   deleteLessonEvent,
+  resyncTeacherCalendar,
 } = require("./core/googleCalendar")
 const { normalizeScheduleSlots } = require("./core/schedule")
 const {
@@ -252,11 +253,11 @@ exports.createExtraLesson = onCall(
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    const { studentId, date } = request.data ?? {}
+    const { studentId, date, programId } = request.data ?? {}
 
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
-      const result = await createExtraLesson(studentId, new Date(date))
+      const result = await createExtraLesson(studentId, new Date(date), programId ?? null)
       await touchTeacherActivity(request.auth.uid)
       return { success: true, ...result }
     } catch (error) {
@@ -586,11 +587,11 @@ exports.addPayment = onCall(
       throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
     }
 
-    const { studentId, lessonsCount, note } = request.data ?? {}
+    const { studentId, lessonsCount, note, programId } = request.data ?? {}
 
     try {
       await assertOwnsStudent(studentId, request.auth.uid)
-      const newBalance = await addPayment(studentId, lessonsCount, note)
+      const newBalance = await addPayment(studentId, lessonsCount, note, programId ?? null)
       await touchTeacherActivity(request.auth.uid)
       return { success: true, newBalance }
     } catch (error) {
@@ -1563,6 +1564,32 @@ exports.getCalendarEmbedInfo = onCall(
     } catch (error) {
       logger.error("Failed to build Google Calendar embed URL", error)
       throw new HttpsError("failed-precondition", "Не удалось получить Google Calendar")
+    }
+  },
+)
+
+// "Сменили Google аккаунт? Синхронизировать данные" (TeacherDashboard.jsx) —
+// an on-demand run of the same lazy self-heal that normally only fires once
+// a day from dailyReminderMidday (see resyncTeacherCalendar's own comment,
+// core/googleCalendar.js), scoped to just this teacher. Reconnecting under a
+// *different* Google account otherwise left every pre-existing scheduleSlots
+// event silently orphaned until the next day's cron got around to noticing —
+// this gives the teacher an immediate way to force that recheck instead of
+// waiting.
+exports.resyncGoogleCalendar = onCall(
+  { secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Требуется вход в аккаунт преподавателя")
+    }
+
+    try {
+      const result = await resyncTeacherCalendar(request.auth.uid)
+      logger.info("resyncGoogleCalendar: done", { uid: request.auth.uid, ...result })
+      return { success: true, ...result }
+    } catch (error) {
+      logger.error("Failed to resync Google Calendar", error)
+      throw new HttpsError("internal", "Не удалось синхронизировать Google Calendar")
     }
   },
 )

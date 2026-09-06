@@ -2,6 +2,38 @@
 
 ## What works (per commit history + code present)
 
+- **Session 40 — 3 real bugs found and fixed: personal bot/VK fields lost on
+  teacher delete+recreate, blue-theme Calendar events now hardcoded blue,
+  and a real multi-program payment bug where `addPayment` silently dropped
+  `programId`.** The bot-field issue was a data-lifecycle gap, not a code
+  bug — deleting and recreating a teacher account gives a brand-new blank
+  `teachers/{uid}` doc, so `telegramBotKey`/`vkGroupId` set on a since-
+  deleted account can never carry over; root-caused via a temporary
+  scoped diagnostic (deploy/curl/delete) and fixed directly for
+  `ask@love.ru`. The Calendar-color feature added `getTeacherColorOverride`
+  (`core/googleCalendar.js`) — a teacher on the "blue" theme gets every
+  lesson event in Calendar's own Blueberry colorId instead of the
+  per-subject hash, threaded through every event-creation entry point.
+  The payment bug was the real fix: `exports.addPayment` never read
+  `programId` from the request at all, so every payment for a student
+  with 2+ programs silently credited the student's own frozen
+  `paidLessonsBalance` (permanently 0 once 2+ programs exist, per
+  `core/curriculum.js`'s 1-to-2 transfer) instead of the chosen program's
+  balance — and nothing in the UI displays that frozen field, so it read
+  as "payments aren't counted." Fixed the callable (found already
+  correctly rewritten, uncommitted, by a concurrent session — verified by
+  inspection, deployed as-is) and gave the student-facing dashboard the
+  same per-program balance display the teacher side already had
+  (`StudentFinanceSection`'s new `BalanceBadges`, plus the missing
+  `entry.programName` label on the student's own ledger rows). Deployed:
+  `functions:addPayment`, `syncStudentScheduleToGoogleCalendar`,
+  `syncGroupScheduleToGoogleCalendar`, `dailyReminderMidday`,
+  `resyncGoogleCalendar`, hosting. **A much larger concurrent-session
+  collision than session 39's was found while committing** — 26 files,
+  +1284/-280 lines of another active session's in-progress work (a
+  multi-program finance/curriculum rearchitecture, video calls, teacher
+  cloning) — committed and pushed together per explicit, informed user
+  instruction. Full detail: `activeContext.md`.
 - **Session 39 — fixed a real Google Calendar bug: cancelling one recurring
   lesson deleted the entire weekly series, not just that occurrence** —
   root-caused via real production logs (2026-09-03 incident: a `410

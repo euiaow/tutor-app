@@ -165,15 +165,19 @@ const BUILDERS = {
   homework_received: (_p, lang) =>
     lang === "en" ? "✅ Homework received! The teacher will see it before the lesson." : "✅ Домашка получена! Репетитор увидит её перед уроком.",
 
+  // programName is only ever set once a student has 2+ programs (see
+  // core/finance.js's resolveBalanceTarget) — omitted (undefined) for every
+  // other student, same message as before this field existed.
   low_balance: (p, lang) => {
+    const suffix = p.programName ? ` (${p.programName})` : ""
     if (p.newBalance <= 0) {
       return lang === "en"
-        ? "Your paid lesson package has run out. Reach out whenever it's convenient to renew it."
-        : "Пакет занятий закончился. Свяжись, чтобы продлить, когда будет удобно."
+        ? `Your paid lesson package${suffix} has run out. Reach out whenever it's convenient to renew it.`
+        : `Пакет занятий${suffix} закончился. Свяжись, чтобы продлить, когда будет удобно.`
     }
     return lang === "en"
-      ? `${p.newBalance} lesson(s) left in your paid package. Let me know if you'd like to renew — I'd love to keep working with you! 🙂`
-      : `Осталось ${p.newBalance} занятие(-ий) в оплаченном пакете. Дай знать, если нужно продлить — буду рада продолжать с тобой заниматься! 🙂`
+      ? `${p.newBalance} lesson(s) left in your paid package${suffix}. Let me know if you'd like to renew — I'd love to keep working with you! 🙂`
+      : `Осталось ${p.newBalance} занятие(-ий) в оплаченном пакете${suffix}. Дай знать, если нужно продлить — буду рада продолжать с тобой заниматься! 🙂`
   },
 
   lesson_reminder_midday: (p, lang) => {

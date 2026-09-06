@@ -2122,7 +2122,7 @@ function StudentDashboardContent({ studentId }) {
 
       <MaterialsLibrary materials={allMaterials} loading={lessonsLoading} error={lessonsError} />
 
-      <StudentFinanceSection studentId={studentId} paidLessonsBalance={student.paidLessonsBalance} />
+      <StudentFinanceSection studentId={studentId} paidLessonsBalance={student.paidLessonsBalance} programs={programs} />
 
       <StickerWorkshopButton studentId={studentId} coinsBalance={student.coinsBalance} />
 

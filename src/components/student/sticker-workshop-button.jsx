@@ -50,6 +50,10 @@ export function StickerWorkshopButton({ studentId, coinsBalance }) {
     return () => observer.disconnect()
   }, [])
 
+  // Sticker Workshop is hidden from the deployed site until it's finished —
+  // see DecorationZone for the matching gate. Remove both when the feature
+  // ships for real.
+  if (!import.meta.env.DEV) return null
   if (!gamification) return null
   const { inventory, decoration, stickerSets } = gamification
 

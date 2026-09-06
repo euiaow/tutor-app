@@ -38,6 +38,24 @@ function colorIdForStudent(student) {
   return colorIdForSubject(student.subject?.[0])
 }
 
+// A teacher on the "blue" dashboard theme gets every lesson event in a fixed
+// blue instead of the per-subject hash above (colorId is overridden outright,
+// not blended with it) — "9" is Calendar's own Blueberry, the closest real
+// colorId to the dashboard's blue accent. Every other theme keeps the
+// per-subject color exactly as before.
+const BLUE_THEME_CALENDAR_COLOR_ID = "9"
+
+async function getTeacherColorOverride(teacherId) {
+  if (!teacherId) return null
+  try {
+    const snapshot = await db.collection("teachers").doc(teacherId).get()
+    return snapshot.exists && snapshot.data().colorTheme === "blue" ? BLUE_THEME_CALENDAR_COLOR_ID : null
+  } catch (error) {
+    logger.warn("getTeacherColorOverride: failed to read teacher colorTheme, falling back to per-subject color", { teacherId, error })
+    return null
+  }
+}
+
 // A slot's own subject wins when set; falls back to the student's first
 // subject for slots saved before per-slot binding existed (see
 // normalizeScheduleSlots) — same backward-compat rule the frontend UI uses.
@@ -60,7 +78,7 @@ function toFloatingDateTime(date) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00`
 }
 
-function buildEventResourceForSlot(student, slot) {
+function buildEventResourceForSlot(student, slot, colorOverride) {
   const start = getNextLessonDateForSlot(slot)
   if (!start) {
     return null
@@ -74,7 +92,7 @@ function buildEventResourceForSlot(student, slot) {
     start: { dateTime: toFloatingDateTime(start), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
     recurrence: ["RRULE:FREQ=WEEKLY"],
-    colorId: colorIdForSubject(resolveSlotSubject(student, slot)),
+    colorId: colorOverride ?? colorIdForSubject(resolveSlotSubject(student, slot)),
   }
 
   if (student.topic) {
@@ -161,12 +179,13 @@ async function updateEventFromResource(teacherId, eventId, resource) {
 
 async function createExtraLessonEvent(teacherId, student, date, durationMinutes = 60) {
   const end = new Date(date.getTime() + durationMinutes * 60 * 1000)
+  const colorOverride = await getTeacherColorOverride(teacherId)
 
   const resource = {
     summary: `${student.name} (доп. урок)`,
     start: { dateTime: toFloatingDateTime(date), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
-    colorId: colorIdForStudent(student),
+    colorId: colorOverride ?? colorIdForStudent(student),
   }
 
   return createEventFromResource(teacherId, resource)
@@ -178,12 +197,13 @@ async function createExtraLessonEvent(teacherId, student, date, durationMinutes 
 // per-member subject list to read [0] off of).
 async function createExtraGroupLessonEvent(teacherId, group, date, durationMinutes = 60) {
   const end = new Date(date.getTime() + durationMinutes * 60 * 1000)
+  const colorOverride = await getTeacherColorOverride(teacherId)
 
   const resource = {
     summary: `${group.name} (доп. занятие)`,
     start: { dateTime: toFloatingDateTime(date), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
-    colorId: colorIdForSubject(group.subject),
+    colorId: colorOverride ?? colorIdForSubject(group.subject),
   }
 
   return createEventFromResource(teacherId, resource)
@@ -359,12 +379,13 @@ async function ensureStudentCalendarEvents(teacherId, studentId, student, studen
     return
   }
 
+  const colorOverride = await getTeacherColorOverride(teacherId)
   const { eventIds, changed } = await ensureSlotEventsExist(
     teacherId,
     { studentId },
     scheduleSlots,
     student.googleEventIds ?? {},
-    (slot) => buildEventResourceForSlot(student, slot),
+    (slot) => buildEventResourceForSlot(student, slot, colorOverride),
   )
 
   if (changed) {
@@ -379,12 +400,13 @@ async function ensureGroupCalendarEvents(teacherId, groupId, group, groupRef) {
     return
   }
 
+  const colorOverride = await getTeacherColorOverride(teacherId)
   const { eventIds, changed } = await ensureSlotEventsExist(
     teacherId,
     { groupId },
     scheduleSlots,
     group.googleEventIds ?? {},
-    (slot) => buildGroupEventResourceForSlot(group, slot),
+    (slot) => buildGroupEventResourceForSlot(group, slot, colorOverride),
   )
 
   if (changed) {
@@ -392,14 +414,59 @@ async function ensureGroupCalendarEvents(teacherId, groupId, group, groupRef) {
   }
 }
 
+// On-demand counterpart of the lazy daily self-heal (ensureStudentCalendar-
+// Events/ensureGroupCalendarEvents, normally only run once a day via
+// dailyReminderMidday's ensureUpcomingDraftsForAllStudents/ForAllGroups) —
+// for one specific teacher, right now, not "eventually, tomorrow morning."
+// Added for reconnecting Google Calendar under a *different* Google account:
+// every existing scheduleSlots event id was created against the old
+// account's calendar, so a plain get() against the new one 404s exactly the
+// same way a genuinely deleted event would (event ids are scoped to a single
+// calendar/account) — ensureSlotEventsExist already treats that as "missing,
+// recreate," so this is really just "run the existing self-heal for this
+// teacher's own students/groups immediately" rather than new recovery logic.
+// Best-effort per student/group, same as the reminders.js loops it mirrors —
+// one failure must never block the rest.
+async function resyncTeacherCalendar(teacherId) {
+  const studentsSnapshot = await db.collection("students").where("teacherId", "==", teacherId).get()
+  let studentsSynced = 0
+  for (const doc of studentsSnapshot.docs) {
+    const student = doc.data()
+    if (normalizeScheduleSlots(student).length === 0) continue
+    try {
+      await ensureStudentCalendarEvents(teacherId, doc.id, student, doc.ref)
+      studentsSynced += 1
+    } catch (error) {
+      logger.error("resyncTeacherCalendar: failed to sync student", { teacherId, studentId: doc.id, error })
+    }
+  }
+
+  const groupsSnapshot = await db.collection("teachers").doc(teacherId).collection("groups").get()
+  let groupsSynced = 0
+  for (const doc of groupsSnapshot.docs) {
+    const group = doc.data()
+    if (normalizeScheduleSlots(group).length === 0) continue
+    try {
+      await ensureGroupCalendarEvents(teacherId, doc.id, group, doc.ref)
+      groupsSynced += 1
+    } catch (error) {
+      logger.error("resyncTeacherCalendar: failed to sync group", { teacherId, groupId: doc.id, error })
+    }
+  }
+
+  logger.info("resyncTeacherCalendar: done", { teacherId, studentsSynced, groupsSynced })
+  return { studentsSynced, groupsSynced }
+}
+
 async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
   const scheduleSlots = normalizeScheduleSlots(student)
+  const colorOverride = await getTeacherColorOverride(teacherId)
   const nextEventIds = await syncSlotEvents(
     teacherId,
     { studentId },
     scheduleSlots,
     student.googleEventIds ?? {},
-    (slot) => buildEventResourceForSlot(student, slot),
+    (slot) => buildEventResourceForSlot(student, slot, colorOverride),
   )
   await studentRef.update({ googleEventIds: nextEventIds })
 }
@@ -407,7 +474,7 @@ async function syncScheduleSlots(teacherId, studentId, student, studentRef) {
 // summary is the group's own name (not a student's), colorId comes from the
 // group's single subject (not per-slot — a group has one subject, unlike a
 // student's scheduleSlots which can bind a different subject per slot).
-function buildGroupEventResourceForSlot(group, slot) {
+function buildGroupEventResourceForSlot(group, slot, colorOverride) {
   const start = getNextLessonDateForSlot(slot)
   if (!start) {
     return null
@@ -421,18 +488,19 @@ function buildGroupEventResourceForSlot(group, slot) {
     start: { dateTime: toFloatingDateTime(start), timeZone: CALENDAR_TIME_ZONE },
     end: { dateTime: toFloatingDateTime(end), timeZone: CALENDAR_TIME_ZONE },
     recurrence: ["RRULE:FREQ=WEEKLY"],
-    colorId: colorIdForSubject(group.subject),
+    colorId: colorOverride ?? colorIdForSubject(group.subject),
   }
 }
 
 async function syncGroupScheduleSlots(teacherId, groupId, group, groupRef) {
   const scheduleSlots = normalizeScheduleSlots(group)
+  const colorOverride = await getTeacherColorOverride(teacherId)
   const nextEventIds = await syncSlotEvents(
     teacherId,
     { groupId },
     scheduleSlots,
     group.googleEventIds ?? {},
-    (slot) => buildGroupEventResourceForSlot(group, slot),
+    (slot) => buildGroupEventResourceForSlot(group, slot, colorOverride),
   )
   await groupRef.update({ googleEventIds: nextEventIds })
 }
@@ -578,5 +646,6 @@ module.exports = {
   updateEventFromResource,
   ensureStudentCalendarEvents,
   ensureGroupCalendarEvents,
+  resyncTeacherCalendar,
   colorIdForSubject,
 }

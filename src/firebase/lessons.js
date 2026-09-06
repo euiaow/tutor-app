@@ -99,6 +99,14 @@ function mapLessonDoc(id, studentId, data) {
     groupLessonKey: data.groupLessonKey ?? null,
     groupName: data.groupName ?? null,
     subject: data.subject ?? null,
+    // Which program (if any) this lesson bills against — resolved at
+    // creation time (core/lessons.js's createUpcomingDraft/createExtraLesson,
+    // core/groups.js's group-mirror fan-out), null when ambiguous (2+ of the
+    // student's programs share a subject and no explicit slot override was
+    // set) or unresolved (legacy lesson created before this field existed).
+    // finance-section.jsx's computeWeeklyIncome falls back to the student's
+    // own hourlyRate in both cases.
+    programId: data.programId ?? null,
   }
 }
 
@@ -173,8 +181,8 @@ export async function addLessonMaterial(studentId, lessonId, material) {
   await addLessonMaterialCallable({ studentId, lessonId, material })
 }
 
-export async function createExtraLesson(studentId, date) {
-  const result = await createExtraLessonCallable({ studentId, date: date.toISOString() })
+export async function createExtraLesson(studentId, date, programId = null) {
+  const result = await createExtraLessonCallable({ studentId, date: date.toISOString(), programId })
   return result.data.lessonId
 }
 

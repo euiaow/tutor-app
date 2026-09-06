@@ -23,6 +23,10 @@ const ZONE_ROTATION_DEG = {
 // the page, and therefore reflows naturally with that card.
 export function DecorationZone({ zone, className = "" }) {
   const gamification = useGamification()
+  // Sticker Workshop is hidden from the deployed site until it's finished —
+  // see StickerWorkshopButton for the matching gate. Remove both when the
+  // feature ships for real.
+  if (!import.meta.env.DEV) return null
   const itemId = gamification?.decoration?.[zone]
   const item = itemId ? gamification.inventory.find((entry) => entry.id === itemId) : null
   if (!item) return null

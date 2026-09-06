@@ -31,23 +31,35 @@ function defaultDatetimeLocal(timeZone) {
 // `groups` is optional (defaults to none) so any caller that hasn't been
 // updated to pass it yet still works exactly as before — the "Ученик/
 // Группа" toggle simply doesn't appear when there's nothing to switch to.
-export function ExtraLessonDialog({ students, groups = [] }) {
+// `programsByStudentId` is optional the same way — an extra lesson just gets
+// programId: null (falls back to the student's own hourlyRate for income,
+// same as before per-program rates existed) if it's missing.
+export function ExtraLessonDialog({ students, groups = [], programsByStudentId = {} }) {
   const timeZone = useTimeZone()
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState("student") // "student" | "group"
   const [studentId, setStudentId] = useState("")
   const [groupId, setGroupId] = useState("")
+  const [programId, setProgramId] = useState("")
   const [dateInput, setDateInput] = useState(() => defaultDatetimeLocal(timeZone))
   const [status, setStatus] = useState("idle")
   const [error, setError] = useState("")
 
   const loading = status === "loading"
   const targetId = target === "student" ? studentId : groupId
+  // A one-off lesson has no schedule slot to auto-resolve a program from
+  // (unlike ensureUpcomingLesson/syncUpcomingLessonToSchedule, which can
+  // often infer it from the slot's subject) — asked outright whenever the
+  // student has 2+ programs, same "only ask when genuinely ambiguous" spirit
+  // as SlotProgramPicker (student-row.jsx), just unconditional here since
+  // there's no subject context to narrow it down first.
+  const studentPrograms = target === "student" ? (programsByStudentId[studentId] ?? []) : []
 
   function reset() {
     setTarget("student")
     setStudentId("")
     setGroupId("")
+    setProgramId("")
     setDateInput(defaultDatetimeLocal(timeZone))
     setStatus("idle")
     setError("")
@@ -69,7 +81,7 @@ export function ExtraLessonDialog({ students, groups = [] }) {
       if (target === "group") {
         await createExtraGroupLesson(groupId, datetimeLocalToUtcDate(dateInput, timeZone))
       } else {
-        await createExtraLesson(studentId, datetimeLocalToUtcDate(dateInput, timeZone))
+        await createExtraLesson(studentId, datetimeLocalToUtcDate(dateInput, timeZone), programId || null)
       }
       setOpen(false)
       reset()
@@ -138,13 +150,28 @@ export function ExtraLessonDialog({ students, groups = [] }) {
               <Field label="Ученик">
                 <TeacherSelect
                   value={studentId}
-                  onChange={setStudentId}
+                  onChange={(next) => {
+                    setStudentId(next)
+                    setProgramId("")
+                  }}
                   disabled={loading}
                   placeholder="Выберите ученика"
                   options={students.map((student) => ({ value: student.id, label: student.name }))}
                 />
               </Field>
             )}
+
+            {target === "student" && studentPrograms.length >= 2 ? (
+              <Field label="Программа (для расчёта оплаты)">
+                <TeacherSelect
+                  value={programId}
+                  onChange={setProgramId}
+                  disabled={loading}
+                  placeholder="Не указана"
+                  options={studentPrograms.map((program) => ({ value: program.id, label: program.name }))}
+                />
+              </Field>
+            ) : null}
 
             <Field label="Дата и время">
               <input

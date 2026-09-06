@@ -126,6 +126,21 @@ function mapProgramDoc(id, data) {
     targetScore: data.targetScore ?? null,
     examDate: data.examDate?.toDate?.() ?? null,
     assignedAt: data.assignedAt ?? null,
+    // Per-program override of the student's own hourlyRate — null until the
+    // teacher sets it (see updateProgramHourlyRate below). Only meaningful
+    // once a student has 2+ programs (different subjects, or the same
+    // subject taught two different ways, e.g. ЕГЭ prep vs. olympiad prep,
+    // can genuinely have different rates) — with 0-1 programs the student's
+    // own hourlyRate stays the single source of truth, same as before this
+    // field existed.
+    hourlyRate: typeof data.hourlyRate === "number" ? data.hourlyRate : null,
+    // Per-program paid-lesson count — same "only matters once 2+ programs
+    // exist" rule as hourlyRate above. Defaults to 0 (not null, unlike
+    // hourlyRate) since an amount of lessons genuinely has a zero state,
+    // matching students.paidLessonsBalance's own default. See
+    // functions/core/curriculum.js's assignCurriculumTemplate for the 1-to-2
+    // transition transfer, and core/finance.js for how it's read/written.
+    paidLessonsBalance: typeof data.paidLessonsBalance === "number" ? data.paidLessonsBalance : 0,
   }
 }
 
@@ -148,6 +163,15 @@ export function subscribeToPrograms(studentId, onData, onError) {
 
 export async function markTopicsCovered(studentId, lessonId, programId, { topicIds, prototypeIds, rating }) {
   await markTopicsCoveredCallable({ studentId, lessonId, programId, topicIds, prototypeIds, rating })
+}
+
+// Direct client write, same convention as setCurriculumItemCovered below —
+// a program doc is admin/teacher-owned content the owning teacher can write
+// straight to Firestore, no callable needed. Used from FinanceSection's
+// per-program rate field once a student has 2+ programs.
+export async function updateProgramHourlyRate(studentId, programId, hourlyRate) {
+  const ref = doc(db, "students", studentId, PROGRAMS_SUBCOLLECTION, programId)
+  await updateDoc(ref, { hourlyRate })
 }
 
 // Edits one program's topics/prototypes directly — independent of whatever

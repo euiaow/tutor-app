@@ -182,6 +182,26 @@
   assume from which session's context you're reasoning in. Neither session
   noticed the other was running until this collision — there's no built-in
   cross-session lock on the working tree.
+- **Recurred at much larger scale in session 40**: `git status` was clean at
+  that session's start, but by the time it went to commit its own 3-file fix,
+  the tree held 26 modified/untracked files (+1284/-280 lines) from a second,
+  concurrent session's in-progress multi-program finance/curriculum
+  rearchitecture plus unrelated video-call/teacher-cloning work. Two
+  lessons: (1) deploying one function that imports a shared core module
+  (e.g. `functions:addPayment` importing `core/finance.js`) ships the
+  *entire current file*, including any of the other session's uncommitted,
+  unreviewed changes to that same module — there is no way to deploy "just
+  your own diff" of a shared file; read the whole file being deployed, not
+  just the part you changed. (2) Before running `git commit`/`git push` for
+  "everything," re-run `git status` immediately beforehand even if it was
+  clean minutes earlier in the same session, grep the diff for
+  `TEMPORARY`/secrets-shaped strings (a leftover temp diagnostic function is
+  the specific, previously-real risk this project has hit — session 39's
+  `inspectUnresolvedProgramsTmp` — especially since the repo is public), and
+  if the diff includes work you didn't write, surface its scope (file count,
+  line count, what it touches) to the user and let them decide whether to
+  commit it together with yours rather than assuming "just mine" or
+  "everything" by default.
 
 ## Dependencies worth knowing about
 
